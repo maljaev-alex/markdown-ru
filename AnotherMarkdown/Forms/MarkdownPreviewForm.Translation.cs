@@ -18,6 +18,9 @@ namespace AnotherMarkdown.Forms
     private CancellationTokenSource translationCancellation;
     private ToolStripButton translateButton, originalButton, cancelButton, translationSettingsButton;
     private ToolStripLabel translationStatus;
+    private ToolStripLabel translationIndicator;
+    private System.Windows.Forms.Timer translationAnimation;
+    private int translationAnimationFrame;
     private string sourceText, sourcePath, translatedText, renderedText, renderedPath;
     private bool forceRender = true;
     private bool renderedTranslation;
@@ -30,8 +33,12 @@ namespace AnotherMarkdown.Forms
       cancelButton = new ToolStripButton("Отмена") { DisplayStyle = ToolStripItemDisplayStyle.Text, Visible = false };
       translationSettingsButton = new ToolStripButton("Настройки перевода") { DisplayStyle = ToolStripItemDisplayStyle.Text };
       translationStatus = new ToolStripLabel();
+      translationIndicator = new ToolStripLabel("◐") { Name = "translationIndicator", AccessibleName = "Выполняется перевод", Visible = false, ToolTipText = "Ожидание ответа CLI" };
+      if (components == null) components = new System.ComponentModel.Container();
+      translationAnimation = new System.Windows.Forms.Timer(components) { Interval = 100 };
+      translationAnimation.Tick += (_, __) => { translationAnimationFrame = (translationAnimationFrame + 1) % 4; translationIndicator.Text = "◐◓◑◒"[translationAnimationFrame].ToString(); };
       tbPreview.GripStyle = ToolStripGripStyle.Hidden;
-      tbPreview.Items.AddRange(new ToolStripItem[] { translateButton, originalButton, cancelButton, translationSettingsButton, translationStatus });
+      tbPreview.Items.AddRange(new ToolStripItem[] { translateButton, translationIndicator, originalButton, cancelButton, translationSettingsButton, translationStatus });
       translateButton.Click += async (_, __) => await TranslateCurrentAsync();
       originalButton.Click += async (_, __) => {
         CancelTranslation();
@@ -137,6 +144,7 @@ namespace AnotherMarkdown.Forms
       var cancellation = translationCancellation;
       translationCancellation = null;
       cancellation?.Cancel();
+      translationAnimation?.Stop();
     }
 
     private void UpdateTranslationButtons()
@@ -144,6 +152,8 @@ namespace AnotherMarkdown.Forms
       var visible = translationOptions.ShowButtons;
       translateButton.Visible = originalButton.Visible = translationSettingsButton.Visible = translationStatus.Visible = visible;
       var busy = translationCancellation != null;
+      translationIndicator.Visible = visible && busy;
+      if (visible && busy) translationAnimation.Start(); else translationAnimation.Stop();
       var extension = Path.GetExtension(sourcePath);
       var markdown = string.Equals(extension, ".md", StringComparison.OrdinalIgnoreCase) || string.Equals(extension, ".mdc", StringComparison.OrdinalIgnoreCase);
       translateButton.Enabled = !busy && !string.IsNullOrWhiteSpace(sourceText) && markdown;

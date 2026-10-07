@@ -27,12 +27,17 @@ namespace AnotherMarkdown.Translation
         var output = Path.Combine(directory, "translation.md");
         var config = Path.Combine(directory, "empty-mcp.json");
         var policy = Path.Combine(directory, "translate-policy.toml");
+        var agent = Path.Combine(directory, "translator.md");
+        var prompt = CreatePrompt(markdown);
         var template = CliProfiles.ArgumentsFor(options);
+        if (template.Contains("{agent}")) File.WriteAllText(agent,
+          "---\nname: translator\ndescription: Translate supplied document only\ntools: []\nsubagents: []\n---\nTranslate the supplied document. Return only its translation.\n", Utf8);
         if (template.Contains("{config}")) File.WriteAllText(config, "{\"mcpServers\":{}}", Utf8);
         if (template.Contains("{policy}")) File.WriteAllText(policy,
           "[[rule]]\ntoolName = \"*\"\ndecision = \"deny\"\npriority = 999\n\n[[rule]]\ntoolName = \"*\"\nmcpName = \"*\"\ndecision = \"deny\"\npriority = 999\n", Utf8);
         var arguments = template.Replace("{model}", QuoteArgument(options.Model))
-          .Replace("{output}", QuoteArgument(output)).Replace("{config}", QuoteArgument(config)).Replace("{policy}", QuoteArgument(policy));
+          .Replace("{output}", QuoteArgument(output)).Replace("{config}", QuoteArgument(config)).Replace("{policy}", QuoteArgument(policy))
+          .Replace("{agent}", QuoteArgument(agent)).Replace("{prompt}", QuoteArgument(prompt));
         if (options.ProviderId == "codex" && !options.UseCustomArguments) {
           // Empty-table overrides merge with existing config. Disable each server explicitly.
           var catalog = await new CliModelDiscovery().LoadAsync("codex", options.Executable, token).ConfigureAwait(false);
@@ -43,7 +48,7 @@ namespace AnotherMarkdown.Translation
             arguments += " -c " + QuoteArgument("mcp_servers." + name + ".enabled=false");
           }
         }
-        var command = await CliCommand.RunAsync(options.Executable, arguments, CreatePrompt(markdown), options.TimeoutSeconds, token, directory).ConfigureAwait(false);
+        var command = await CliCommand.RunAsync(options.Executable, arguments, template.Contains("{prompt}") ? "" : prompt, options.TimeoutSeconds, token, directory).ConfigureAwait(false);
         if (command.ExitCode != 0) {
           var detail = command.StandardError.Trim();
           if (detail.Length > 3000) detail = detail.Substring(detail.Length - 3000);
@@ -77,6 +82,19 @@ namespace AnotherMarkdown.Translation
           catch (JsonReaderException) { }
         }
       }
+      objects = objects.SelectMany(value => value is JArray array ? array.ToArray() : new[] { value }).ToList();
+      if (format == "agy-json") {
+        var response = objects.OfType<JObject>().Select(value => (string)value["event"] == "result" ? value["result"] as JObject : value)
+          .LastOrDefault(value => value?["status"]?.Type == JTokenType.String);
+        if (response == null || (string)response["status"] != "SUCCESS" || response["response"]?.Type != JTokenType.String)
+          throw new InvalidOperationException("Antigravity не вернул успешный перевод. " + (response?["error"] ?? response?["status"])?.ToString());
+        return (string)response["response"];
+      }
+      if (format == "kimi-json") {
+        var response = objects.OfType<JObject>().LastOrDefault(value => (string)value["role"] == "assistant" && value["content"]?.Type == JTokenType.String && !(value["tool_calls"] is JArray tools && tools.Count > 0));
+        if (response == null) throw new InvalidOperationException("Kimi Code не вернул окончательный ответ ассистента.");
+        return (string)response["content"];
+      }
       if (format == "opencode-json") {
         var parts = new List<string>();
         var partIndices = new Dictionary<string, int>();
@@ -93,7 +111,7 @@ namespace AnotherMarkdown.Translation
       var field = format == "json-response" ? "response" : "result";
       var answer = objects.OfType<JObject>().LastOrDefault(o => o[field]?.Type == JTokenType.String);
       if (answer == null) throw new InvalidOperationException("CLI не вернул поле " + field + " с текстом ответа.");
-      if ((bool?)answer["is_error"] == true || answer["error"] != null)
+      if ((bool?)answer["is_error"] == true || (answer["error"] != null && answer["error"].Type != JTokenType.Null))
         throw new InvalidOperationException("CLI: " + ((string)answer[field] ?? answer["error"].ToString()));
       return (string)answer[field];
     }
@@ -126,8 +144,10 @@ namespace AnotherMarkdown.Translation
 
     public static string ResolveExecutable(string value)
     {
-      value = Environment.ExpandEnvironmentVariables(value.Trim());
-      var extensions = Path.HasExtension(value) ? new[] { "" } : new[] { ".exe", ".cmd", ".bat", ".ps1" };
+      value = Environment.ExpandEnvironmentVariables((value ?? "").Trim());
+      if (Path.HasExtension(value) && !CliProfiles.IsExePath(value))
+        throw new ArgumentException("Можно выбрать только CLI с расширением .exe. Скриптовые файлы не поддерживаются.");
+      var extensions = Path.HasExtension(value) ? new[] { "" } : new[] { ".exe" };
       if (Path.IsPathRooted(value)) {
         foreach (var extension in extensions) if (File.Exists(value + extension)) return value + extension;
       }

@@ -47,6 +47,7 @@ namespace AnotherMarkdown.Translation
     private static readonly Regex CursorRow = new Regex(@"^([A-Za-z0-9][A-Za-z0-9_.:/-]*)\s+-\s+(.+)$", RegexOptions.Compiled);
     private static readonly Regex OpenCodeRow = new Regex(@"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][^\s]*$", RegexOptions.Compiled);
     private static readonly Regex OllamaRow = new Regex(@"^(\S+)\s+[A-Fa-f0-9]{12,64}\s+\S+\s+.+$", RegexOptions.Compiled);
+    private static readonly Regex AgyRow = new Regex(@"^([a-z0-9][a-z0-9_.:/-]*)\s+(.+)$", RegexOptions.Compiled);
 
     public Task<CliModelCatalog> LoadAsync(string providerId, string executable, CancellationToken cancellation) =>
       Task.Run(() => LoadCoreAsync(providerId, executable, cancellation), cancellation);
@@ -56,14 +57,15 @@ namespace AnotherMarkdown.Translation
       cancellation.ThrowIfCancellationRequested();
       var provider = (providerId ?? "").Trim().ToLowerInvariant();
       if (provider == "codex") return await LoadCodexAsync(executable, cancellation).ConfigureAwait(false);
-      if (provider != "cursor" && provider != "opencode" && provider != "ollama")
+      if (provider != "cursor" && provider != "opencode" && provider != "ollama" && provider != "agy" && provider != "kimi")
         return new CliModelCatalog { Note = "У этого CLI нет поддерживаемой команды списка моделей. Можно использовать модель из настроек CLI или указать её ID в дополнительных параметрах." };
 
-      var result = await CliCommand.RunAsync(executable, provider == "ollama" ? "list" : "models", null,
+      var arguments = provider == "ollama" ? "list" : provider == "kimi" ? "provider list --json" : "models";
+      var result = await CliCommand.RunAsync(executable, arguments, null,
         TimeoutSeconds, cancellation).ConfigureAwait(false);
       cancellation.ThrowIfCancellationRequested();
       if (result.ExitCode != 0) {
-        var detail = CleanText(string.IsNullOrWhiteSpace(result.StandardError) ? result.StandardOutput : result.StandardError).Trim();
+        var detail = provider == "kimi" ? "" : CleanText(string.IsNullOrWhiteSpace(result.StandardError) ? result.StandardOutput : result.StandardError).Trim();
         if (detail.Length > 1500) detail = detail.Substring(detail.Length - 1500);
         var message = provider + " model discovery failed (exit " + result.ExitCode + ").";
         if (provider == "ollama") message += " Check that the Ollama service is available.";
@@ -77,10 +79,23 @@ namespace AnotherMarkdown.Translation
       return catalog;
     }
 
-    private static CliModelCatalog ParseCommandOutput(string provider, string output, CancellationToken cancellation)
+    internal static CliModelCatalog ParseCommandOutput(string provider, string output, CancellationToken cancellation)
     {
       var catalog = new CliModelCatalog();
       var models = new Dictionary<string, CliModel>(StringComparer.Ordinal);
+      if (provider == "kimi") {
+        JObject root;
+        try { root = JObject.Parse(output); }
+        catch (JsonException) { throw new InvalidOperationException("Kimi Code вернул нераспознаваемый список моделей."); }
+        // The provider table can contain credentials. Retain only model aliases.
+        var aliases = root["models"] as JObject;
+        if (aliases != null) foreach (var property in aliases.Properties()) {
+          cancellation.ThrowIfCancellationRequested();
+          if (property.Value is JObject model)
+            AddModel(catalog, models, property.Name, model["model"]?.Type == JTokenType.String ? (string)model["model"] : property.Name, false);
+        }
+        return catalog;
+      }
       using (var reader = new StringReader(CleanText(output))) {
         string raw;
         while ((raw = reader.ReadLine()) != null) {
@@ -97,6 +112,11 @@ namespace AnotherMarkdown.Translation
             if (name.EndsWith(marker, StringComparison.OrdinalIgnoreCase)) {
               isDefault = true; name = name.Substring(0, name.Length - marker.Length).TrimEnd();
             }
+          }
+          else if (provider == "agy") {
+            var row = AgyRow.Match(line);
+            if (!row.Success) continue;
+            id = row.Groups[1].Value; name = row.Groups[2].Value.Trim();
           }
           else if (provider == "opencode") {
             if (!OpenCodeRow.IsMatch(line)) continue;
@@ -152,7 +172,7 @@ namespace AnotherMarkdown.Translation
             await SendAsync(process, new JObject {
               ["method"] = "initialize", ["id"] = 1,
               ["params"] = new JObject { ["clientInfo"] = new JObject {
-                ["name"] = "markdown_ru", ["title"] = "Markdown RU", ["version"] = "0.1.12.1"
+                ["name"] = "markdown_ru", ["title"] = "Markdown RU", ["version"] = "0.1.12.2"
               } }
             }, timeout.Token).ConfigureAwait(false);
             await ReadResponseAsync(reader, 1, timeout.Token).ConfigureAwait(false);

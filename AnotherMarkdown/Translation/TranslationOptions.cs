@@ -23,13 +23,18 @@ namespace AnotherMarkdown.Translation
     {
       if (string.IsNullOrWhiteSpace(Executable)) throw new ArgumentException("Укажите путь к CLI или его имя в PATH.");
       if (!UseDefaultModel && string.IsNullOrWhiteSpace(Model)) throw new ArgumentException("Выберите модель перевода или модель по умолчанию в CLI.");
+      if (!CliProfiles.Get(ProviderId).SupportsModelOverride && !UseDefaultModel && !UseCustomArguments)
+        throw new ArgumentException("Этот CLI использует модель из своего профиля. Выберите модель по умолчанию в CLI.");
       if (CliProfiles.Get(ProviderId).RequiresModel && string.IsNullOrWhiteSpace(Model)) throw new ArgumentException("В выбранном CLI нет модели по умолчанию. Выберите установленную модель.");
       if (Executable.IndexOfAny(new[] { '\r', '\n', '"' }) >= 0)
         throw new ArgumentException("Путь к CLI нужно указать без кавычек и аргументов.");
+      if (Path.HasExtension(Executable) && !CliProfiles.IsExePath(Executable))
+        throw new ArgumentException("Можно выбрать только CLI с расширением .exe. Скриптовые файлы не поддерживаются.");
       if (TimeoutSeconds < 10 || TimeoutSeconds > 3600)
         throw new ArgumentException("Тайм-аут должен быть от 10 до 3600 секунд.");
-      if ((Arguments ?? "").Contains("\"{model}\"") || (Arguments ?? "").Contains("\"{output}\""))
-        throw new ArgumentException("Не заключайте {model} и {output} в кавычки: плагин добавит их сам.");
+      foreach (var placeholder in new[] { "model", "output", "config", "policy", "prompt", "agent" })
+        if ((Arguments ?? "").Contains("\"{" + placeholder + "}\""))
+          throw new ArgumentException("Не заключайте {" + placeholder + "} в кавычки: плагин добавит их сам.");
     }
 
     public static string FindCodex()

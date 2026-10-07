@@ -74,7 +74,7 @@ namespace AnotherMarkdown.Forms
       translationCustomArguments = new CheckBox { Text = "Изменить параметры запуска", AutoSize = true, TabIndex = 2 };
       translationArguments = new TextBox { Name = "translationArguments", AccessibleName = "Аргументы запуска", Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, ReadOnly = true, TabIndex = 3 };
       translationOutput = new ComboBox { Name = "translationOutput", AccessibleName = "Формат ответа CLI", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, TabIndex = 4 };
-      translationOutput.Items.AddRange(new object[] { "text", "json-result", "json-response", "opencode-json" });
+      translationOutput.Items.AddRange(new object[] { "text", "json-result", "json-response", "opencode-json", "agy-json", "kimi-json" });
       translationUseManualModel = new CheckBox { Text = "Другая модель", AutoSize = true, TabIndex = 5 };
       translationManualModel = MakeSettingsTextBox("translationManualModel", "Идентификатор другой модели", 6);
       advancedLayout.Controls.Add(MakeSettingsLabel("Тип CLI"), 0, 0); advancedLayout.Controls.Add(translationProfile, 1, 0);
@@ -103,7 +103,16 @@ namespace AnotherMarkdown.Forms
         description.MaximumSize = translationModelStatus.MaximumSize = new Size(width, 0);
       };
       translationAdvanced.CheckedChanged += (_, __) => { advanced.Visible = translationAdvanced.Checked; layout.RowStyles[5].Height = translationAdvanced.Checked ? 310 : 0; };
-      translationCustomArguments.CheckedChanged += (_, __) => { translationArguments.ReadOnly = !translationCustomArguments.Checked; translationOutput.Enabled = translationCustomArguments.Checked; };
+      translationCustomArguments.CheckedChanged += (_, __) => {
+        translationArguments.ReadOnly = !translationCustomArguments.Checked;
+        translationOutput.Enabled = translationCustomArguments.Checked;
+        translationUseManualModel.Enabled = CliProfiles.Get(translationDraft.ProviderId).SupportsModelOverride || translationCustomArguments.Checked;
+        if (!translationUseManualModel.Enabled) translationUseManualModel.Checked = false;
+        if (!updatingTranslation && !translationCustomArguments.Checked) {
+          translationOutput.SelectedItem = CliProfiles.Get(translationDraft.ProviderId).OutputFormat;
+          UpdateArgumentPreview();
+        }
+      };
       translationUseManualModel.CheckedChanged += (_, __) => { translationManualModel.Enabled = translationUseManualModel.Checked; translationModel.Enabled = !translationUseManualModel.Checked && modelCancellation == null; UpdateArgumentPreview(); };
       translationManualModel.TextChanged += (_, __) => UpdateArgumentPreview();
       translationModel.SelectedIndexChanged += (_, __) => UpdateArgumentPreview();
@@ -149,14 +158,24 @@ namespace AnotherMarkdown.Forms
         catch (Exception) { path = preferred.Executable; }
         var selected = installations.FirstOrDefault(i => string.Equals(i.Executable, path, StringComparison.OrdinalIgnoreCase));
         if (selected != null) selected.ProviderId = preferred.ProviderId;
+        var legacyScript = Path.HasExtension(path) && !CliProfiles.IsExePath(path);
+        if (legacyScript) {
+          selected = installations.FirstOrDefault(i => i.ProviderId == preferred.ProviderId) ?? installations.FirstOrDefault();
+          if (selected != null) translationDraft = CliProfiles.Defaults(selected.ProviderId, selected.Executable);
+          else { translationDraft.Executable = ""; translationExecutable.Text = ""; }
+        }
         if (selected == null && path == "codex" && installations.Count > 0) {
           selected = installations[0];
           preferred = CliProfiles.Defaults(selected.ProviderId, selected.Executable);
           translationDraft = preferred.Copy();
         }
-        if (selected == null && !string.IsNullOrWhiteSpace(path)) {
+        if (selected == null && !legacyScript && CliProfiles.IsExePath(path) && File.Exists(path)) {
           selected = new CliInstallation { Executable = path, ProviderId = preferred.ProviderId };
           installations.Insert(0, selected);
+        }
+        if (selected == null && installations.Count > 0) {
+          selected = installations[0];
+          translationDraft = CliProfiles.Defaults(selected.ProviderId, selected.Executable);
         }
         updatingTranslation = true;
         translationCli.Items.Clear(); translationCli.Items.AddRange(installations.ToArray());
@@ -195,6 +214,7 @@ namespace AnotherMarkdown.Forms
       if (translationOutput.SelectedIndex < 0) translationOutput.SelectedIndex = 0;
       translationManualModel.Text = options.Model;
       translationUseManualModel.Checked = false;
+      translationUseManualModel.Enabled = CliProfiles.Get(options.ProviderId).SupportsModelOverride || options.UseCustomArguments;
       translationManualModel.Enabled = false;
       FillModels(new CliModelCatalog(), options);
       updatingTranslation = false;
@@ -281,7 +301,7 @@ namespace AnotherMarkdown.Forms
       var directory = Path.IsPathRooted(path) ? Path.GetDirectoryName(path) : Environment.SystemDirectory;
       if (!Directory.Exists(directory)) directory = Environment.SystemDirectory;
       return new OpenFileDialog {
-        Title = "Выберите установленный CLI", Filter = "CLI (*.exe;*.cmd;*.bat;*.ps1)|*.exe;*.cmd;*.bat;*.ps1|Все файлы (*.*)|*.*",
+        Title = "Выберите CLI (.exe)", Filter = "CLI (*.exe)|*.exe",
         InitialDirectory = directory, FileName = File.Exists(path) ? path : "", RestoreDirectory = true, CheckFileExists = true
       };
     }

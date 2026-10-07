@@ -3,7 +3,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -38,17 +37,13 @@ namespace AnotherMarkdown.Translation
         info.EnvironmentVariables["OPENCODE_DISABLE_LSP_DOWNLOAD"] = "true";
         info.EnvironmentVariables["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "true";
       }
-      if (executable.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) || executable.EndsWith(".bat", StringComparison.OrdinalIgnoreCase)) {
-        if (Regex.IsMatch(executable + arguments, "[&|<>^%!\\r\\n]"))
-          throw new ArgumentException("Для .cmd/.bat недопустимы метасимволы оболочки. Выберите .exe CLI или node.exe с путём к скрипту в аргументах.");
-        info.FileName = Environment.GetEnvironmentVariable("COMSPEC") ?? "cmd.exe";
-        info.Arguments = "/d /s /v:off /c \"" + CliTranslator.QuoteArgument(executable) + " " + arguments + "\"";
+      if (CliProfiles.Identify(executable) == "kimi") {
+        info.EnvironmentVariables["KIMI_CODE_NO_AUTO_UPDATE"] = "1";
+        info.EnvironmentVariables["KIMI_DISABLE_TELEMETRY"] = "1";
       }
-      else if (executable.EndsWith(".ps1", StringComparison.OrdinalIgnoreCase)) {
-        var pwsh = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PowerShell", "7", "pwsh.exe");
-        info.FileName = File.Exists(pwsh) ? pwsh : Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
-        info.Arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " + CliTranslator.QuoteArgument(executable) + " " + arguments;
-      }
+      if (CliProfiles.Identify(executable) == "copilot") info.EnvironmentVariables["COPILOT_AUTO_UPDATE"] = "false";
+      if (executable.Length + (arguments ?? "").Length > 30000)
+        throw new ArgumentException("Запрос превышает размер командной строки Windows. Для этого документа выберите CLI с передачей запроса через stdin, например Codex.");
       return info;
     }
 

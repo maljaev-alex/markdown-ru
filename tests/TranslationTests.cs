@@ -23,7 +23,9 @@ internal static class TranslationTests
     if (args.Length > 0 && args[0] == "models") { Console.Write("\u001b[32mauto - Auto (default)\u001b[0m\ngrok-4.7-xhigh - Grok 4.7 Extra High\n"); return 0; }
     if (args.Length > 0 && args[0] == "models-real") {
       foreach (var provider in new[] { "codex", "cursor" }) {
-        var path = provider == "codex" ? TranslationOptions.FindCodex() : "agent";
+        var installation = CliProfiles.DiscoverInstalled().FirstOrDefault(i => i.ProviderId == provider);
+        if (installation == null) { Console.WriteLine("SKIP " + provider + ": no EXE installation"); continue; }
+        var path = installation.Executable;
         var catalog = new CliModelDiscovery().LoadAsync(provider, path, CancellationToken.None).GetAwaiter().GetResult();
         Console.WriteLine(provider + ": count=" + catalog.Models.Count + ", default=" + catalog.DefaultModelId + ", configRead=" + catalog.McpConfigurationRead + ", MCP names=" + catalog.McpServerNames.Count);
         if (!catalog.Models.Any(m => m.Id == (provider == "codex" ? "gpt-6-astra" : "grok-4.7-xhigh"))) return 1;
@@ -77,6 +79,7 @@ internal static class TranslationTests
     }
     var input = Console.In.ReadToEnd();
     if (mode == "args") { Console.Write(args[2]); return 0; }
+    if (mode == "prompt") { Console.Write(args[2]); return 0; }
     if (mode == "error") { Console.Error.Write(new string('x', 180000) + " EXPECTED_ERROR"); return 31; }
     if (mode == "empty") return 0;
     if (!input.Contains("# Hello\nПривет") || !input.Contains("untrusted document data")) return 32;
@@ -122,6 +125,15 @@ internal static class TranslationTests
     Check(CliTranslator.DecodeOutput("{\"result\":\"    indented code\\n\"}\n{\"type\":\"stats\"}", "json-result").StartsWith("    "), "JSONL answer survives trailing stats and preserves Markdown indentation");
     Check(CliTranslator.DecodeOutput("{\"type\":\"text\",\"part\":{\"id\":\"1\",\"text\":\"old\"}}\n{\"type\":\"text\",\"part\":{\"id\":\"1\",\"text\":\"new\"}}", "opencode-json") == "new", "OpenCode cumulative text snapshots are not duplicated");
     await Throws<InvalidOperationException>(() => Task.FromResult(CliTranslator.DecodeOutput("{\"result\":\"denied\",\"is_error\":true}", "json-result")), "denied", "structured CLI failure is not a translation");
+    Check(CliTranslator.DecodeOutput("[{\"type\":\"system\"},{\"type\":\"result\",\"is_error\":false,\"result\":\"    code\"}]", "json-result") == "    code", "Qwen JSON array returns final result and preserves indentation");
+    Check(CliTranslator.DecodeOutput("{\"status\":\"SUCCESS\",\"response\":\"translation\"}", "agy-json") == "translation", "AGY JSON success envelope");
+    Check(CliTranslator.DecodeOutput("{\"event\":\"result\",\"result\":{\"status\":\"SUCCESS\",\"response\":\"translation\"}}", "agy-json") == "translation", "AGY streaming result envelope");
+    await Throws<InvalidOperationException>(() => Task.FromResult(CliTranslator.DecodeOutput("{\"status\":\"ERROR\",\"response\":\"partial\",\"error\":\"test-error\"}", "agy-json")), "test-error", "AGY failed status rejects partial response");
+    Check(CliTranslator.DecodeOutput("{\"role\":\"assistant\",\"content\":\"thinking\",\"tool_calls\":[{}]}\n{\"role\":\"tool\",\"content\":\"tool output\"}\n{\"role\":\"assistant\",\"content\":\"final translation\"}\n{\"role\":\"meta\"}", "kimi-json") == "final translation", "Kimi takes final assistant content only");
+    var agyCatalog = CliModelDiscovery.ParseCommandOutput("agy", "gemini-3.8-flash-high     Gemini 3.8 Flash (High)\ngemini-3.1-pro-high       Gemini 3.1 Pro (High)\n", CancellationToken.None);
+    Check(agyCatalog.Models.Count == 2 && agyCatalog.Models[0].Id == "gemini-3.8-flash-high", "AGY native model table parser");
+    var kimiCatalog = CliModelDiscovery.ParseCommandOutput("kimi", "{\"providers\":{\"demo\":{\"api_key\":\"NEVER_RETAIN\"}},\"models\":{\"alias_demo\":{\"provider\":\"demo\",\"model\":\"model_demo\"}}}", CancellationToken.None);
+    Check(kimiCatalog.Models.Count == 1 && kimiCatalog.Models[0].Id == "alias_demo" && !JObject.FromObject(kimiCatalog).ToString().Contains("NEVER_RETAIN"), "Kimi model aliases exclude provider credentials");
     var standard = await Translate(Options("fake stdout"));
     Check(standard.StartsWith("# Привет") && standard.Contains("`WorkPackage.allowed_to`"), "UTF-8 stdin/stdout and untrusted document envelope");
     Check(await Translate(Options("fake file {output}")) == standard, "output file ignores noisy stdout and strips BOM");
@@ -130,13 +142,15 @@ internal static class TranslationTests
     Check(await Translate(quoted) == quoted.Model, "Windows argument quoting round-trip");
     await Throws<InvalidOperationException>(() => Translate(Options("fake error")), "EXPECTED_ERROR", "nonzero exit drains stderr and returns diagnostic");
     await Throws<InvalidOperationException>(() => new CliTranslator().TranslateAsync(new string('a', 500000), Options("fake early"), CancellationToken.None), "EARLY_EXIT", "early CLI exit preserves diagnostic when stdin breaks");
-    var batch = Path.Combine(Path.GetDirectoryName(executable), "mock cli.cmd");
-    File.WriteAllText(batch, "@echo off\r\n\"" + executable + "\" fake stdout\r\n", Encoding.ASCII);
-    try {
-      var batchOptions = Options(""); batchOptions.Executable = batch;
-      Check(await Translate(batchOptions) == standard, "batch CLI with spaces uses stdin safely");
+    foreach (var extension in new[] { ".cmd", ".bat", ".ps1", ".js" }) {
+      var scriptOptions = Options(""); scriptOptions.Executable = Path.ChangeExtension(executable, extension);
+      await Throws<ArgumentException>(() => Translate(scriptOptions), ".exe", "reject " + extension + " translation entry");
+      await Throws<ArgumentException>(() => Task.FromResult(CliTranslator.ResolveExecutable(scriptOptions.Executable)), ".exe", "reject " + extension + " direct resolver entry");
     }
-    finally { File.Delete(batch); }
+    Check(CliProfiles.DiscoverInstalled().All(i => CliProfiles.IsExePath(i.Executable)), "auto-discovery lists EXE files only");
+    var promptResult = await Translate(Options("fake prompt {prompt}"));
+    Check(promptResult.Contains("untrusted document data") && promptResult.Contains("# Hello\nПривет"), "prompt argument mode preserves the complete document");
+    await Throws<ArgumentException>(() => new CliTranslator().TranslateAsync(new string('a', 40000), Options("fake prompt {prompt}"), CancellationToken.None), "Windows", "oversized prompt argument fails before process launch");
     await Throws<InvalidOperationException>(() => Translate(Options("fake empty")), "пустой", "empty output rejected");
     await Throws<InvalidOperationException>(() => Translate(Options("fake empty {output}")), "не создал", "missing output file rejected");
     var missing = Options(""); missing.Executable = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".exe");
