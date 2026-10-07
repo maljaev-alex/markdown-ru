@@ -101,6 +101,12 @@ namespace AnotherMarkdown
       settings.Translation.OutputFormat = Win32.ReadIniValue("Translation", "OutputFormat", _iniFilePath, CliProfiles.Get(settings.Translation.ProviderId).OutputFormat);
       settings.Translation.TimeoutSeconds = Math.Max(10, Math.Min(3600, Win32.GetPrivateProfileInt("Translation", "TimeoutSeconds", 300, _iniFilePath)));
       settings.Translation.ShowButtons = Win32.ReadIniValue("Translation", "ShowButtons", _iniFilePath, "True").Equals("True", StringComparison.OrdinalIgnoreCase);
+      settings.Translation.ConnectionMode = Win32.ReadIniValue("Translation", "ConnectionMode", _iniFilePath, "cli");
+      settings.Translation.SelectedApiConnectionId = Win32.ReadIniValue("Translation", "ApiConnectionId", _iniFilePath, "");
+      try { settings.Translation.ApiConnections = ApiConnectionStore.Load(_iniFilePath + ".api.json"); }
+      catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is ArgumentException) {
+        settings.Translation.ApiConfigurationError = "Не удалось прочитать сохранённые подключения API. Исходный файл настроек сохранён.";
+      }
       return settings;
     }
 
@@ -226,7 +232,7 @@ namespace AnotherMarkdown
         _settings.Translation = settingsForm.TranslationOptions;
 
         _settings.IsDarkModeEnabled = IsDarkModeEnabled();
-        SaveSettings();
+        if (!SaveSettings(true)) return;
         //Update Preview
         if (_isPanelVisible) {
           PreviewForm.UpdateSettings(_settings);
@@ -448,8 +454,16 @@ namespace AnotherMarkdown
       SaveSettings();
     }
 
-    private void SaveSettings()
+    private bool SaveSettings(bool reportApiErrors = false)
     {
+      var apiPath = _iniFilePath + ".api.json";
+      if (_settings.Translation.ApiConnections.Count > 0 || (_settings.Translation.ApiConfigurationError == null && File.Exists(apiPath))) {
+        try { ApiConnectionStore.Save(apiPath, _settings.Translation.ApiConnections); _settings.Translation.ApiConfigurationError = null; }
+        catch (IOException) {
+          if (reportApiErrors) MessageBox.Show(new PluginWindowOwner(PluginBase.nppData._nppHandle), "Не удалось сохранить подключения API. Проверьте доступ к каталогу настроек Notepad++. Предыдущий файл сохранён; новые значения пока действуют только до закрытия редактора.", "Настройки перевода", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+          return false;
+        }
+      }
       Win32.WritePrivateProfileString("Options", "SyncViewWithCaretPosition", _settings.SyncViewWithCaretPosition ? "1" : "0", _iniFilePath);
       Win32.WritePrivateProfileString("Options", "SyncWithFirstVisibleLine", _settings.SyncViewWithFirstVisibleLine ? "1" : "0", _iniFilePath);
       Win32.WritePrivateProfileString("Options", "EnabledMarkdownPlugins", string.Join(";", _settings.EnabledMarkdownPlugins), _iniFilePath);
@@ -470,6 +484,9 @@ namespace AnotherMarkdown
       Win32.WriteIniValue("Translation", "OutputFormat", _settings.Translation.OutputFormat, _iniFilePath);
       Win32.WriteIniValue("Translation", "TimeoutSeconds", _settings.Translation.TimeoutSeconds.ToString(), _iniFilePath);
       Win32.WriteIniValue("Translation", "ShowButtons", _settings.Translation.ShowButtons.ToString(), _iniFilePath);
+      Win32.WriteIniValue("Translation", "ConnectionMode", _settings.Translation.ConnectionMode, _iniFilePath);
+      Win32.WriteIniValue("Translation", "ApiConnectionId", _settings.Translation.SelectedApiConnectionId ?? "", _iniFilePath);
+      return true;
     }
 
     private void ShowAboutDialog()

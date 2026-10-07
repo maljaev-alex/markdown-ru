@@ -28,12 +28,12 @@ namespace AnotherMarkdown.Forms
     private void InitializeTranslation(Settings settings)
     {
       translationOptions = settings.Translation.Copy();
-      translateButton = new ToolStripButton("Перевести") { DisplayStyle = ToolStripItemDisplayStyle.Text, ToolTipText = "Перевести документ на русский через выбранный CLI" };
+      translateButton = new ToolStripButton("Перевести") { DisplayStyle = ToolStripItemDisplayStyle.Text, ToolTipText = "Перевести документ на русский через выбранное подключение" };
       originalButton = new ToolStripButton("Оригинал") { DisplayStyle = ToolStripItemDisplayStyle.Text, Enabled = false };
       cancelButton = new ToolStripButton("Отмена") { DisplayStyle = ToolStripItemDisplayStyle.Text, Visible = false };
       translationSettingsButton = new ToolStripButton("Настройки перевода") { DisplayStyle = ToolStripItemDisplayStyle.Text };
       translationStatus = new ToolStripLabel();
-      translationIndicator = new ToolStripLabel("◐") { Name = "translationIndicator", AccessibleName = "Выполняется перевод", Visible = false, ToolTipText = "Ожидание ответа CLI" };
+      translationIndicator = new ToolStripLabel("◐") { Name = "translationIndicator", AccessibleName = "Выполняется перевод", Visible = false, ToolTipText = "Ожидание ответа модели" };
       if (components == null) components = new System.ComponentModel.Container();
       translationAnimation = new System.Windows.Forms.Timer(components) { Interval = 100 };
       translationAnimation.Tick += (_, __) => { translationAnimationFrame = (translationAnimationFrame + 1) % 4; translationIndicator.Text = "◐◓◑◒"[translationAnimationFrame].ToString(); };
@@ -111,7 +111,7 @@ namespace AnotherMarkdown.Forms
       var cancellation = new CancellationTokenSource();
       translationCancellation = cancellation;
       UpdateTranslationButtons();
-      var modelLabel = options.UseDefaultModel ? "модель CLI" : options.Model;
+      var modelLabel = options.UseApi ? options.ActiveApiConnection?.Model ?? "модель API" : options.UseDefaultModel ? "модель CLI" : options.Model;
       translationStatus.Text = "Перевод… " + modelLabel;
       try {
         var cached = translationCache.TryGet(key, out var result);

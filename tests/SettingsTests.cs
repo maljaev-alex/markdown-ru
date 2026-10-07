@@ -19,12 +19,14 @@ internal static class SettingsTests
       Application.EnableVisualStyles();
       Console.WriteLine("Host stdin encoding: " + Console.InputEncoding.WebName + "; preamble: " + BitConverter.ToString(Console.InputEncoding.GetPreamble()));
       if (args.Length > 0 && args[0] == "live-ui") return LiveUi();
+      if (args.Length > 0 && args[0] == "live-api-ui") return LiveApiUi();
       using (var picker = SettingsForm.CreateCliFileDialog(Assembly.GetExecutingAssembly().Location)) {
         Check(picker.InitialDirectory == Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) && picker.FileName == Assembly.GetExecutingAssembly().Location, "CLI picker starts in selected executable directory");
         Check(picker.Filter == "CLI (*.exe;*.cmd;*.bat)|*.exe;*.cmd;*.bat", "CLI picker supports native programs and official batch launchers");
       }
       var settings = new Settings { ZoomLevel = 9000, EnabledMarkdownPlugins = new[] { "attrs" } };
       EffortSettings();
+      ApiSettings();
       settings.Translation.ShowButtons = false;
       using (var form = new SettingsForm(settings)) {
         Check(Find<TrackBar>(form, "trackBar1").Value == 800, "invalid stored zoom is clamped");
@@ -110,7 +112,39 @@ internal static class SettingsTests
     }
     return result;
   }
+  private static int LiveApiUi()
+  {
+    var result = 1;
+    var settings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
+    var connection = new ApiConnection { Name = "Example API", Endpoint = "https://example.test/v1", Model = "example-model", ApiKey = "fake-ui-key" };
+    settings.Translation.ConnectionMode = "api"; settings.Translation.ApiConnections.Add(connection); settings.Translation.SelectedApiConnectionId = connection.Id;
+    using (var form = new BackgroundSettings(settings)) {
+      form.SelectTranslationTab();
+      form.Shown += (_, __) => {
+        try {
+          var directory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+          using (var bitmap = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(bitmap, new Rectangle(0, 0, form.Width, form.Height)); bitmap.Save(Path.Combine(directory, "settings-api-basic.png")); }
+          Check(Find<TextBox>(form, "apiKey").UseSystemPasswordChar && Find<ComboBox>(form, "translationConnectionMode").SelectedIndex == 1, "live API form restores selected mode and masks the key");
+          Find<CheckBox>(form, "apiAdvanced").Checked = true;
+          using (var bitmap = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(bitmap, new Rectangle(0, 0, form.Width, form.Height)); bitmap.Save(Path.Combine(directory, "settings-api-advanced.png")); }
+          var profile = ReadDraft(form).ActiveApiConnection;
+          var path = Path.Combine(directory, "api-ui-roundtrip.json");
+          ApiConnectionStore.Save(path, new[] { profile });
+          var loaded = ApiConnectionStore.Load(path).Single();
+          Check(loaded.ApiKey == "fake-ui-key" && loaded.Model == "example-model" && !File.ReadAllText(path).Contains("fake-ui-key"), "live API form values persist encrypted and restore correctly");
+          Find<Button>(form, "btnSave").PerformClick();
+          Check(form.DialogResult == DialogResult.OK && form.TranslationOptions.UseApi, "live API form saves without invoking CLI or external API");
+          result = 0;
+        }
+        catch (Exception error) { Console.Error.WriteLine(error); }
+        finally { form.Close(); }
+      };
+      Application.Run(form);
+    }
+    return result;
+  }
   private static T As<T>(this object value) => (T)value;
+  private static void Click(Button button) => typeof(Button).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(button, new object[] { EventArgs.Empty });
   private static void EffortSettings()
   {
     var settings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
@@ -151,6 +185,50 @@ internal static class SettingsTests
     }
   }
   private static TranslationOptions ReadDraft(SettingsForm form) => (TranslationOptions)typeof(SettingsForm).GetMethod("ReadTranslationDraft", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, null);
+  private static void ApiSettings()
+  {
+    var settings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
+    settings.Translation.ShowButtons = false;
+    settings.Translation.ApiConfigurationError = "Unreadable config preserved";
+    using (var form = new SettingsForm(settings)) {
+      form.SelectTranslationTab();
+      Find<ComboBox>(form, "translationConnectionMode").SelectedIndex = 1;
+      Check(ReadDraft(form).UseApi && ReadDraft(form).ApiConnections.Count == 1, "switching to API creates an editable connection without changing CLI settings");
+      Find<TextBox>(form, "apiName").Text = "First endpoint";
+      Find<TextBox>(form, "apiEndpoint").Text = "https://example.test/v1";
+      Find<TextBox>(form, "apiKey").Text = "fake-key-for-settings-test";
+      Find<ComboBox>(form, "apiModel").Text = "test-model";
+      Find<TextBox>(form, "apiHeaders").Text = "{\"X-Extra\":\"fake-header\"}";
+      var first = ReadDraft(form).ActiveApiConnection;
+      Check(Find<TextBox>(form, "apiKey").UseSystemPasswordChar && first.ApiKey == "fake-key-for-settings-test" && first.Model == "test-model", "API key is masked and entered values reach the draft");
+      using (var waiting = new System.Threading.CancellationTokenSource()) {
+        typeof(SettingsForm).GetField("apiCancellation", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(form, waiting);
+        Click(Find<Button>(form, "apiAdd"));
+        Check(waiting.IsCancellationRequested, "adding another API profile cancels the previous model discovery");
+      }
+      var connections = Find<ComboBox>(form, "apiConnections");
+      connections.SelectedIndex = 0;
+      Check(Find<TextBox>(form, "apiKey").Text == "fake-key-for-settings-test" && Find<ComboBox>(form, "apiModel").Text == "test-model", "saved draft profiles retain independent model and credential values");
+      var draft = ReadDraft(form); draft.ActiveApiConnection.ApiKey = "changed copy";
+      Check(ReadDraft(form).ActiveApiConnection.ApiKey == "fake-key-for-settings-test" && settings.Translation.ApiConnections.Count == 0, "API draft copies and canceled dialog never mutate supplied settings");
+      typeof(SettingsForm).GetField("translationDraft", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(form, CliProfiles.Defaults("cursor", "agent.cmd"));
+      Check(ReadDraft(form).ApiConfigurationError == "Unreadable config preserved", "CLI defaults preserve API load-error guard against overwriting corrupt settings");
+      var endpoint = connections.SelectedItem.As<ApiConnection>();
+      endpoint.EncryptedApiKey = "unreadable-ciphertext";
+      Click(Find<Button>(form, "apiClearCredentials"));
+      Check(ReadDraft(form).ActiveApiConnection.EncryptedApiKey == "" && ReadDraft(form).ActiveApiConnection.ApiKey == "", "explicit API credential clearing resets ciphertext and visible key");
+      Click(Find<Button>(form, "apiRemove")); Click(Find<Button>(form, "apiRemove"));
+      Check(ReadDraft(form).ApiConnections.Count == 0, "deleting all API profiles produces an empty persisted draft");
+    }
+    settings.Translation = new TranslationOptions { ConnectionMode = "api", ApiConnections = { new ApiConnection { Name = "Saved API", Endpoint = "https://example.test/v1", Model = "saved-model", ApiKey = "fake-saved-key" } } };
+    settings.Translation.SelectedApiConnectionId = settings.Translation.ApiConnections[0].Id;
+    using (var form = new SettingsForm(settings)) {
+      Check(ReadDraft(form).UseApi && Find<TextBox>(form, "apiKey").Text == "fake-saved-key", "API mode and stored connection restore independently of CLI discovery");
+      Find<TextBox>(form, "apiEndpoint").Text = "https://example.test/custom/v1";
+      typeof(SettingsForm).GetMethod("btnSave_Click", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { null, EventArgs.Empty });
+      Check(form.DialogResult == DialogResult.OK && form.TranslationOptions.ActiveApiConnection.Endpoint == "https://example.test/custom/v1" && settings.Translation.ActiveApiConnection.Endpoint == "https://example.test/v1", "Save captures API values without requiring a CLI executable or mutating original settings");
+    }
+  }
   private static void FillCatalog(SettingsForm form, TranslationOptions options, CliModelCatalog catalog)
   {
     var type = typeof(SettingsForm);

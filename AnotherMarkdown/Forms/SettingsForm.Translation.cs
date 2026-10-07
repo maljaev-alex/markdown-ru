@@ -147,9 +147,10 @@ namespace AnotherMarkdown.Forms
         if (translationCli.SelectedItem is CliInstallation installation) await ApplyCliAsync(installation, true);
       };
       browse.Click += async (_, __) => await BrowseCliAsync();
-      Shown += async (_, __) => await FindInstalledCliAsync();
+      Shown += async (_, __) => { if (!IsApiMode) await FindInstalledCliAsync(); };
       FormClosing += (_, __) => CancelModelDiscovery();
       SetTranslationControls(translationDraft);
+      InitializeApiSettings(layout);
     }
 
     private static void AddTranslationRow(TableLayoutPanel layout, int row, string caption, Control value, Control extra)
@@ -168,7 +169,7 @@ namespace AnotherMarkdown.Forms
       translationCliRefresh.Enabled = false;
       try {
         var installations = await Task.Run(() => CliProfiles.DiscoverInstalled());
-        if (IsDisposed || Disposing || generation != cliDiscoveryGeneration) return;
+        if (IsDisposed || Disposing || IsApiMode || generation != cliDiscoveryGeneration) return;
         string path;
         try { path = CliTranslator.ResolveExecutable(preferred.Executable); }
         catch (Exception) { path = preferred.Executable; }
@@ -248,7 +249,7 @@ namespace AnotherMarkdown.Forms
       translationModelStatus.Text = "Запрашиваем модели у " + CliProfiles.Get(preference.ProviderId).Name + "…";
       try {
         var catalog = await new CliModelDiscovery().LoadAsync(preference.ProviderId, preference.Executable, cancellation.Token);
-        if (cancellation.IsCancellationRequested || generation != modelGeneration || IsDisposed || Disposing) return;
+        if (cancellation.IsCancellationRequested || generation != modelGeneration || IsDisposed || Disposing || IsApiMode) return;
         updatingTranslation = true; hasModelCatalog = true; FillModels(catalog, preference); updatingTranslation = false;
         translationModelStatus.Text = string.IsNullOrWhiteSpace(catalog.Note) ? "Моделей получено: " + catalog.Models.Count : catalog.Note;
         UpdateArgumentPreview();
@@ -342,6 +343,7 @@ namespace AnotherMarkdown.Forms
       if (!translationUseManualModel.Checked && !string.IsNullOrEmpty(effort?.ModelId)) {
         options.Model = effort.ModelId; options.UseDefaultModel = false;
       }
+      ReadApiSettings(options);
       return options;
     }
 
@@ -373,12 +375,12 @@ namespace AnotherMarkdown.Forms
     {
       try {
         var options = ReadTranslationDraft();
-        if (options.ShowButtons) { options.Validate(); CliTranslator.ResolveExecutable(options.Executable); }
+        if (options.ShowButtons) { options.Validate(); if (!options.UseApi) CliTranslator.ResolveExecutable(options.Executable); }
         TranslationOptions = options;
         return true;
       }
       catch (Exception error) when (error is ArgumentException || error is FileNotFoundException) {
-        SelectTranslationTab(); translationModelStatus.Text = error.Message; return false;
+        SelectTranslationTab(); if (IsApiMode) apiStatus.Text = error.Message; else translationModelStatus.Text = error.Message; return false;
       }
     }
 

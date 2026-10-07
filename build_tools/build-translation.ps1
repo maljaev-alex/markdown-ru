@@ -47,21 +47,32 @@ if (-not $SkipTests) {
     $sources += Join-Path $projectRoot 'tests\TranslationTests.cs'
     $jsonAssembly = Join-Path $CacheRoot 'packages\Newtonsoft.Json.13.0.4\lib\net45\Newtonsoft.Json.dll'
     Copy-Item -LiteralPath $jsonAssembly -Destination $CacheRoot -Force
-    & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe "/out:$tests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$jsonAssembly" $sources
+    & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe "/out:$tests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Net.Http.dll" "/r:$ref\System.Security.dll" "/r:$jsonAssembly" $sources
     if ($LASTEXITCODE -ne 0) { throw 'Test compilation failed.' }
     & $tests
     if ($LASTEXITCODE -ne 0) { throw 'Translation tests failed.' }
     $launcherTests = Join-Path $CacheRoot 'CliLauncherTests.exe'
     $launcherSources = @($sources | Where-Object { $_ -notlike '*TranslationTests.cs' })
     $launcherSources += Join-Path $projectRoot 'tests\CliLauncherTests.cs'
-    & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe "/out:$launcherTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$jsonAssembly" $launcherSources
+    & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe "/out:$launcherTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Net.Http.dll" "/r:$ref\System.Security.dll" "/r:$jsonAssembly" $launcherSources
     if ($LASTEXITCODE -ne 0) { throw 'Launcher test compilation failed.' }
     & $launcherTests
     if ($LASTEXITCODE -ne 0) { throw 'Launcher tests failed.' }
+    foreach ($apiTestName in @('ApiTests', 'ApiConnectionStoreTests', 'ApiLiveTests')) {
+        $apiTests = Join-Path $CacheRoot ($apiTestName + '.exe')
+        $apiSources = @($sources | Where-Object { $_ -notlike '*TranslationTests.cs' })
+        $apiSources += Join-Path $projectRoot ('tests\' + $apiTestName + '.cs')
+        & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe "/out:$apiTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Net.Http.dll" "/r:$ref\System.Security.dll" "/r:$jsonAssembly" $apiSources
+        if ($LASTEXITCODE -ne 0) { throw "$apiTestName compilation failed." }
+        if ($apiTestName -ne 'ApiLiveTests') {
+            & $apiTests
+            if ($LASTEXITCODE -ne 0) { throw "$apiTestName failed." }
+        }
+    }
     $settingsTests = Join-Path $CacheRoot 'SettingsTests.exe'
     $settingsSources = @($sources | Where-Object { $_ -notlike '*TranslationTests.cs' })
-    $settingsSources += @('AnotherMarkdown\Entities\Settings.cs', 'AnotherMarkdown\Forms\SettingsForm.cs', 'AnotherMarkdown\Forms\SettingsForm.Designer.cs', 'AnotherMarkdown\Forms\SettingsForm.Translation.cs', 'tests\SettingsTests.cs') | ForEach-Object { Join-Path $projectRoot $_ }
-    & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe "/out:$settingsTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Drawing.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$jsonAssembly" $settingsSources
+    $settingsSources += @('AnotherMarkdown\Entities\Settings.cs', 'AnotherMarkdown\Forms\SettingsForm.cs', 'AnotherMarkdown\Forms\SettingsForm.Designer.cs', 'AnotherMarkdown\Forms\SettingsForm.Translation.cs', 'AnotherMarkdown\Forms\SettingsForm.Api.cs', 'tests\SettingsTests.cs') | ForEach-Object { Join-Path $projectRoot $_ }
+    & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe "/out:$settingsTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Net.Http.dll" "/r:$ref\System.Security.dll" "/r:$ref\System.Drawing.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$jsonAssembly" $settingsSources
     if ($LASTEXITCODE -ne 0) { throw 'Settings test compilation failed.' }
     $testAssets = Join-Path $CacheRoot 'assets\markdown'
     New-Item -ItemType Directory -Path $testAssets -Force | Out-Null
@@ -90,7 +101,7 @@ try {
     }
     Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\loader.js') -Destination (Join-Path $stage 'assets\loader.js') -Force
     Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\translation-ru.md') -Destination (Join-Path $stage 'TRANSLATION-RU.md')
-    $archive = Join-Path $OutputDirectory 'AnotherMarkdown-0.1.12-ru.4-x64.zip'
+    $archive = Join-Path $OutputDirectory 'AnotherMarkdown-0.1.12-ru.5-x64.zip'
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -Force
     Write-Output "Package: $archive"
     Get-FileHash -LiteralPath $archive -Algorithm SHA256

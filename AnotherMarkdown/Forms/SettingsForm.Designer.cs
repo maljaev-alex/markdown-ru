@@ -6,7 +6,7 @@
 
     protected override void Dispose(bool disposing)
     {
-      if (disposing) { cliDiscoveryGeneration++; CancelModelDiscovery(); components?.Dispose(); }
+      if (disposing) { cliDiscoveryGeneration++; CancelModelDiscovery(); CancelApiDiscovery(); components?.Dispose(); }
       base.Dispose(disposing);
     }
 

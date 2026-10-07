@@ -21,6 +21,8 @@ namespace AnotherMarkdown.Translation
       options.Validate(); token.ThrowIfCancellationRequested();
       if (string.IsNullOrWhiteSpace(markdown)) throw new ArgumentException("Документ пуст.");
       if (markdown.Length > 1000000) throw new ArgumentException("Документ слишком большой (более 1 млн символов). Разделите его на части.");
+      if (options.UseApi)
+        return await new ApiTranslator().TranslateAsync(markdown, options.ActiveApiConnection, options.TimeoutSeconds, token).ConfigureAwait(false);
       var directory = Path.Combine(Path.GetTempPath(), "AnotherMarkdown", Guid.NewGuid().ToString("N"));
       Directory.CreateDirectory(directory);
       try {

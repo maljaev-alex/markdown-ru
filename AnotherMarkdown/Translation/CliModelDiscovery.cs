@@ -225,7 +225,7 @@ namespace AnotherMarkdown.Translation
             await SendAsync(process, new JObject {
               ["method"] = "initialize", ["id"] = 1,
               ["params"] = new JObject { ["clientInfo"] = new JObject {
-                ["name"] = "markdown_ru", ["title"] = "Markdown RU", ["version"] = "0.1.12.4"
+                ["name"] = "markdown_ru", ["title"] = "Markdown RU", ["version"] = "0.1.12.5"
               } }
             }, timeout.Token).ConfigureAwait(false);
             await ReadResponseAsync(reader, 1, timeout.Token).ConfigureAwait(false);
