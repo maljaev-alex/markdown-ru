@@ -3,6 +3,7 @@
   <UsingTask TaskName="NppPlugin.DllExport.MSBuild.DllExportTask"
              AssemblyFile="NppPlugin.DllExport.MSBuild.dll"/>
   <Target Name="AfterBuild"
+          Condition="'$(SkipLegacyDllExport)' != 'true'"
           DependsOnTargets="GetFrameworkPaths"
           >
     <PropertyGroup>

@@ -4,8 +4,8 @@ namespace AnotherMarkdown.Entities
 {
   public class ProxySettings : ISettings
   {
-    public bool SyncViewWithCaretPosition => _s.SyncViewWithCaretPosition;
-    public bool SyncViewWithFirstVisibleLine => _s.SyncViewWithFirstVisibleLine;
+    public bool SyncViewWithCaretPosition => _s.SyncViewWithCaretPosition && !(_readOnlyPreview?.Invoke() ?? false);
+    public bool SyncViewWithFirstVisibleLine => _s.SyncViewWithFirstVisibleLine && !(_readOnlyPreview?.Invoke() ?? false);
     public string AssetsPath => _s.AssetsPath;
     public string CssFileName => _s.CssFileName;
     public string CssDarkModeFileName => _s.CssDarkModeFileName;
@@ -18,11 +18,13 @@ namespace AnotherMarkdown.Entities
     public string DefaultDarkModeCssFile => _s.DefaultDarkModeCssFile;
     public string[] EnabledMarkdownPlugins => _s.EnabledMarkdownPlugins;
 
-    public ProxySettings(Settings s)
+    public ProxySettings(Settings s, System.Func<bool> readOnlyPreview = null)
     {
       _s = s;
+      _readOnlyPreview = readOnlyPreview;
     }
 
     private readonly Settings _s;
+    private readonly System.Func<bool> _readOnlyPreview;
   }
 }

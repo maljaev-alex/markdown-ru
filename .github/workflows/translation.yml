@@ -1,0 +1,20 @@
+name: Build Markdown RU
+on:
+  push:
+    branches: [cli-translation, master]
+  workflow_dispatch:
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build and test
+        shell: powershell
+        run: ./build_tools/build-translation.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AnotherMarkdown-RU-x64
+          path: Release/AnotherMarkdown-*-x64.zip

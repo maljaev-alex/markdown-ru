@@ -257,9 +257,13 @@ namespace Kbg.NppPluginNET.PluginInfrastructure
 
     public static string ReadIniValue(string section, string key, string iniFileName, string defaultValue = "")
     {
-      StringBuilder temp = new StringBuilder(255);
-      int i = GetPrivateProfileString(section, key, defaultValue, temp, 255, iniFileName);
-      return temp.ToString();
+      // CLI argument templates and long paths exceed the old 254-character limit.
+      for (var capacity = 512; capacity <= 32768; capacity *= 2) {
+        var temp = new StringBuilder(capacity);
+        var length = GetPrivateProfileString(section, key, defaultValue, temp, capacity, iniFileName);
+        if (length < capacity - 1) return temp.ToString();
+      }
+      throw new InvalidOperationException("INI value is longer than 32766 characters: " + section + "/" + key);
     }
 
     public static void WriteIniValue(string section, string key, string value, string iniFileName)

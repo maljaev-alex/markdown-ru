@@ -23,9 +23,10 @@ namespace AnotherMarkdown.Forms
     {
       OnEvent = new EventDispatcher();
       InitializeComponent();
+      InitializeTranslation(settings);
 
       var webView = new Webview2WebbrowserControl();
-      webView.Initialize(new ProxySettings(settings), OnEvent);
+      webView.Initialize(new ProxySettings(settings, () => IsTranslationPreview), OnEvent);
 
       panel1.Controls.Clear();
       webView.AddToHost(panel1);
@@ -39,6 +40,7 @@ namespace AnotherMarkdown.Forms
 
     public void UpdateSettings(Settings settings)
     {
+      UpdateTranslationSettings(settings);
       var isDarkModeEnabled = settings.IsDarkModeEnabled;
       if (isDarkModeEnabled) {
         tbPreview.BackColor = Color.Black;
@@ -51,20 +53,19 @@ namespace AnotherMarkdown.Forms
         toolStripStatusLabel1.ForeColor = SystemColors.ControlText;
       }
 
-      tbPreview.Visible = settings.ShowToolbar;
+      tbPreview.ForeColor = isDarkModeEnabled ? Color.White : SystemColors.ControlText;
+      tbPreview.Visible = settings.ShowToolbar || settings.Translation.ShowButtons;
       statusStrip2.Visible = settings.ShowStatusbar;
     }
 
     public async Task RenderMarkdown(string currentText, string filepath)
     {
-      if (_webView != null) {
-        await _webView.SetContentAsync(currentText, filepath);
-      }
+      await UpdateSourceAsync(currentText, filepath);
     }
 
     public async Task ScrollToElementWithLineNo(int lineNo)
     {
-      if (_webView != null) {
+      if (_webView != null && !IsTranslationPreview) {
         await _webView.ScrollToElementWithLineNo(lineNo);
       }
     }
@@ -130,6 +131,7 @@ namespace AnotherMarkdown.Forms
     {
       if (disposing) {
         _disposed = true;
+        CancelTranslation();
         if (_webView != null) {
           _webView.Dispose();
           _webView = null;

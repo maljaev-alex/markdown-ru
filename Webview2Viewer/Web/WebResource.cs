@@ -12,6 +12,7 @@ namespace Webview2Viewer
       [".xhtml"] = "application/xhtml+xml",
       [".txt"] = "text/plain",
       [".md"] = "text/markdown",
+      [".mdc"] = "text/markdown",
       [".csv"] = "text/csv",
 
       // Styles & scripts

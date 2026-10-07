@@ -6,8 +6,24 @@
   }
   options = { ...options, ...args };
 
+  if (options.readOnlyPreview) {
+    // Translated text is a view, not an editable version of the source buffer.
+    const preventEdit = event => {
+      if (event.type !== "click" || event.target.closest('input, textarea, [contenteditable="true"]')) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    };
+    ["click", "paste", "drop", "beforeinput"].forEach(name => document.addEventListener(name, preventEdit, true));
+    const disableInputs = () => document.querySelectorAll('#content input, #content textarea, #content [contenteditable="true"]').forEach(el => {
+      el.disabled = true;
+      if (el.hasAttribute('contenteditable')) el.setAttribute('contenteditable', 'false');
+    });
+    new MutationObserver(disableInputs).observe(document.getElementById("content"), { childList: true, subtree: true });
+  }
+
   const plugins = [
-    [/\.(md)$/i, 'http://assets.example/markdown/markdown.min.js', options.css],
+    [/\.(md|mdc)$/i, 'http://assets.example/markdown/markdown.min.js', options.css],
     [/\.pano360\.(json)$/i, 'http://assets.example/pano360/editor.js', null]
   ]
 

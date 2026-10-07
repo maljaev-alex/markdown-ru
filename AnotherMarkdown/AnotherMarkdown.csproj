@@ -10,6 +10,7 @@
     <AssemblyName>AnotherMarkdown</AssemblyName>
     <OutputPath>bin\Debug\</OutputPath>
     <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+    <PackagesDirectory Condition="'$(PackagesDirectory)' == ''">$(MSBuildThisFileDirectory)..\packages</PackagesDirectory>
     <TargetFrameworkProfile />
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x86' ">
@@ -69,10 +70,10 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="DiffPlex, Version=1.9.0.0, Culture=neutral, PublicKeyToken=1d35e91d1bd7bc0f, processorArchitecture=MSIL">
-      <HintPath>..\packages\DiffPlex.1.9.0\lib\net45\DiffPlex.dll</HintPath>
+      <HintPath>$(PackagesDirectory)\DiffPlex.1.9.0\lib\net45\DiffPlex.dll</HintPath>
     </Reference>
     <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
-      <HintPath>..\packages\Newtonsoft.Json.13.0.4\lib\net45\Newtonsoft.Json.dll</HintPath>
+      <HintPath>$(PackagesDirectory)\Newtonsoft.Json.13.0.4\lib\net45\Newtonsoft.Json.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Data" />
@@ -84,6 +85,19 @@
     <Compile Include="Entities\EventDispatcher.cs" />
     <Compile Include="Entities\ProxySettings.cs" />
     <Compile Include="Entities\Settings.cs" />
+    <Compile Include="Translation\TranslationOptions.cs" />
+    <Compile Include="Translation\CliProfiles.cs" />
+    <Compile Include="Translation\CliCommand.cs" />
+    <Compile Include="Translation\CliModelDiscovery.cs" />
+    <Compile Include="Translation\CliTranslator.cs" />
+    <Compile Include="Translation\ProcessJob.cs" />
+    <Compile Include="Translation\TranslationCache.cs" />
+    <Compile Include="Forms\MarkdownPreviewForm.Translation.cs">
+      <DependentUpon>MarkdownPreviewForm.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Forms\SettingsForm.Translation.cs">
+      <DependentUpon>SettingsForm.cs</DependentUpon>
+    </Compile>
     <Compile Include="Forms\AboutForm.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -152,17 +166,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Resources\markdown-16x16-solid.bmp" />
-  </ItemGroup>
-  <ItemGroup>
-    <COMReference Include="SHDocVw">
-      <Guid>{EAB22AC0-30C1-11CF-A7EB-0000C05BAE0B}</Guid>
-      <VersionMajor>1</VersionMajor>
-      <VersionMinor>1</VersionMinor>
-      <Lcid>0</Lcid>
-      <WrapperTool>tlbimp</WrapperTool>
-      <Isolated>False</Isolated>
-      <EmbedInteropTypes>True</EmbedInteropTypes>
-    </COMReference>
   </ItemGroup>
   <ItemGroup>
     <None Include="Resources\markdown-16x16-solid-dark.png" />

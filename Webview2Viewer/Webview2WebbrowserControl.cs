@@ -104,10 +104,11 @@ namespace Webview2Viewer
       await ExecuteWebviewActionAsync((webView) => webView.ExecuteScriptAsync($"window.scrollToLine({lineNo})"));
     }
 
-    public async Task SetContentAsync(string content, string documentPath)
+    public async Task SetContentAsync(string content, string documentPath, bool readOnlyPreview = false)
     {
       await _webView;
       var fs = _webServices.OfType<LocalFileService>().First();
+      fs.ReadOnly = readOnlyPreview;
 
       var assetsPath = (!string.IsNullOrEmpty(_settings.AssetsPath) && Directory.Exists(_settings.AssetsPath))
         ? _settings.AssetsPath
@@ -119,6 +120,7 @@ namespace Webview2Viewer
       }
       var lineMark = (_settings.SyncViewWithFirstVisibleLine || _settings.SyncViewWithCaretPosition);
       var reload = (_documentPath != documentPath);
+      reload = reload || (_readOnlyPreview != readOnlyPreview);
       reload = reload || (_assetPath != assetsPath);
       reload = reload || (_cssFile != cssFile);
       reload = reload || (_lineMark != lineMark);
@@ -150,6 +152,7 @@ namespace Webview2Viewer
       }
 
       _documentPath = documentPath;
+      _readOnlyPreview = readOnlyPreview;
       _cssFile = cssFile;
       _lineMark = lineMark;
       _trackFirstLine = _settings.SyncViewWithFirstVisibleLine;
@@ -169,10 +172,11 @@ namespace Webview2Viewer
 
       loader = loader.Replace("__BASE_URL__", HttpUtility2.PathToUri(baseDir));
       var options = new JObject {
-        ["document"] = "http://local.example" + fs.DocumentUri
+        ["document"] = "http://local.example" + fs.DocumentUri,
+        ["readOnlyPreview"] = readOnlyPreview
       };
 
-      if (documentPath.EndsWith(".md")) {
+      if (IsMarkdownPath(documentPath)) {
         options["css"] = cssFile;
         options["lineMark"] = (_settings.SyncViewWithFirstVisibleLine || _settings.SyncViewWithCaretPosition);
         options["trackFirstLine"] = _settings.SyncViewWithFirstVisibleLine;
@@ -198,6 +202,9 @@ namespace Webview2Viewer
       });
     }
 
+    public static bool IsMarkdownPath(string path) =>
+      path != null && (path.EndsWith(".md", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".mdc", StringComparison.OrdinalIgnoreCase));
+
     private double ConvertToZoomFactor(int zoomLevel) => Convert.ToDouble(zoomLevel) / 100;
 
     void OnWebBrowser_NavigationStarting(object sender, CoreWebView2NavigationStartingEventArgs e)
@@ -210,7 +217,7 @@ namespace Webview2Viewer
         var p = new Process();
         var navUri = new Uri(e.Uri);
         if (navUri.DnsSafeHost == "local.example") {
-          if (_on.Navigate != null && navUri.AbsolutePath.EndsWith(".md")) {
+          if (_on.Navigate != null && IsMarkdownPath(navUri.AbsolutePath)) {
             var path = HttpUtility2.UriToPath(navUri.AbsolutePath);
             if (File.Exists(path)) {
               _on.Navigate(this, new NavigateToEvent { Filename = path });
@@ -288,6 +295,7 @@ namespace Webview2Viewer
 
     private string _documentPath;
     private bool _lineMark;
+    private bool _readOnlyPreview;
     private bool _trackFirstLine;
     private string _enabledMarkdownPlugins;
 

@@ -16,7 +16,10 @@ namespace AnotherMarkdown
 
     internal static void CommandMenuInit()
     {
-      mdpanel?.InitCommandMenu();
+      // setInfo must supply Notepad++'s handles before the controller reads its config path.
+      // A beforefieldinit static field initializer may run before that assignment.
+      if (mdpanel == null) mdpanel = new MarkdownPanelController();
+      mdpanel.InitCommandMenu();
     }
 
     internal static void SetToolBarIcon()
@@ -35,6 +38,6 @@ namespace AnotherMarkdown
     public const string ModuleName = "AnotherMarkdown";
     public const string PluginTitle = "AnotherMarkdown";
 
-    private static MarkdownPanelController mdpanel = new MarkdownPanelController();
+    private static MarkdownPanelController mdpanel;
   }
 }

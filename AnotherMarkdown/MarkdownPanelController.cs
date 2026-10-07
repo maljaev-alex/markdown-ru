@@ -12,6 +12,7 @@ using System.Windows.Forms;
 using AnotherMarkdown.Entities;
 using AnotherMarkdown.Forms;
 using AnotherMarkdown.Properties;
+using AnotherMarkdown.Translation;
 using DiffPlex;
 using Kbg.NppPluginNET.PluginInfrastructure;
 using PanelCommon;
@@ -33,6 +34,7 @@ namespace AnotherMarkdown
                 _previewForm.OnEvent.PasteImage += (_, e) => PasteImage(e);
                 _previewForm.OnEvent.Navigate += (_, e) => OpenFile(e);
                 _previewForm.DockClosed += (_, e) => TogglePanelVisible();
+                _previewForm.TranslationSettingsRequested += (_, e) => EditSettings(true);
               }
               catch (Exception ex) {
                 Console.WriteLine(ex.ToString());
@@ -89,6 +91,15 @@ namespace AnotherMarkdown
       settings.ShowToolbar = PluginUtils.ReadIniBool("Options", "ShowToolbar", _iniFilePath);
       settings.ShowStatusbar = PluginUtils.ReadIniBool("Options", "ShowStatusbar", _iniFilePath);
       settings.IsDarkModeEnabled = IsDarkModeEnabled();
+      settings.Translation.Executable = Win32.ReadIniValue("Translation", "Executable", _iniFilePath, settings.Translation.Executable);
+      settings.Translation.Model = Win32.ReadIniValue("Translation", "Model", _iniFilePath, settings.Translation.Model);
+      settings.Translation.Arguments = Win32.ReadIniValue("Translation", "Arguments", _iniFilePath, settings.Translation.Arguments);
+      settings.Translation.ProviderId = Win32.ReadIniValue("Translation", "ProviderId", _iniFilePath, CliProfiles.Identify(settings.Translation.Executable));
+      settings.Translation.UseDefaultModel = Win32.ReadIniValue("Translation", "UseDefaultModel", _iniFilePath, string.IsNullOrWhiteSpace(settings.Translation.Model).ToString()).Equals("True", StringComparison.OrdinalIgnoreCase);
+      settings.Translation.UseCustomArguments = Win32.ReadIniValue("Translation", "UseCustomArguments", _iniFilePath, (settings.Translation.Arguments != TranslationOptions.DefaultArguments).ToString()).Equals("True", StringComparison.OrdinalIgnoreCase);
+      settings.Translation.OutputFormat = Win32.ReadIniValue("Translation", "OutputFormat", _iniFilePath, CliProfiles.Get(settings.Translation.ProviderId).OutputFormat);
+      settings.Translation.TimeoutSeconds = Math.Max(10, Math.Min(3600, Win32.GetPrivateProfileInt("Translation", "TimeoutSeconds", 300, _iniFilePath)));
+      settings.Translation.ShowButtons = Win32.ReadIniValue("Translation", "ShowButtons", _iniFilePath, "True").Equals("True", StringComparison.OrdinalIgnoreCase);
       return settings;
     }
 
@@ -193,16 +204,17 @@ namespace AnotherMarkdown
       PluginBase.SetCommand(2, "Synchronize with &caret position", SyncViewWithCaretClicked, _settings.SyncViewWithCaretPosition);
       PluginBase.SetCommand(3, "Synchronize with &first visible line in editor", SyncViewWithFirstVisibleLineClicked, _settings.SyncViewWithFirstVisibleLine);
       PluginBase.SetCommand(4, "---", null);
-      PluginBase.SetCommand(5, "&Settings", EditSettings);
+      PluginBase.SetCommand(5, "&Settings", () => EditSettings());
       PluginBase.SetCommand(6, "&Help", ShowHelp);
       PluginBase.SetCommand(7, "&About", ShowAboutDialog);
       _myDlgId = 0;
     }
 
-    private void EditSettings()
+    private void EditSettings(bool translationTab = false)
     {
-      var settingsForm = new SettingsForm(_settings);
-      if (settingsForm.ShowDialog() == DialogResult.OK) {
+      using (var settingsForm = new SettingsForm(_settings)) {
+        if (translationTab) settingsForm.SelectTranslationTab();
+        if (settingsForm.ShowDialog(new PluginWindowOwner(PluginBase.nppData._nppHandle)) != DialogResult.OK) return;
         _settings.AssetsPath = settingsForm.AssetsPath;
         _settings.CssFileName = settingsForm.CssFileName;
         _settings.CssDarkModeFileName = settingsForm.CssDarkModeFileName;
@@ -210,6 +222,7 @@ namespace AnotherMarkdown
         _settings.ShowToolbar = settingsForm.ShowToolbar;
         _settings.ShowStatusbar = settingsForm.ShowStatusbar;
         _settings.EnabledMarkdownPlugins = settingsForm.AllowedMarkdownPlugins;
+        _settings.Translation = settingsForm.TranslationOptions;
 
         _settings.IsDarkModeEnabled = IsDarkModeEnabled();
         SaveSettings();
@@ -219,6 +232,12 @@ namespace AnotherMarkdown
           RenderMarkdown(force: true);
         }
       }
+    }
+
+    private sealed class PluginWindowOwner : IWin32Window
+    {
+      public PluginWindowOwner(IntPtr handle) { Handle = handle; }
+      public IntPtr Handle { get; }
     }
 
     private void OpenFile(NavigateToEvent args)
@@ -231,6 +250,7 @@ namespace AnotherMarkdown
 
     private void PasteImage(PasteImageEvent args)
     {
+      if (_previewForm?.IsTranslationPreview == true) return;
       var path = _nppGateway.GetCurrentFilePath();
       var rootDir = Path.GetDirectoryName(path);
       var targetDir = Path.Combine(rootDir, Path.GetDirectoryName(args.Filename));
@@ -281,6 +301,7 @@ namespace AnotherMarkdown
 
     private void FirstLineChanged(FirstLineChangedEvent args)
     {
+      if (_previewForm?.IsTranslationPreview == true) return;
       var scintillaGateway = scintillaGatewayFactory();
       var visibleLine = scintillaGateway.GetFirstVisibleLine();
       var docLine = scintillaGateway.DocLineFromVisible(visibleLine);
@@ -294,6 +315,7 @@ namespace AnotherMarkdown
 
     private void DocumentChanged(DocumentChangedEvent args)
     {
+      if (_previewForm?.IsTranslationPreview == true) return;
       var scintillaGateway = scintillaGatewayFactory();
 
       var currentTextLength = scintillaGateway.GetLength();
@@ -437,6 +459,15 @@ namespace AnotherMarkdown
       Win32.WriteIniValue("Options", "ZoomLevel", _settings.ZoomLevel.ToString(), _iniFilePath);
       Win32.WriteIniValue("Options", "ShowToolbar", _settings.ShowToolbar.ToString(), _iniFilePath);
       Win32.WriteIniValue("Options", "ShowStatusbar", _settings.ShowStatusbar.ToString(), _iniFilePath);
+      Win32.WriteIniValue("Translation", "Executable", _settings.Translation.Executable, _iniFilePath);
+      Win32.WriteIniValue("Translation", "Model", _settings.Translation.Model, _iniFilePath);
+      Win32.WriteIniValue("Translation", "Arguments", _settings.Translation.Arguments, _iniFilePath);
+      Win32.WriteIniValue("Translation", "ProviderId", _settings.Translation.ProviderId, _iniFilePath);
+      Win32.WriteIniValue("Translation", "UseDefaultModel", _settings.Translation.UseDefaultModel.ToString(), _iniFilePath);
+      Win32.WriteIniValue("Translation", "UseCustomArguments", _settings.Translation.UseCustomArguments.ToString(), _iniFilePath);
+      Win32.WriteIniValue("Translation", "OutputFormat", _settings.Translation.OutputFormat, _iniFilePath);
+      Win32.WriteIniValue("Translation", "TimeoutSeconds", _settings.Translation.TimeoutSeconds.ToString(), _iniFilePath);
+      Win32.WriteIniValue("Translation", "ShowButtons", _settings.Translation.ShowButtons.ToString(), _iniFilePath);
     }
 
     private void ShowAboutDialog()

@@ -18,6 +18,7 @@ namespace Webview2Viewer.Web
     public string DocumentPath { get; private set; }
     public string DocumentContent { get; set; }
     public string Hostname { get; }
+    public bool ReadOnly { get; set; }
 
     public LocalFileService(CoreWebView2Environment environment, string host, IEventDispatcher eventDispatcher)
     {
@@ -59,6 +60,10 @@ namespace Webview2Viewer.Web
 
     private void HttpPutContent(CoreWebView2WebResourceRequestedEventArgs e, Uri requestUri)
     {
+      if (ReadOnly) {
+        e.Response = _httpEnvironment.CreateWebResourceResponse(new MemoryStream(), 403, "Read-only preview", "Access-Control-Allow-Origin: *");
+        return;
+      }
       if (!DocumentUri.Equals(requestUri.AbsolutePath, StringComparison.InvariantCultureIgnoreCase)) {
         Error404(e);
         return;

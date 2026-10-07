@@ -28,32 +28,31 @@ namespace AnotherMarkdown.Forms
       AssetsPath = settings.AssetsPath;
       ZoomLevel = settings.ZoomLevel;
       CssFileName = settings.CssFileName;
-      if (string.IsNullOrEmpty(CssFileName)) {
-        CssFileName = settings.DefaultCssFile;
-      }
       CssDarkModeFileName = settings.CssDarkModeFileName;
-      if (string.IsNullOrEmpty(CssDarkModeFileName)) {
-        CssDarkModeFileName = settings.DefaultDarkModeCssFile;
-      }
 
       ShowToolbar = settings.ShowToolbar;
       ShowStatusbar = settings.ShowStatusbar;
 
       InitializeComponent();
+      InitializeTranslationSettings(settings);
 
       tbAssetsPath.Text = AssetsPath;
-      trackBar1.Value = ZoomLevel;
+      trackBar1.Value = Math.Max(trackBar1.Minimum, Math.Min(trackBar1.Maximum, ZoomLevel));
       lblZoomValue.Text = $"{ZoomLevel}%";
       tbCssFile.Text = CssFileName;
       tbDarkmodeCssFile.Text = CssDarkModeFileName;
       cbShowToolbar.Checked = ShowToolbar;
       cbShowStatusbar.Checked = ShowStatusbar;
 
+      _originalPlugins = settings.EnabledMarkdownPlugins ?? new string[0];
+      try {
       var pluginConfig = File.ReadAllText(settings.DefaultAssetPath + "/markdown/md.extensions.json");
       var plugins = JsonConvert.DeserializeObject<JObject>(pluginConfig)
+        ?? throw new JsonException("Expected a Markdown extension object.");
+      var pluginItems = plugins
         .Properties()
         .Select(li => {          
-          var plugin = li.Value.ToObject<MarkdownPlugin>();
+          var plugin = li.Value.ToObject<MarkdownPlugin>() ?? throw new JsonException("Invalid Markdown extension.");
           plugin.Id = li.Name;
           return plugin;
         })
@@ -61,8 +60,14 @@ namespace AnotherMarkdown.Forms
         .ToArray();
 
       MarkdownPlugins.Items.Clear();
-      foreach (var plugin in plugins) {
-        MarkdownPlugins.Items.Add(plugin, settings.EnabledMarkdownPlugins.Contains(plugin.Id));
+      foreach (var plugin in pluginItems) {
+        MarkdownPlugins.Items.Add(plugin, _originalPlugins.Contains(plugin.Id));
+      }
+      _pluginsLoaded = true;
+      }
+      catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is JsonException) {
+        MarkdownPlugins.Enabled = false;
+        sblInvalidHtmlPath.Text = "Не удалось прочитать расширения Markdown. Текущий выбор будет сохранён.";
       }
     }
 
@@ -84,12 +89,26 @@ namespace AnotherMarkdown.Forms
 
     private void btnSave_Click(object sender, EventArgs e)
     {
-      if (string.IsNullOrEmpty(sblInvalidHtmlPath.Text)) {
+      var assetsPath = tbAssetsPath.Text.Trim();
+      if (assetsPath.Length != 0 && !Directory.Exists(Environment.ExpandEnvironmentVariables(assetsPath))) {
+        settingsTabs.SelectedTab = previewPage;
+        sblInvalidHtmlPath.Text = "Каталог ресурсов не найден.";
+        tbAssetsPath.Focus();
+        return;
+      }
+      if (!ValidateTranslationSettings()) return;
+      {
+        AssetsPath = assetsPath;
+        CssFileName = tbCssFile.Text.Trim();
+        CssDarkModeFileName = tbDarkmodeCssFile.Text.Trim();
+        ZoomLevel = trackBar1.Value;
+        ShowToolbar = cbShowToolbar.Checked;
+        ShowStatusbar = cbShowStatusbar.Checked;
         List<string> plugins = new List<string>();
         foreach(MarkdownPlugin item in MarkdownPlugins.CheckedItems) {
           plugins.Add(item.Id);
         }
-        AllowedMarkdownPlugins = plugins.ToArray();
+        AllowedMarkdownPlugins = _pluginsLoaded ? plugins.ToArray() : _originalPlugins;
         DialogResult = DialogResult.OK;
       }
     }
@@ -104,7 +123,10 @@ namespace AnotherMarkdown.Forms
       using (OpenFileDialog openFileDialog = new OpenFileDialog()) {
         openFileDialog.Filter = "css files (*.css)|*.css|All files (*.*)|*.*";
         openFileDialog.RestoreDirectory = true;
-        if (openFileDialog.ShowDialog() == DialogResult.OK) {
+        var current = (sender as Button).Name == "btnChooseCss" ? tbCssFile.Text : tbDarkmodeCssFile.Text;
+        if (File.Exists(current)) { openFileDialog.InitialDirectory = Path.GetDirectoryName(Path.GetFullPath(current)); openFileDialog.FileName = Path.GetFullPath(current); }
+        else openFileDialog.InitialDirectory = _defaultAssetPath;
+        if (openFileDialog.ShowDialog(this) == DialogResult.OK) {
           if ((sender as Button).Name == "btnChooseCss") {
             CssFileName = openFileDialog.FileName;
             tbCssFile.Text = CssFileName;
@@ -150,7 +172,7 @@ namespace AnotherMarkdown.Forms
       using (var folderOpenDialog = new FolderBrowserDialog()) {
         folderOpenDialog.SelectedPath = !string.IsNullOrEmpty(AssetsPath) ? AssetsPath : Path.GetFullPath(_defaultAssetPath);
 
-        if (folderOpenDialog.ShowDialog() == DialogResult.OK) {
+        if (folderOpenDialog.ShowDialog(this) == DialogResult.OK) {
           if (folderOpenDialog.SelectedPath.Replace("\\", "/") == _defaultAssetPath) {
             AssetsPath = string.Empty;
           }
@@ -191,5 +213,7 @@ namespace AnotherMarkdown.Forms
     }
 
     private string _defaultAssetPath;
+    private string[] _originalPlugins;
+    private bool _pluginsLoaded;
   }
 }
