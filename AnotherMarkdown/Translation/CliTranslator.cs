@@ -145,9 +145,9 @@ namespace AnotherMarkdown.Translation
     public static string ResolveExecutable(string value)
     {
       value = Environment.ExpandEnvironmentVariables((value ?? "").Trim());
-      if (Path.HasExtension(value) && !CliProfiles.IsExePath(value))
-        throw new ArgumentException("Можно выбрать только CLI с расширением .exe. Скриптовые файлы не поддерживаются.");
-      var extensions = Path.HasExtension(value) ? new[] { "" } : new[] { ".exe" };
+      if (Path.HasExtension(value) && !CliProfiles.IsLauncherPath(value))
+        throw new ArgumentException("Можно выбрать CLI с расширением .exe, .cmd или .bat. Другие скриптовые файлы не поддерживаются.");
+      var extensions = Path.HasExtension(value) ? new[] { "" } : new[] { ".exe", ".cmd", ".bat" };
       if (Path.IsPathRooted(value)) {
         foreach (var extension in extensions) if (File.Exists(value + extension)) return value + extension;
       }

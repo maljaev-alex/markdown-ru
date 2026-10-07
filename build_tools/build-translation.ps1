@@ -51,6 +51,13 @@ if (-not $SkipTests) {
     if ($LASTEXITCODE -ne 0) { throw 'Test compilation failed.' }
     & $tests
     if ($LASTEXITCODE -ne 0) { throw 'Translation tests failed.' }
+    $launcherTests = Join-Path $CacheRoot 'CliLauncherTests.exe'
+    $launcherSources = @($sources | Where-Object { $_ -notlike '*TranslationTests.cs' })
+    $launcherSources += Join-Path $projectRoot 'tests\CliLauncherTests.cs'
+    & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe "/out:$launcherTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$jsonAssembly" $launcherSources
+    if ($LASTEXITCODE -ne 0) { throw 'Launcher test compilation failed.' }
+    & $launcherTests
+    if ($LASTEXITCODE -ne 0) { throw 'Launcher tests failed.' }
     $settingsTests = Join-Path $CacheRoot 'SettingsTests.exe'
     $settingsSources = @($sources | Where-Object { $_ -notlike '*TranslationTests.cs' })
     $settingsSources += @('AnotherMarkdown\Entities\Settings.cs', 'AnotherMarkdown\Forms\SettingsForm.cs', 'AnotherMarkdown\Forms\SettingsForm.Designer.cs', 'AnotherMarkdown\Forms\SettingsForm.Translation.cs', 'tests\SettingsTests.cs') | ForEach-Object { Join-Path $projectRoot $_ }
@@ -83,7 +90,7 @@ try {
     }
     Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\loader.js') -Destination (Join-Path $stage 'assets\loader.js') -Force
     Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\translation-ru.md') -Destination (Join-Path $stage 'TRANSLATION-RU.md')
-    $archive = Join-Path $OutputDirectory 'AnotherMarkdown-0.1.12-ru.2-x64.zip'
+    $archive = Join-Path $OutputDirectory 'AnotherMarkdown-0.1.12-ru.3-x64.zip'
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -Force
     Write-Output "Package: $archive"
     Get-FileHash -LiteralPath $archive -Algorithm SHA256

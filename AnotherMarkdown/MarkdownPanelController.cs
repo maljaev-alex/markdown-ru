@@ -93,6 +93,7 @@ namespace AnotherMarkdown
       settings.IsDarkModeEnabled = IsDarkModeEnabled();
       settings.Translation.Executable = Win32.ReadIniValue("Translation", "Executable", _iniFilePath, settings.Translation.Executable);
       settings.Translation.Model = Win32.ReadIniValue("Translation", "Model", _iniFilePath, settings.Translation.Model);
+      settings.Translation.ReasoningEffort = Win32.ReadIniValue("Translation", "ReasoningEffort", _iniFilePath, "");
       settings.Translation.Arguments = Win32.ReadIniValue("Translation", "Arguments", _iniFilePath, settings.Translation.Arguments);
       settings.Translation.ProviderId = Win32.ReadIniValue("Translation", "ProviderId", _iniFilePath, CliProfiles.Identify(settings.Translation.Executable));
       settings.Translation.UseDefaultModel = Win32.ReadIniValue("Translation", "UseDefaultModel", _iniFilePath, string.IsNullOrWhiteSpace(settings.Translation.Model).ToString()).Equals("True", StringComparison.OrdinalIgnoreCase);
@@ -461,6 +462,7 @@ namespace AnotherMarkdown
       Win32.WriteIniValue("Options", "ShowStatusbar", _settings.ShowStatusbar.ToString(), _iniFilePath);
       Win32.WriteIniValue("Translation", "Executable", _settings.Translation.Executable, _iniFilePath);
       Win32.WriteIniValue("Translation", "Model", _settings.Translation.Model, _iniFilePath);
+      Win32.WriteIniValue("Translation", "ReasoningEffort", _settings.Translation.ReasoningEffort ?? "", _iniFilePath);
       Win32.WriteIniValue("Translation", "Arguments", _settings.Translation.Arguments, _iniFilePath);
       Win32.WriteIniValue("Translation", "ProviderId", _settings.Translation.ProviderId, _iniFilePath);
       Win32.WriteIniValue("Translation", "UseDefaultModel", _settings.Translation.UseDefaultModel.ToString(), _iniFilePath);

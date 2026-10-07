@@ -24,10 +24,11 @@ internal static class TranslationTests
     if (args.Length > 0 && args[0] == "models-real") {
       foreach (var provider in new[] { "codex", "cursor" }) {
         var installation = CliProfiles.DiscoverInstalled().FirstOrDefault(i => i.ProviderId == provider);
-        if (installation == null) { Console.WriteLine("SKIP " + provider + ": no EXE installation"); continue; }
+        if (installation == null) { Console.WriteLine("SKIP " + provider + ": no installation"); continue; }
         var path = installation.Executable;
         var catalog = new CliModelDiscovery().LoadAsync(provider, path, CancellationToken.None).GetAwaiter().GetResult();
         Console.WriteLine(provider + ": count=" + catalog.Models.Count + ", default=" + catalog.DefaultModelId + ", configRead=" + catalog.McpConfigurationRead + ", MCP names=" + catalog.McpServerNames.Count);
+        foreach (var model in catalog.Models.Where(m => m.Id == "gpt-6-astra" || m.Id == "grok-4.7-xhigh")) Console.WriteLine(model.Id + " efforts: " + string.Join(",", model.ReasoningEfforts.Select(e => e.Id)));
         if (!catalog.Models.Any(m => m.Id == (provider == "codex" ? "gpt-6-astra" : "grok-4.7-xhigh"))) return 1;
         if (provider == "codex" && !catalog.McpConfigurationRead) return 1;
       }
@@ -35,6 +36,7 @@ internal static class TranslationTests
     }
     if (args.Length > 0 && args[0] == "real") {
       var options = new TranslationOptions();
+      options.ReasoningEffort = "low";
       if (args.Length > 1 && args[1] == "cursor") {
         options = CliProfiles.Defaults("cursor", "agent"); options.UseDefaultModel = false; options.Model = "grok-4.7-xhigh";
       }
@@ -57,10 +59,10 @@ internal static class TranslationTests
       object result = new { };
       if (method == "model/list") {
         if (request["params"]?["cursor"] == null)
-          result = new { data = new[] { new { model = "first", displayName = "First", isDefault = true } }, nextCursor = "page2" };
+          result = new { data = new[] { new { model = "first", displayName = "First", isDefault = true, defaultReasoningEffort = "medium", supportedReasoningEfforts = new[] { new { reasoningEffort = "ultra", description = "Deep reasoning" }, new { reasoningEffort = "low", description = "Quick" } } } }, nextCursor = "page2" };
         else result = new { data = new[] { new { model = "second", displayName = "Second", isDefault = false } }, nextCursor = (string)null };
       }
-      if (method == "config/read") result = new { config = new { model = "second", mcp_servers = new { example = new { enabled = true } } } };
+      if (method == "config/read") result = new { config = new { model = "second", model_reasoning_effort = "high", mcp_servers = new { example = new { enabled = true } } } };
       Console.WriteLine(JObject.FromObject(new { id = request["id"], result }).ToString(Newtonsoft.Json.Formatting.None));
     }
     return 0;
@@ -73,7 +75,8 @@ internal static class TranslationTests
     if (mode == "sleep") { Thread.Sleep(60000); return 0; }
     if (mode == "tree") {
       var child = Process.Start(new ProcessStartInfo(executable, "fake sleep") { UseShellExecute = false, CreateNoWindow = true });
-      File.WriteAllText(args[2], child.Id.ToString());
+      File.WriteAllText(args[2] + ".tmp", child.Id.ToString());
+      File.Move(args[2] + ".tmp", args[2]);
       Thread.Sleep(60000);
       return 0;
     }
@@ -113,6 +116,13 @@ internal static class TranslationTests
     var codexCatalog = await new CliModelDiscovery().LoadAsync("codex", executable, CancellationToken.None);
     Check(codexCatalog.Models.Count == 2 && codexCatalog.DefaultModelId == "second" && codexCatalog.Models[1].IsDefault, "Codex pagination and configured default override catalog recommendation");
     Check(codexCatalog.McpConfigurationRead && codexCatalog.McpServerNames.SequenceEqual(new[] { "example" }), "Codex MCP configuration read status and names");
+    Check(codexCatalog.ConfiguredReasoningEffort == "high" && codexCatalog.Models[0].ReasoningEfforts.Select(e => e.Id).SequenceEqual(new[] { "ultra", "low" }) && codexCatalog.Models[0].DefaultReasoningEffort == "medium", "Codex effort metadata preserves advertised order and CLI default");
+    var effortOptions = CliProfiles.Defaults("codex", executable); effortOptions.ReasoningEffort = "ultra";
+    Check(CliProfiles.ArgumentsFor(effortOptions).Contains("model_reasoning_effort=ultra"), "Codex selected effort reaches generated command");
+    var effortKey = TranslationCache.Key("source", effortOptions); effortOptions.ReasoningEffort = "low";
+    Check(effortKey != TranslationCache.Key("source", effortOptions), "effort changes invalidate translation cache");
+    effortOptions.ReasoningEffort = "high & echo injected";
+    await Throws<ArgumentException>(() => Task.FromResult(CliProfiles.ArgumentsFor(effortOptions)), "effort", "invalid effort cannot inject arguments");
     var hostEncoding = Console.InputEncoding;
     try {
       Console.InputEncoding = new UTF8Encoding(true);
@@ -122,6 +132,8 @@ internal static class TranslationTests
     finally { Console.InputEncoding = hostEncoding; }
     var cursorCatalog = await new CliModelDiscovery().LoadAsync("cursor", executable, CancellationToken.None);
     Check(cursorCatalog.Models.Count == 2 && cursorCatalog.DefaultModelId == "auto" && cursorCatalog.Models[1].Id == "grok-4.7-xhigh", "Cursor model list strips ANSI and parses default");
+    var variants = CliModelDiscovery.ParseCommandOutput("cursor", "grok-4.7-low - Grok 4.7 Low\ngrok-4.7-high - Grok 4.7 High\ngrok-4.7-xhigh - Grok 4.7 Extra High\ngrok-4.7-xhigh-fast - Grok 4.7 Extra High Fast\nother-high - Other\n", CancellationToken.None);
+    Check(variants.Models[0].ReasoningEfforts.Select(e => e.ModelId).SequenceEqual(new[] { "grok-4.7-low", "grok-4.7-high", "grok-4.7-xhigh" }) && variants.Models[3].ReasoningEfforts.Single().ModelId == "grok-4.7-xhigh-fast" && variants.Models[4].BaseModelId == null, "Cursor effort uses only matching advertised variants, keeps Fast separate and never guesses suffixes");
     Check(CliTranslator.DecodeOutput("{\"result\":\"    indented code\\n\"}\n{\"type\":\"stats\"}", "json-result").StartsWith("    "), "JSONL answer survives trailing stats and preserves Markdown indentation");
     Check(CliTranslator.DecodeOutput("{\"type\":\"text\",\"part\":{\"id\":\"1\",\"text\":\"old\"}}\n{\"type\":\"text\",\"part\":{\"id\":\"1\",\"text\":\"new\"}}", "opencode-json") == "new", "OpenCode cumulative text snapshots are not duplicated");
     await Throws<InvalidOperationException>(() => Task.FromResult(CliTranslator.DecodeOutput("{\"result\":\"denied\",\"is_error\":true}", "json-result")), "denied", "structured CLI failure is not a translation");
@@ -142,12 +154,13 @@ internal static class TranslationTests
     Check(await Translate(quoted) == quoted.Model, "Windows argument quoting round-trip");
     await Throws<InvalidOperationException>(() => Translate(Options("fake error")), "EXPECTED_ERROR", "nonzero exit drains stderr and returns diagnostic");
     await Throws<InvalidOperationException>(() => new CliTranslator().TranslateAsync(new string('a', 500000), Options("fake early"), CancellationToken.None), "EARLY_EXIT", "early CLI exit preserves diagnostic when stdin breaks");
-    foreach (var extension in new[] { ".cmd", ".bat", ".ps1", ".js" }) {
+    foreach (var extension in new[] { ".ps1", ".js" }) {
       var scriptOptions = Options(""); scriptOptions.Executable = Path.ChangeExtension(executable, extension);
       await Throws<ArgumentException>(() => Translate(scriptOptions), ".exe", "reject " + extension + " translation entry");
       await Throws<ArgumentException>(() => Task.FromResult(CliTranslator.ResolveExecutable(scriptOptions.Executable)), ".exe", "reject " + extension + " direct resolver entry");
     }
-    Check(CliProfiles.DiscoverInstalled().All(i => CliProfiles.IsExePath(i.Executable)), "auto-discovery lists EXE files only");
+    var installations = CliProfiles.DiscoverInstalled();
+    Check(installations.All(i => CliProfiles.IsLauncherPath(i.Executable)) && installations.GroupBy(i => i.ProviderId).All(g => g.Count() == 1), "auto-discovery supports official launchers without duplicate CLIs");
     var promptResult = await Translate(Options("fake prompt {prompt}"));
     Check(promptResult.Contains("untrusted document data") && promptResult.Contains("# Hello\nПривет"), "prompt argument mode preserves the complete document");
     await Throws<ArgumentException>(() => new CliTranslator().TranslateAsync(new string('a', 40000), Options("fake prompt {prompt}"), CancellationToken.None), "Windows", "oversized prompt argument fails before process launch");
@@ -158,7 +171,7 @@ internal static class TranslationTests
     using (var cancel = new CancellationTokenSource(250))
       await Throws<OperationCanceledException>(() => Translate(Options("fake sleep"), cancel.Token), "", "cancellation kills translator");
 
-    var pidFile = Path.Combine(Path.GetDirectoryName(executable), "child.pid");
+    var pidFile = Path.Combine(Path.GetDirectoryName(executable), "child-" + Guid.NewGuid().ToString("N") + ".pid");
     using (var cancel = new CancellationTokenSource()) {
       var pending = Translate(Options("fake tree " + CliTranslator.QuoteArgument(pidFile)), cancel.Token);
       for (var attempt = 0; attempt < 100 && !File.Exists(pidFile); attempt++) await Task.Delay(25);

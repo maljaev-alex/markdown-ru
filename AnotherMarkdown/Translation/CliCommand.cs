@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -42,10 +43,54 @@ namespace AnotherMarkdown.Translation
         info.EnvironmentVariables["KIMI_DISABLE_TELEMETRY"] = "1";
       }
       if (CliProfiles.Identify(executable) == "copilot") info.EnvironmentVariables["COPILOT_AUTO_UPDATE"] = "false";
-      if (executable.Length + (arguments ?? "").Length > 30000)
+      if (CliProfiles.IsBatchPath(executable)) {
+        // Batch wrappers reparse %* and may enable delayed expansion themselves.
+        // Requote each native argument, and fail before launch for values whose
+        // expansion or embedded quotes cannot be preserved through arbitrary wrappers.
+        ValidateBatchValue(executable);
+        if ((arguments ?? "").IndexOfAny(new[] { '\0', '\r', '\n' }) >= 0)
+          throw new ArgumentException("Аргументы .cmd/.bat не должны содержать нулевой символ или перенос строки. Выберите нативный .exe CLI или передачу документа через stdin.");
+        var command = new StringBuilder(CliTranslator.QuoteArgument(executable));
+        foreach (var argument in SplitArguments(arguments ?? "")) {
+          ValidateBatchValue(argument);
+          command.Append(' ').Append(CliTranslator.QuoteArgument(argument));
+        }
+        info.FileName = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        info.Arguments = "/d /s /v:off /c \"" + command + "\"";
+        if (info.Arguments.Length + info.FileName.Length > 8000)
+          throw new ArgumentException("Запрос превышает размер командной строки .cmd/.bat. Выберите нативный .exe CLI или CLI с передачей документа через stdin.");
+      }
+      else if (executable.Length + (arguments ?? "").Length > 30000)
         throw new ArgumentException("Запрос превышает размер командной строки Windows. Для этого документа выберите CLI с передачей запроса через stdin, например Codex.");
       return info;
     }
+
+    private static void ValidateBatchValue(string value)
+    {
+      if (value.IndexOfAny(new[] { '\0', '\r', '\n', '"', '%', '!', '^' }) >= 0)
+        throw new ArgumentException("Аргумент .cmd/.bat содержит кавычки, перенос строки или символы %, !, ^, которые нельзя безопасно передать через этот launcher. Выберите нативный .exe CLI или передачу документа через stdin.");
+    }
+
+    private static string[] SplitArguments(string arguments)
+    {
+      // Prefix a dummy executable: CommandLineToArgvW treats argv[0] differently.
+      int count;
+      var pointer = CommandLineToArgvW("launcher.exe " + arguments, out count);
+      if (pointer == IntPtr.Zero) throw new Win32Exception();
+      try {
+        var result = new string[Math.Max(0, count - 1)];
+        for (var index = 1; index < count; index++)
+          result[index - 1] = Marshal.PtrToStringUni(Marshal.ReadIntPtr(pointer, index * IntPtr.Size));
+        return result;
+      }
+      finally { LocalFree(pointer); }
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CommandLineToArgvW(string commandLine, out int argumentCount);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr memory);
 
     public static Task<CliCommandResult> RunAsync(string executable, string arguments, string input,
       int timeoutSeconds, CancellationToken cancellation, string workingDirectory = null) =>

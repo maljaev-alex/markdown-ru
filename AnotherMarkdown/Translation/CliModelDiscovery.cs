@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -13,11 +14,23 @@ using Newtonsoft.Json.Linq;
 
 namespace AnotherMarkdown.Translation
 {
+  public sealed class CliReasoningEffort
+  {
+    public string Id { get; set; }
+    public string Description { get; set; }
+    public string ModelId { get; set; }
+    public override string ToString() => Id == "xhigh" ? "Extra High (xhigh)" : Id;
+  }
+
   public sealed class CliModel
   {
     public string Id { get; set; }
     public string Name { get; set; }
     public bool IsDefault { get; set; }
+    public string BaseModelId { get; set; }
+    public string BaseModelName { get; set; }
+    public string DefaultReasoningEffort { get; set; }
+    public List<CliReasoningEffort> ReasoningEfforts { get; set; } = new List<CliReasoningEffort>();
 
     public override string ToString()
     {
@@ -32,6 +45,7 @@ namespace AnotherMarkdown.Translation
   {
     public List<CliModel> Models { get; set; } = new List<CliModel>();
     public string DefaultModelId { get; set; }
+    public string ConfiguredReasoningEffort { get; set; }
     public string Note { get; set; }
     public List<string> McpServerNames { get; set; } = new List<string>();
     public bool McpConfigurationRead { get; set; }
@@ -130,13 +144,37 @@ namespace AnotherMarkdown.Translation
           AddModel(catalog, models, id, name, isDefault);
         }
       }
+      if (provider == "cursor") ReadCursorReasoning(catalog);
       return catalog;
     }
 
-    private static void AddModel(CliModelCatalog catalog, Dictionary<string, CliModel> models,
+    private static void ReadCursorReasoning(CliModelCatalog catalog)
+    {
+      var suffix = new Regex(@"^(?<base>.+?)-(?<effort>extra-high|xhigh|minimal|none|low|medium|high|max)(?<fast>-fast)?$");
+      var labelEffort = new Regex(@"\b(extra\s+high|minimal|none|low|medium|high|max)\b", RegexOptions.IgnoreCase);
+      foreach (var model in catalog.Models) {
+        var match = suffix.Match(model.Id);
+        if (!match.Success) continue;
+        var effort = match.Groups["effort"].Value.Replace("extra-high", "xhigh");
+        var labels = labelEffort.Matches(model.Name).Cast<Match>().Select(m => Regex.Replace(m.Value.ToLowerInvariant(), @"extra\s+high", "xhigh")).Distinct().ToList();
+        if (labels.Count != 1 || labels[0] != effort) continue;
+        var fast = match.Groups["fast"].Success;
+        if (fast != Regex.IsMatch(model.Name, @"\bfast\b", RegexOptions.IgnoreCase)) continue;
+        model.BaseModelId = match.Groups["base"].Value + (fast ? "-fast" : "");
+        model.BaseModelName = Regex.Replace(labelEffort.Replace(model.Name, ""), @"\(\s*\)|\s{2,}", " ").Trim();
+        model.DefaultReasoningEffort = effort;
+        model.ReasoningEfforts.Add(new CliReasoningEffort { Id = effort, ModelId = model.Id });
+      }
+      foreach (var group in catalog.Models.Where(m => m.BaseModelId != null).GroupBy(m => m.BaseModelId)) {
+        var efforts = group.SelectMany(m => m.ReasoningEfforts).ToList();
+        foreach (var model in group) model.ReasoningEfforts = efforts;
+      }
+    }
+
+    private static CliModel AddModel(CliModelCatalog catalog, Dictionary<string, CliModel> models,
       string id, string name, bool isDefault)
     {
-      if (string.IsNullOrWhiteSpace(id)) return;
+      if (string.IsNullOrWhiteSpace(id)) return null;
       CliModel existing;
       if (models.TryGetValue(id, out existing)) existing.IsDefault |= isDefault;
       else {
@@ -144,6 +182,21 @@ namespace AnotherMarkdown.Translation
         models.Add(id, existing); catalog.Models.Add(existing);
       }
       if (isDefault && catalog.DefaultModelId == null) catalog.DefaultModelId = id;
+      return existing;
+    }
+
+    internal static void ReadCodexReasoning(CliModel model, JObject entry)
+    {
+      model.DefaultReasoningEffort = ReadString(entry["defaultReasoningEffort"]);
+      model.ReasoningEfforts.Clear();
+      var efforts = entry["supportedReasoningEfforts"] as JArray;
+      if (efforts == null) return;
+      var seen = new HashSet<string>(StringComparer.Ordinal);
+      foreach (var effort in efforts.OfType<JObject>()) {
+        var id = ReadString(effort["reasoningEffort"]);
+        if (id != null && Regex.IsMatch(id, @"^[a-z][a-z0-9_-]*$") && seen.Add(id))
+          model.ReasoningEfforts.Add(new CliReasoningEffort { Id = id, Description = ReadString(effort["description"]) });
+      }
     }
 
     private static async Task<CliModelCatalog> LoadCodexAsync(string executable, CancellationToken cancellation)
@@ -172,7 +225,7 @@ namespace AnotherMarkdown.Translation
             await SendAsync(process, new JObject {
               ["method"] = "initialize", ["id"] = 1,
               ["params"] = new JObject { ["clientInfo"] = new JObject {
-                ["name"] = "markdown_ru", ["title"] = "Markdown RU", ["version"] = "0.1.12.2"
+                ["name"] = "markdown_ru", ["title"] = "Markdown RU", ["version"] = "0.1.12.3"
               } }
             }, timeout.Token).ConfigureAwait(false);
             await ReadResponseAsync(reader, 1, timeout.Token).ConfigureAwait(false);
@@ -197,7 +250,8 @@ namespace AnotherMarkdown.Translation
                 var model = entry as JObject;
                 if (model == null || ReadBoolean(model["hidden"])) continue;
                 var id = ReadString(model["model"]) ?? ReadString(model["id"]);
-                AddModel(catalog, models, id, ReadString(model["displayName"]), ReadBoolean(model["isDefault"]));
+                var discovered = AddModel(catalog, models, id, ReadString(model["displayName"]), ReadBoolean(model["isDefault"]));
+                if (discovered != null) ReadCodexReasoning(discovered, model);
               }
               cursor = ReadString(response["nextCursor"]);
               if (cursor == null) break;
@@ -205,7 +259,7 @@ namespace AnotherMarkdown.Translation
             }
 
             catalog.Note = catalog.Models.Count == 0 ? "Codex не вернул доступных моделей." : "Моделей получено от Codex: " + catalog.Models.Count;
-            // Only these two fields leave config/read; no complete configuration is logged or retained.
+            // Retain only model, effort and MCP names; never the complete configuration.
             using (var optional = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token)) {
               stage = "config/read";
               optional.CancelAfter(TimeSpan.FromSeconds(2));
@@ -216,6 +270,7 @@ namespace AnotherMarkdown.Translation
                 var config = response["config"] as JObject;
                 if (config != null) {
                   catalog.McpConfigurationRead = true;
+                  catalog.ConfiguredReasoningEffort = ReadString(config["model_reasoning_effort"]);
                   var servers = config["mcp_servers"] as JObject;
                   if (servers != null) foreach (var property in servers.Properties()) catalog.McpServerNames.Add(property.Name);
                   var configuredModel = ReadString(config["model"]);

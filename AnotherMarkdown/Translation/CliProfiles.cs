@@ -44,6 +44,12 @@ namespace AnotherMarkdown.Translation
 
     public static bool IsExePath(string path) => string.Equals(Path.GetExtension(path ?? ""), ".exe", StringComparison.OrdinalIgnoreCase);
 
+    public static bool IsBatchPath(string path) =>
+      string.Equals(Path.GetExtension(path ?? ""), ".cmd", StringComparison.OrdinalIgnoreCase) ||
+      string.Equals(Path.GetExtension(path ?? ""), ".bat", StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsLauncherPath(string path) => IsExePath(path) || IsBatchPath(path);
+
     public static string Identify(string path)
     {
       var name = Path.GetFileNameWithoutExtension(path ?? "").ToLowerInvariant();
@@ -65,23 +71,36 @@ namespace AnotherMarkdown.Translation
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Google", "antigravity-cli"),
         Path.Combine(roaming, "npm"), Path.Combine(user, ".local", "bin"), Path.Combine(user, ".cargo", "bin")
       });
-      var names = All.Where(p => p.Id != "custom" && p.Id != "cursor").Select(p => p.Id).Concat(new[] { "agent", "cursor-agent" }).ToArray();
+      return DiscoverInstalled(directories);
+    }
+
+    internal static List<CliInstallation> DiscoverInstalled(IEnumerable<string> directories)
+    {
+      var locations = directories.Where(d => !string.IsNullOrWhiteSpace(d))
+        .Select(d => Environment.ExpandEnvironmentVariables(d.Trim().Trim('"')))
+        .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
       var result = new List<CliInstallation>();
-      var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-      foreach (var name in names) {
-        foreach (var directory in directories.Where(d => !string.IsNullOrWhiteSpace(d)).Distinct(StringComparer.OrdinalIgnoreCase)) {
-          foreach (var extension in new[] { ".exe" }) {
-            string path;
-            try { path = Path.GetFullPath(Path.Combine(Environment.ExpandEnvironmentVariables(directory.Trim().Trim('"')), name + extension)); }
-            catch (ArgumentException) { continue; }
-            catch (NotSupportedException) { continue; }
-            if (!File.Exists(path)) continue;
-            // Only executable CLI entries are eligible; shell scripts are excluded.
-            if (found.Add(Path.Combine(Path.GetDirectoryName(path), Identify(path))))
-              result.Add(new CliInstallation { ProviderId = Identify(path), Executable = path });
-            break;
+      foreach (var profile in All.Where(p => p.Id != "custom")) {
+        var names = profile.Id == "cursor" ? new[] { "agent", "cursor-agent" } : new[] { profile.Id };
+        CliInstallation selected = null;
+        // A native executable wins across all locations; PATH order breaks ties.
+        foreach (var extension in new[] { ".exe", ".cmd", ".bat" }) {
+          foreach (var directory in locations) {
+            foreach (var name in names) {
+              string path;
+              try { path = Path.GetFullPath(Path.Combine(directory, name + extension)); }
+              catch (ArgumentException) { continue; }
+              catch (NotSupportedException) { continue; }
+              catch (PathTooLongException) { continue; }
+              if (!File.Exists(path)) continue;
+              selected = new CliInstallation { ProviderId = profile.Id, Executable = path };
+              break;
+            }
+            if (selected != null) break;
           }
+          if (selected != null) break;
         }
+        if (selected != null) result.Add(selected);
       }
       return result;
     }
@@ -91,9 +110,15 @@ namespace AnotherMarkdown.Translation
       if (options.UseCustomArguments) return options.Arguments ?? "";
       var model = !options.UseDefaultModel || options.ProviderId == "ollama";
       var modelArgument = model && !string.IsNullOrWhiteSpace(options.Model) ? " --model {model}" : "";
+      var effortArgument = "";
+      if (options.ProviderId == "codex" && !string.IsNullOrWhiteSpace(options.ReasoningEffort)) {
+        if (!System.Text.RegularExpressions.Regex.IsMatch(options.ReasoningEffort, @"^[a-z][a-z0-9_-]*$"))
+          throw new ArgumentException("Некорректное значение effort.");
+        effortArgument = " -c " + CliTranslator.QuoteArgument("model_reasoning_effort=" + options.ReasoningEffort);
+      }
       switch (options.ProviderId) {
         case "codex":
-          return "exec --skip-git-repo-check --ephemeral --sandbox read-only" + modelArgument +
+          return "exec --skip-git-repo-check --ephemeral --sandbox read-only" + modelArgument + effortArgument +
             " --disable shell_tool --disable apps --disable plugins --disable hooks --disable multi_agent --disable memories --disable browser_use --disable computer_use -c project_doc_max_bytes=0 -c developer_instructions=\"\" -c web_search=\"disabled\" --output-last-message {output} -";
         case "cursor": return "--print --mode ask --output-format json --trust" + modelArgument;
         case "claude": return "--print --output-format text --tools \"\" --strict-mcp-config --mcp-config {config} --no-session-persistence" + modelArgument;

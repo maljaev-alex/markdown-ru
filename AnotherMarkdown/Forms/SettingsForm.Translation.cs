@@ -15,12 +15,14 @@ namespace AnotherMarkdown.Forms
   {
     public TranslationOptions TranslationOptions { get; private set; }
     private TranslationOptions translationDraft;
-    private ComboBox translationCli, translationModel, translationProfile, translationOutput;
+    private ComboBox translationCli, translationModel, translationProfile, translationOutput, translationEffort;
     private TextBox translationExecutable, translationArguments, translationManualModel;
     private NumericUpDown translationTimeout;
     private CheckBox translationShowButtons, translationAdvanced, translationCustomArguments, translationUseManualModel;
     private Button translationModelsRefresh, translationCliRefresh;
     private Label translationModelStatus;
+    private Label translationEffortNote;
+    private bool hasModelCatalog;
     private CancellationTokenSource modelCancellation;
     private int modelGeneration;
     private int cliDiscoveryGeneration;
@@ -30,6 +32,15 @@ namespace AnotherMarkdown.Forms
     {
       public string Id, Title;
       public bool Default;
+      public List<string> ModelIds = new List<string>();
+      public List<CliReasoningEffort> Efforts = new List<CliReasoningEffort>();
+      public string DefaultEffort;
+      public override string ToString() => Title;
+    }
+
+    private sealed class EffortChoice
+    {
+      public string Id, Title, ModelId;
       public override string ToString() => Title;
     }
 
@@ -38,12 +49,12 @@ namespace AnotherMarkdown.Forms
       TranslationOptions = settings.Translation.Copy();
       translationDraft = TranslationOptions.Copy();
       translationPage.AutoScroll = true;
-      var layout = new TableLayoutPanel { Name = "translationLayout", Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, RowCount = 9, Padding = new Padding(8) };
+      var layout = new TableLayoutPanel { Name = "translationLayout", Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, RowCount = 10, Padding = new Padding(8) };
       layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
       layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
       layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
-      for (var row = 0; row < 9; row++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-      layout.RowStyles[5] = new RowStyle(SizeType.Absolute, 0);
+      for (var row = 0; row < 10; row++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+      layout.RowStyles[6] = new RowStyle(SizeType.Absolute, 0);
       translationPage.Controls.Add(layout);
 
       translationCli = new ComboBox { Name = "translationCli", AccessibleName = "CLI", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, DropDownWidth = 760, TabIndex = 0 };
@@ -56,13 +67,16 @@ namespace AnotherMarkdown.Forms
       AddTranslationRow(layout, 0, "CLI", translationCli, translationCliRefresh);
       AddTranslationRow(layout, 1, "Путь", translationExecutable, browse);
       AddTranslationRow(layout, 2, "Модель", translationModel, translationModelsRefresh);
+      translationEffort = new ComboBox { Name = "translationEffort", AccessibleName = "Усилие рассуждения (effort)", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, TabIndex = 6 };
+      translationEffortNote = new Label { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 8, 3, 3) };
+      AddTranslationRow(layout, 3, "Усилие (effort)", translationEffort, translationEffortNote);
       translationModelStatus = new Label { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 4, 3, 10), Text = "Ищем установленные CLI…" };
-      layout.Controls.Add(translationModelStatus, 0, 3); layout.SetColumnSpan(translationModelStatus, 3);
+      layout.Controls.Add(translationModelStatus, 0, 4); layout.SetColumnSpan(translationModelStatus, 3);
       translationAdvanced = new CheckBox { Text = "Дополнительные параметры", AutoSize = true, TabIndex = 6, Margin = new Padding(3, 8, 3, 8) };
-      layout.Controls.Add(translationAdvanced, 0, 4); layout.SetColumnSpan(translationAdvanced, 3);
+      layout.Controls.Add(translationAdvanced, 0, 5); layout.SetColumnSpan(translationAdvanced, 3);
 
       var advanced = new GroupBox { Text = "Параметры выбранного CLI", Dock = DockStyle.Fill, Visible = false, Padding = new Padding(8) };
-      layout.Controls.Add(advanced, 0, 5); layout.SetColumnSpan(advanced, 3);
+      layout.Controls.Add(advanced, 0, 6); layout.SetColumnSpan(advanced, 3);
       var advancedLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 6 };
       advancedLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 145));
       advancedLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -85,27 +99,28 @@ namespace AnotherMarkdown.Forms
       advancedLayout.Controls.Add(translationUseManualModel, 0, 5); advancedLayout.Controls.Add(translationManualModel, 1, 5);
 
       translationShowButtons = new CheckBox { Name = "translationShowButtons", Text = "Показывать кнопки перевода в панели", AutoSize = true, TabIndex = 7, Margin = new Padding(3, 12, 3, 8) };
-      layout.Controls.Add(translationShowButtons, 0, 6); layout.SetColumnSpan(translationShowButtons, 3);
+      layout.Controls.Add(translationShowButtons, 0, 7); layout.SetColumnSpan(translationShowButtons, 3);
       var defaults = new Button { Name = "translationDefaults", Text = "Настройки по умолчанию", AutoSize = true, TabIndex = 8, Margin = new Padding(3, 8, 3, 10) };
       layout.Controls.Remove(translationAdvanced);
       var actions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight };
       defaults.Margin = new Padding(3, 4, 18, 4); defaults.TabIndex = 0;
       translationAdvanced.Margin = new Padding(3, 8, 3, 4); translationAdvanced.TabIndex = 1;
       actions.Controls.Add(defaults); actions.Controls.Add(translationAdvanced);
-      layout.Controls.Add(actions, 0, 4); layout.SetColumnSpan(actions, 3);
+      layout.Controls.Add(actions, 0, 5); layout.SetColumnSpan(actions, 3);
       var description = new Label {
         Text = "Выберите CLI и модель. Параметры запуска подставляются автоматически. Перевод отображается в предпросмотре; исходный файл сохраняет свой текст.",
         AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 8, 3, 8)
       };
-      layout.Controls.Add(description, 0, 8); layout.SetColumnSpan(description, 3);
+      layout.Controls.Add(description, 0, 9); layout.SetColumnSpan(description, 3);
       layout.SizeChanged += (_, __) => {
         var width = Math.Max(200, layout.ClientSize.Width - 24);
         description.MaximumSize = translationModelStatus.MaximumSize = new Size(width, 0);
       };
-      translationAdvanced.CheckedChanged += (_, __) => { advanced.Visible = translationAdvanced.Checked; layout.RowStyles[5].Height = translationAdvanced.Checked ? 310 : 0; };
+      translationAdvanced.CheckedChanged += (_, __) => { advanced.Visible = translationAdvanced.Checked; layout.RowStyles[6].Height = translationAdvanced.Checked ? 310 : 0; };
       translationCustomArguments.CheckedChanged += (_, __) => {
         translationArguments.ReadOnly = !translationCustomArguments.Checked;
         translationOutput.Enabled = translationCustomArguments.Checked;
+        UpdateEffortState();
         translationUseManualModel.Enabled = CliProfiles.Get(translationDraft.ProviderId).SupportsModelOverride || translationCustomArguments.Checked;
         if (!translationUseManualModel.Enabled) translationUseManualModel.Checked = false;
         if (!updatingTranslation && !translationCustomArguments.Checked) {
@@ -113,9 +128,10 @@ namespace AnotherMarkdown.Forms
           UpdateArgumentPreview();
         }
       };
-      translationUseManualModel.CheckedChanged += (_, __) => { translationManualModel.Enabled = translationUseManualModel.Checked; translationModel.Enabled = !translationUseManualModel.Checked && modelCancellation == null; UpdateArgumentPreview(); };
+      translationUseManualModel.CheckedChanged += (_, __) => { translationManualModel.Enabled = translationUseManualModel.Checked; translationModel.Enabled = !translationUseManualModel.Checked && modelCancellation == null; if (!updatingTranslation) FillEfforts(""); UpdateArgumentPreview(); };
       translationManualModel.TextChanged += (_, __) => UpdateArgumentPreview();
-      translationModel.SelectedIndexChanged += (_, __) => UpdateArgumentPreview();
+      translationModel.SelectedIndexChanged += (_, __) => { if (!updatingTranslation) FillEfforts(""); UpdateArgumentPreview(); };
+      translationEffort.SelectedIndexChanged += (_, __) => UpdateArgumentPreview();
       translationProfile.SelectedIndexChanged += async (_, __) => {
         if (updatingTranslation || translationCli.SelectedItem == null) return;
         var installation = (CliInstallation)translationCli.SelectedItem;
@@ -157,8 +173,10 @@ namespace AnotherMarkdown.Forms
         try { path = CliTranslator.ResolveExecutable(preferred.Executable); }
         catch (Exception) { path = preferred.Executable; }
         var selected = installations.FirstOrDefault(i => string.Equals(i.Executable, path, StringComparison.OrdinalIgnoreCase));
+        if (selected == null && preferred.ProviderId != "custom")
+          selected = installations.FirstOrDefault(i => i.ProviderId == preferred.ProviderId);
         if (selected != null) selected.ProviderId = preferred.ProviderId;
-        var legacyScript = Path.HasExtension(path) && !CliProfiles.IsExePath(path);
+        var legacyScript = Path.HasExtension(path) && !CliProfiles.IsLauncherPath(path);
         if (legacyScript) {
           selected = installations.FirstOrDefault(i => i.ProviderId == preferred.ProviderId) ?? installations.FirstOrDefault();
           if (selected != null) translationDraft = CliProfiles.Defaults(selected.ProviderId, selected.Executable);
@@ -169,7 +187,7 @@ namespace AnotherMarkdown.Forms
           preferred = CliProfiles.Defaults(selected.ProviderId, selected.Executable);
           translationDraft = preferred.Copy();
         }
-        if (selected == null && !legacyScript && CliProfiles.IsExePath(path) && File.Exists(path)) {
+        if (selected == null && !legacyScript && CliProfiles.IsLauncherPath(path) && File.Exists(path)) {
           selected = new CliInstallation { Executable = path, ProviderId = preferred.ProviderId };
           installations.Insert(0, selected);
         }
@@ -202,6 +220,7 @@ namespace AnotherMarkdown.Forms
     private void SetTranslationControls(TranslationOptions options)
     {
       updatingTranslation = true;
+      hasModelCatalog = false;
       translationExecutable.Text = options.Executable;
       translationProfile.SelectedItem = CliProfiles.Get(options.ProviderId);
       translationTimeout.Value = Math.Max(10, Math.Min(3600, options.TimeoutSeconds));
@@ -225,12 +244,12 @@ namespace AnotherMarkdown.Forms
       CancelModelDiscovery();
       var generation = modelGeneration;
       var cancellation = new CancellationTokenSource(); modelCancellation = cancellation;
-      translationModelsRefresh.Enabled = translationModel.Enabled = btnSave.Enabled = false;
+      translationModelsRefresh.Enabled = translationModel.Enabled = translationEffort.Enabled = btnSave.Enabled = false;
       translationModelStatus.Text = "Запрашиваем модели у " + CliProfiles.Get(preference.ProviderId).Name + "…";
       try {
         var catalog = await new CliModelDiscovery().LoadAsync(preference.ProviderId, preference.Executable, cancellation.Token);
         if (cancellation.IsCancellationRequested || generation != modelGeneration || IsDisposed || Disposing) return;
-        updatingTranslation = true; FillModels(catalog, preference); updatingTranslation = false;
+        updatingTranslation = true; hasModelCatalog = true; FillModels(catalog, preference); updatingTranslation = false;
         translationModelStatus.Text = string.IsNullOrWhiteSpace(catalog.Note) ? "Моделей получено: " + catalog.Models.Count : catalog.Note;
         UpdateArgumentPreview();
       }
@@ -242,7 +261,10 @@ namespace AnotherMarkdown.Forms
       finally {
         if (ReferenceEquals(modelCancellation, cancellation)) {
           modelCancellation = null;
-          if (!IsDisposed) { translationModelsRefresh.Enabled = btnSave.Enabled = true; translationModel.Enabled = !translationUseManualModel.Checked; }
+          if (!IsDisposed) {
+            translationModelsRefresh.Enabled = btnSave.Enabled = true; translationModel.Enabled = !translationUseManualModel.Checked;
+            UpdateEffortState();
+          }
         }
         cancellation.Dispose();
       }
@@ -252,14 +274,50 @@ namespace AnotherMarkdown.Forms
     {
       translationModel.Items.Clear();
       var defaultId = catalog.DefaultModelId ?? (preference.ProviderId == "ollama" ? catalog.Models.FirstOrDefault()?.Id : "");
-      var fallback = new ModelChoice { Default = true, Id = defaultId ?? "", Title = preference.ProviderId == "ollama" ? "Первая установленная модель" : "Модель по умолчанию в CLI" };
+      var defaultModel = catalog.Models.FirstOrDefault(m => m.Id == defaultId);
+      var fallback = new ModelChoice { Default = true, Id = defaultId ?? "", Title = preference.ProviderId == "ollama" ? "Первая установленная модель" : "Модель по умолчанию в CLI", Efforts = defaultModel?.ReasoningEfforts ?? new List<CliReasoningEffort>(), DefaultEffort = catalog.ConfiguredReasoningEffort ?? defaultModel?.DefaultReasoningEffort };
       translationModel.Items.Add(fallback);
-      foreach (var model in catalog.Models) translationModel.Items.Add(new ModelChoice { Id = model.Id, Title = model.ToString() });
-      var desired = !preference.UseDefaultModel ? translationModel.Items.Cast<ModelChoice>().FirstOrDefault(m => !m.Default && m.Id == preference.Model) : fallback;
+      foreach (var group in catalog.Models.GroupBy(m => m.BaseModelId ?? m.Id)) {
+        var model = group.FirstOrDefault(m => m.IsDefault) ?? group.First();
+        translationModel.Items.Add(new ModelChoice { Id = model.Id, Title = model.BaseModelName ?? model.ToString(), ModelIds = group.Select(m => m.Id).ToList(), Efforts = model.ReasoningEfforts, DefaultEffort = catalog.ConfiguredReasoningEffort ?? model.DefaultReasoningEffort });
+      }
+      var desired = !preference.UseDefaultModel ? translationModel.Items.Cast<ModelChoice>().FirstOrDefault(m => !m.Default && (m.Id == preference.Model || m.ModelIds.Contains(preference.Model))) : fallback;
       if (desired == null && !string.IsNullOrWhiteSpace(preference.Model)) {
         desired = new ModelChoice { Id = preference.Model, Title = "Сохранённая модель · " + preference.Model }; translationModel.Items.Add(desired);
       }
       translationModel.SelectedItem = desired ?? fallback;
+      var savedEffort = preference.ReasoningEffort;
+      if (preference.ProviderId == "cursor" && !preference.UseDefaultModel && string.IsNullOrEmpty(savedEffort))
+        savedEffort = catalog.Models.FirstOrDefault(m => m.Id == preference.Model && m.BaseModelId != null)?.DefaultReasoningEffort;
+      FillEfforts(savedEffort);
+    }
+
+    private void FillEfforts(string preferred)
+    {
+      var wasUpdating = updatingTranslation;
+      updatingTranslation = true;
+      var model = translationModel.SelectedItem as ModelChoice;
+      translationEffort.Items.Clear();
+      var automatic = new EffortChoice { Id = "", Title = "По умолчанию в CLI" + (string.IsNullOrWhiteSpace(model?.DefaultEffort) ? "" : " · " + model.DefaultEffort) };
+      var cursorVariants = translationDraft.ProviderId == "cursor" && !translationUseManualModel.Checked && model != null && !model.Default && model.Efforts.Count > 0;
+      if (!cursorVariants) translationEffort.Items.Add(automatic);
+      if (!translationUseManualModel.Checked && model != null)
+        foreach (var effort in model.Efforts) translationEffort.Items.Add(new EffortChoice { Id = effort.Id, Title = effort.ToString(), ModelId = effort.ModelId });
+      var desired = translationEffort.Items.Cast<EffortChoice>().FirstOrDefault(e => e.Id == preferred);
+      if (desired == null && !hasModelCatalog && !string.IsNullOrEmpty(preferred)) {
+        desired = new EffortChoice { Id = preferred, Title = "Сохранено · " + preferred }; translationEffort.Items.Add(desired);
+      }
+      translationEffort.SelectedItem = desired ?? (cursorVariants ? translationEffort.Items.Cast<EffortChoice>().FirstOrDefault(e => e.Id == model.DefaultEffort) ?? translationEffort.Items[0] : automatic);
+      UpdateEffortState();
+      updatingTranslation = wasUpdating;
+    }
+
+    private bool CanEditEffort => modelCancellation == null && hasModelCatalog && !translationCustomArguments.Checked && !translationUseManualModel.Checked && ((translationModel.SelectedItem as ModelChoice)?.Efforts.Count ?? 0) > 0;
+
+    private void UpdateEffortState()
+    {
+      translationEffort.Enabled = CanEditEffort;
+      translationEffortNote.Text = translationCustomArguments.Checked ? "В аргументах" : !translationUseManualModel.Checked && ((translationModel.SelectedItem as ModelChoice)?.Efforts.Count ?? 0) > 0 ? "" : "Задаётся в CLI";
     }
 
     private void UpdateArgumentPreview()
@@ -279,6 +337,11 @@ namespace AnotherMarkdown.Forms
       var choice = translationModel.SelectedItem as ModelChoice;
       options.UseDefaultModel = !translationUseManualModel.Checked && (choice?.Default ?? true);
       options.Model = translationUseManualModel.Checked ? translationManualModel.Text.Trim() : choice?.Id ?? "";
+      var effort = translationEffort.SelectedItem as EffortChoice;
+      options.ReasoningEffort = translationUseManualModel.Checked ? "" : effort?.Id ?? "";
+      if (!translationUseManualModel.Checked && !string.IsNullOrEmpty(effort?.ModelId)) {
+        options.Model = effort.ModelId; options.UseDefaultModel = false;
+      }
       return options;
     }
 
@@ -301,7 +364,7 @@ namespace AnotherMarkdown.Forms
       var directory = Path.IsPathRooted(path) ? Path.GetDirectoryName(path) : Environment.SystemDirectory;
       if (!Directory.Exists(directory)) directory = Environment.SystemDirectory;
       return new OpenFileDialog {
-        Title = "Выберите CLI (.exe)", Filter = "CLI (*.exe)|*.exe",
+        Title = "Выберите программу или штатный запускатель CLI", Filter = "CLI (*.exe;*.cmd;*.bat)|*.exe;*.cmd;*.bat",
         InitialDirectory = directory, FileName = File.Exists(path) ? path : "", RestoreDirectory = true, CheckFileExists = true
       };
     }

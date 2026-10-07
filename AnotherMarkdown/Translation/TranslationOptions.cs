@@ -10,6 +10,7 @@ namespace AnotherMarkdown.Translation
     public string Executable { get; set; } = FindCodex();
     public string ProviderId { get; set; } = "codex";
     public string Model { get; set; } = "gpt-6-astra";
+    public string ReasoningEffort { get; set; } = "";
     public bool UseDefaultModel { get; set; }
     public bool UseCustomArguments { get; set; }
     public string OutputFormat { get; set; } = "text";
@@ -28,8 +29,8 @@ namespace AnotherMarkdown.Translation
       if (CliProfiles.Get(ProviderId).RequiresModel && string.IsNullOrWhiteSpace(Model)) throw new ArgumentException("В выбранном CLI нет модели по умолчанию. Выберите установленную модель.");
       if (Executable.IndexOfAny(new[] { '\r', '\n', '"' }) >= 0)
         throw new ArgumentException("Путь к CLI нужно указать без кавычек и аргументов.");
-      if (Path.HasExtension(Executable) && !CliProfiles.IsExePath(Executable))
-        throw new ArgumentException("Можно выбрать только CLI с расширением .exe. Скриптовые файлы не поддерживаются.");
+      if (Path.HasExtension(Executable) && !CliProfiles.IsLauncherPath(Executable))
+        throw new ArgumentException("Можно выбрать CLI с расширением .exe, .cmd или .bat. Другие скриптовые файлы не поддерживаются.");
       if (TimeoutSeconds < 10 || TimeoutSeconds > 3600)
         throw new ArgumentException("Тайм-аут должен быть от 10 до 3600 секунд.");
       foreach (var placeholder in new[] { "model", "output", "config", "policy", "prompt", "agent" })
