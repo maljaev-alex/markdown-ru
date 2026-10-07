@@ -40,9 +40,21 @@ internal static class TranslationTests
       if (args.Length > 1 && args[1] == "cursor") {
         options = CliProfiles.Defaults("cursor", "agent"); options.UseDefaultModel = false; options.Model = "grok-4.7-xhigh";
       }
-      var result = new CliTranslator().TranslateAsync("# Quick start\nOpen the settings and choose a model.\n\n`WorkPackage.allowed_to`\n", options, CancellationToken.None).GetAwaiter().GetResult();
+      var source = args.Length > 2 && args[2] == "frontmatter"
+        ? "---\nname: 1c-doc-writer\ndescription: \"1C end-user documentation: user guides and tutorials. Use PROACTIVELY when documentation must be updated.\"\nsummary: |\n  Write user manuals.\n  Keep documentation accurate.\nisSubagent: true\nallowParallel: true\nglobs: [\"**/*.md\"]\n---\n\n# Quick start\nOpen the settings and choose a model.\n\n`WorkPackage.allowed_to`\n"
+        : "# Quick start\nOpen the settings and choose a model.\n\n`WorkPackage.allowed_to`\n";
+      var result = new CliTranslator().TranslateAsync(source, options, CancellationToken.None).GetAwaiter().GetResult();
       Console.WriteLine(result);
-      return result.Contains("WorkPackage.allowed_to") && System.Text.RegularExpressions.Regex.IsMatch(result, "[А-Яа-я]") ? 0 : 1;
+      var valid = result.Contains("WorkPackage.allowed_to") && System.Text.RegularExpressions.Regex.IsMatch(result, "[А-Яа-я]");
+      if (args.Length > 2 && args[2] == "frontmatter") {
+        var header = System.Text.RegularExpressions.Regex.Match(result, @"\A---\r?\n(?<yaml>[\s\S]*?)\r?\n---(?:\r?\n|$)");
+        valid &= header.Success;
+        var yaml = header.Groups["yaml"].Value;
+        valid &= System.Text.RegularExpressions.Regex.IsMatch(yaml, @"(?m)^description:.*[А-Яа-я]") && !yaml.Contains("1C end-user documentation");
+        valid &= yaml.Contains("name: 1c-doc-writer") && yaml.Contains("isSubagent: true") && yaml.Contains("allowParallel: true") && yaml.Contains("globs: [\"**/*.md\"]");
+        valid &= System.Text.RegularExpressions.Regex.IsMatch(yaml, @"(?m)^summary: \|\r?\n  .*[А-Яа-я]") && !yaml.Contains("Write user manuals.");
+      }
+      return valid ? 0 : 1;
     }
     try { Run().GetAwaiter().GetResult(); Console.WriteLine("PASS: " + passed + " assertions"); return 0; }
     catch (Exception error) { Console.Error.WriteLine(error); return 1; }
