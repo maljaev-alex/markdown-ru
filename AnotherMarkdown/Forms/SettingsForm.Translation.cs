@@ -22,6 +22,7 @@ namespace AnotherMarkdown.Forms
     private Button translationModelsRefresh, translationCliRefresh;
     private Label translationModelStatus;
     private Label translationEffortNote;
+    private string translationModelSelectionNote;
     private bool hasModelCatalog;
     private CancellationTokenSource modelCancellation;
     private int modelGeneration;
@@ -252,6 +253,7 @@ namespace AnotherMarkdown.Forms
         if (cancellation.IsCancellationRequested || generation != modelGeneration || IsDisposed || Disposing || IsApiMode) return;
         updatingTranslation = true; hasModelCatalog = true; FillModels(catalog, preference); updatingTranslation = false;
         translationModelStatus.Text = string.IsNullOrWhiteSpace(catalog.Note) ? "Моделей получено: " + catalog.Models.Count : catalog.Note;
+        if (!string.IsNullOrEmpty(translationModelSelectionNote)) translationModelStatus.Text += " " + translationModelSelectionNote;
         UpdateArgumentPreview();
       }
       catch (OperationCanceledException) { }
@@ -274,22 +276,37 @@ namespace AnotherMarkdown.Forms
     private void FillModels(CliModelCatalog catalog, TranslationOptions preference)
     {
       translationModel.Items.Clear();
+      translationModelSelectionNote = "";
+      var savedModel = preference.Model;
+      var savedEffort = preference.ReasoningEffort;
+      var useDefaultModel = preference.UseDefaultModel;
+      if (hasModelCatalog && preference.ProviderId == "cursor" && !useDefaultModel && (savedModel ?? "").EndsWith("-fast", StringComparison.Ordinal)) {
+        var normalModel = savedModel.Substring(0, savedModel.Length - "-fast".Length);
+        if (catalog.Models.Any(m => m.Id == normalModel)) {
+          savedModel = normalModel;
+          translationModelSelectionNote = "Сохранённый вариант Fast заменён соответствующей обычной моделью из списка CLI.";
+        }
+        else {
+          savedModel = ""; savedEffort = ""; useDefaultModel = true;
+          translationModelSelectionNote = "Для сохранённого варианта Fast нет обычной модели в списке CLI. Выбрана модель по умолчанию в CLI.";
+        }
+      }
       var defaultId = catalog.DefaultModelId ?? (preference.ProviderId == "ollama" ? catalog.Models.FirstOrDefault()?.Id : "");
       var defaultModel = catalog.Models.FirstOrDefault(m => m.Id == defaultId);
       var fallback = new ModelChoice { Default = true, Id = defaultId ?? "", Title = preference.ProviderId == "ollama" ? "Первая установленная модель" : "Модель по умолчанию в CLI", Efforts = defaultModel?.ReasoningEfforts ?? new List<CliReasoningEffort>(), DefaultEffort = catalog.ConfiguredReasoningEffort ?? defaultModel?.DefaultReasoningEffort };
+      var choices = catalog.Models.GroupBy(m => m.BaseModelId ?? m.Id).Select(group => {
+        var model = group.FirstOrDefault(m => m.BaseModelId != null && m.DefaultReasoningEffort == "") ?? group.FirstOrDefault(m => m.IsDefault) ?? group.First();
+        return new ModelChoice { Id = model.Id, Title = model.BaseModelName ?? model.ToString(), ModelIds = group.Select(m => m.Id).ToList(), Efforts = model.ReasoningEfforts, DefaultEffort = catalog.ConfiguredReasoningEffort ?? model.DefaultReasoningEffort };
+      }).ToList();
+      var desired = !useDefaultModel ? choices.FirstOrDefault(m => m.Id == savedModel || m.ModelIds.Contains(savedModel)) : fallback;
+      if (desired == null && !string.IsNullOrWhiteSpace(savedModel)) {
+        desired = new ModelChoice { Id = savedModel, Title = "Сохранённая модель · " + savedModel }; choices.Add(desired);
+      }
       translationModel.Items.Add(fallback);
-      foreach (var group in catalog.Models.GroupBy(m => m.BaseModelId ?? m.Id)) {
-        var model = group.FirstOrDefault(m => m.IsDefault) ?? group.First();
-        translationModel.Items.Add(new ModelChoice { Id = model.Id, Title = model.BaseModelName ?? model.ToString(), ModelIds = group.Select(m => m.Id).ToList(), Efforts = model.ReasoningEfforts, DefaultEffort = catalog.ConfiguredReasoningEffort ?? model.DefaultReasoningEffort });
-      }
-      var desired = !preference.UseDefaultModel ? translationModel.Items.Cast<ModelChoice>().FirstOrDefault(m => !m.Default && (m.Id == preference.Model || m.ModelIds.Contains(preference.Model))) : fallback;
-      if (desired == null && !string.IsNullOrWhiteSpace(preference.Model)) {
-        desired = new ModelChoice { Id = preference.Model, Title = "Сохранённая модель · " + preference.Model }; translationModel.Items.Add(desired);
-      }
+      translationModel.Items.AddRange(choices.OrderBy(m => m.Title, StringComparer.OrdinalIgnoreCase).ThenBy(m => m.Id, StringComparer.OrdinalIgnoreCase).ToArray());
       translationModel.SelectedItem = desired ?? fallback;
-      var savedEffort = preference.ReasoningEffort;
-      if (preference.ProviderId == "cursor" && !preference.UseDefaultModel && string.IsNullOrEmpty(savedEffort))
-        savedEffort = catalog.Models.FirstOrDefault(m => m.Id == preference.Model && m.BaseModelId != null)?.DefaultReasoningEffort;
+      if (preference.ProviderId == "cursor" && !useDefaultModel && string.IsNullOrEmpty(savedEffort))
+        savedEffort = catalog.Models.FirstOrDefault(m => m.Id == savedModel && m.BaseModelId != null)?.DefaultReasoningEffort;
       FillEfforts(savedEffort);
     }
 
@@ -303,7 +320,8 @@ namespace AnotherMarkdown.Forms
       var cursorVariants = translationDraft.ProviderId == "cursor" && !translationUseManualModel.Checked && model != null && !model.Default && model.Efforts.Count > 0;
       if (!cursorVariants) translationEffort.Items.Add(automatic);
       if (!translationUseManualModel.Checked && model != null)
-        foreach (var effort in model.Efforts) translationEffort.Items.Add(new EffortChoice { Id = effort.Id, Title = effort.ToString(), ModelId = effort.ModelId });
+        foreach (var effort in model.Efforts.Where(e => cursorVariants || !string.IsNullOrEmpty(e.Id)))
+          translationEffort.Items.Add(new EffortChoice { Id = effort.Id, Title = string.IsNullOrEmpty(effort.Id) ? "По умолчанию в CLI" : effort.ToString(), ModelId = effort.ModelId });
       var desired = translationEffort.Items.Cast<EffortChoice>().FirstOrDefault(e => e.Id == preferred);
       if (desired == null && !hasModelCatalog && !string.IsNullOrEmpty(preferred)) {
         desired = new EffortChoice { Id = preferred, Title = "Сохранено · " + preferred }; translationEffort.Items.Add(desired);

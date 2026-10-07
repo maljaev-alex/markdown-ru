@@ -19,7 +19,7 @@ namespace AnotherMarkdown.Translation
     public string Id { get; set; }
     public string Description { get; set; }
     public string ModelId { get; set; }
-    public override string ToString() => Id == "xhigh" ? "Extra High (xhigh)" : Id;
+    public override string ToString() => string.IsNullOrEmpty(Id) ? Description ?? "CLI default" : Id == "xhigh" ? "Extra High (xhigh)" : Id;
   }
 
   public sealed class CliModel
@@ -150,24 +150,50 @@ namespace AnotherMarkdown.Translation
 
     private static void ReadCursorReasoning(CliModelCatalog catalog)
     {
-      var suffix = new Regex(@"^(?<base>.+?)-(?<effort>extra-high|xhigh|minimal|none|low|medium|high|max)(?<fast>-fast)?$");
+      // Cursor's account catalog advertises exact aliases. Display names can omit
+      // an effort label, and older Claude aliases put effort before thinking.
+      // Never construct an executable alias by adding one of these suffixes.
+      catalog.Models.RemoveAll(model => model.Id.EndsWith("-fast", StringComparison.OrdinalIgnoreCase));
+      var suffix = new Regex(@"^(?<base>.+?)-(?<effort>extra-high|xhigh|minimal|none|low|medium|high|max)(?<variant>(?:-(?:thinking|context|[0-9]+(?:\.[0-9]+)?[km]))*)$", RegexOptions.IgnoreCase);
       var labelEffort = new Regex(@"\b(extra\s+high|minimal|none|low|medium|high|max)\b", RegexOptions.IgnoreCase);
+      var context = new Regex(@"\b[0-9]+(?:\.[0-9]+)?[km]\b", RegexOptions.IgnoreCase);
+      var effortOrder = new[] { "", "none", "minimal", "low", "medium", "high", "xhigh", "max" };
       foreach (var model in catalog.Models) {
         var match = suffix.Match(model.Id);
         if (!match.Success) continue;
-        var effort = match.Groups["effort"].Value.Replace("extra-high", "xhigh");
-        var labels = labelEffort.Matches(model.Name).Cast<Match>().Select(m => Regex.Replace(m.Value.ToLowerInvariant(), @"extra\s+high", "xhigh")).Distinct().ToList();
-        if (labels.Count != 1 || labels[0] != effort) continue;
-        var fast = match.Groups["fast"].Success;
-        if (fast != Regex.IsMatch(model.Name, @"\bfast\b", RegexOptions.IgnoreCase)) continue;
-        model.BaseModelId = match.Groups["base"].Value + (fast ? "-fast" : "");
+        var effort = match.Groups["effort"].Value.ToLowerInvariant().Replace("extra-high", "xhigh");
+        model.BaseModelId = match.Groups["base"].Value + match.Groups["variant"].Value;
         model.BaseModelName = Regex.Replace(labelEffort.Replace(model.Name, ""), @"\(\s*\)|\s{2,}", " ").Trim();
+        if (Regex.IsMatch(model.BaseModelId, @"(?:^|-)thinking(?:-|$)", RegexOptions.IgnoreCase) && !Regex.IsMatch(model.BaseModelName, @"\bthinking\b", RegexOptions.IgnoreCase))
+          model.BaseModelName += " Thinking";
         model.DefaultReasoningEffort = effort;
         model.ReasoningEfforts.Add(new CliReasoningEffort { Id = effort, ModelId = model.Id });
       }
-      foreach (var group in catalog.Models.Where(m => m.BaseModelId != null).GroupBy(m => m.BaseModelId)) {
-        var efforts = group.SelectMany(m => m.ReasoningEfforts).ToList();
-        foreach (var model in group) model.ReasoningEfforts = efforts;
+
+      // Unsuffixed aliases also belong to their advertised family, but their
+      // effective effort is unknown. Preserve that exact native default alias.
+      foreach (var model in catalog.Models.Where(m => m.BaseModelId == null)) {
+        var variant = catalog.Models.FirstOrDefault(m => m.BaseModelId == model.Id &&
+          string.Equals(context.Match(m.Name).Value, context.Match(model.Name).Value, StringComparison.OrdinalIgnoreCase));
+        if (variant == null) continue;
+        model.BaseModelId = variant.BaseModelId; model.BaseModelName = model.Name;
+        model.DefaultReasoningEffort = "";
+        model.ReasoningEfforts.Add(new CliReasoningEffort { Id = "", ModelId = model.Id, Description = "CLI default" });
+      }
+
+      foreach (var family in catalog.Models.Where(m => m.BaseModelId != null).GroupBy(m => m.BaseModelId).ToList()) {
+        // Keep different explicitly advertised context sizes separate. The
+        // grouping key is metadata only; commands always use a real ModelId.
+        var groups = family.GroupBy(m => context.Match(m.Name).Value.ToLowerInvariant()).ToList();
+        foreach (var group in groups) {
+          var name = group.FirstOrDefault(m => m.DefaultReasoningEffort == "")?.BaseModelName ?? group.First().BaseModelName;
+          var efforts = group.SelectMany(m => m.ReasoningEfforts).GroupBy(e => e.Id)
+            .Select(g => g.First()).OrderBy(e => Array.IndexOf(effortOrder, e.Id)).ToList();
+          foreach (var model in group) {
+            if (groups.Count > 1) model.BaseModelId = family.Key + "[context=" + (group.Key.Length == 0 ? "default" : group.Key) + "]";
+            model.BaseModelName = name; model.ReasoningEfforts = efforts;
+          }
+        }
       }
     }
 

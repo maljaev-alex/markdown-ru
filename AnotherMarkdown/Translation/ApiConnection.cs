@@ -53,7 +53,8 @@ namespace AnotherMarkdown.Translation
     [JsonProperty]
     public string AuthPrefix { get; set; } = "";
     [JsonProperty]
-    public int MaxOutputTokens { get; set; } = 8192;
+    // Zero leaves the output budget to the service. Reasoning may consume this budget too.
+    public int MaxOutputTokens { get; set; }
     [JsonProperty]
     public string TokenLimitParameter { get; set; } = "max_tokens";
     [JsonProperty]

@@ -101,7 +101,7 @@ try {
     }
     Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\loader.js') -Destination (Join-Path $stage 'assets\loader.js') -Force
     Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\translation-ru.md') -Destination (Join-Path $stage 'TRANSLATION-RU.md')
-    $archive = Join-Path $OutputDirectory 'AnotherMarkdown-0.1.12-ru.5-x64.zip'
+    $archive = Join-Path $OutputDirectory 'AnotherMarkdown-0.1.12-ru.6-x64.zip'
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -Force
     Write-Output "Package: $archive"
     Get-FileHash -LiteralPath $archive -Algorithm SHA256

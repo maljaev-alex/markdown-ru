@@ -26,6 +26,7 @@ internal static class SettingsTests
       }
       var settings = new Settings { ZoomLevel = 9000, EnabledMarkdownPlugins = new[] { "attrs" } };
       EffortSettings();
+      ModelSortingSettings();
       ApiSettings();
       settings.Translation.ShowButtons = false;
       using (var form = new SettingsForm(settings)) {
@@ -170,21 +171,91 @@ internal static class SettingsTests
       }
       efforts.SelectedIndex = 2;
       Check(ReadDraft(form).ReasoningEffort == "ultra" && Find<TextBox>(form, "translationArguments").Text.Contains("model_reasoning_effort=ultra"), "effort selection updates saved draft and argument preview");
-      Find<ComboBox>(form, "translationModel").SelectedIndex = 2;
+      var models = Find<ComboBox>(form, "translationModel");
+      models.SelectedItem = models.Items.Cast<object>().Single(m => m.ToString() == "plain");
       Check(!efforts.Enabled && ReadDraft(form).ReasoningEffort == "", "switching to model without effort clears previous override");
       options = CliProfiles.Defaults("cursor", options.Executable); options.UseDefaultModel = false; options.Model = "grok-4.7-xhigh";
       catalog = CliModelDiscovery.ParseCommandOutput("cursor", "auto - Auto (default)\ngrok-4.7-low - Grok 4.7 Low\ngrok-4.7-medium - Grok 4.7 Medium\ngrok-4.7-xhigh - Grok 4.7 Extra High\ngrok-4.7-xhigh-fast - Grok 4.7 Extra High Fast\n", default(System.Threading.CancellationToken));
       FillCatalog(form, options, catalog);
-      Check(Find<ComboBox>(form, "translationModel").Items.Count == 4 && efforts.Items.Count == 3 && ReadDraft(form).Model == "grok-4.7-xhigh", "Cursor groups exact effort variants and restores saved full model ID");
+      Check(Find<ComboBox>(form, "translationModel").Items.Count == 3 && efforts.Items.Count == 3 && ReadDraft(form).Model == "grok-4.7-xhigh", "Cursor groups exact effort variants, hides Fast and restores saved full model ID");
       efforts.SelectedIndex = 1;
       Check(ReadDraft(form).Model == "grok-4.7-medium" && ReadDraft(form).ReasoningEffort == "medium" && !ReadDraft(form).UseDefaultModel, "Cursor effort selects returned model ID instead of fabricated base");
-      Find<ComboBox>(form, "translationModel").SelectedIndex = 3;
-      Check(ReadDraft(form).Model == "grok-4.7-xhigh-fast", "Cursor Fast stays a separate exact model variant");
+      Check(!Find<ComboBox>(form, "translationModel").Items.Cast<object>().Any(m => m.ToString().IndexOf("Fast", StringComparison.OrdinalIgnoreCase) >= 0), "Cursor Fast variants remain hidden from the model picker");
       Find<ComboBox>(form, "translationModel").SelectedIndex = 0;
       Check(!efforts.Enabled && ReadDraft(form).UseDefaultModel && ReadDraft(form).ReasoningEffort == "", "Cursor CLI default retains Auto and exposes no invented effort");
+      options.Model = "grok-4.7-xhigh-fast";
+      FillCatalog(form, options, catalog);
+      Check(ReadDraft(form).Model == "grok-4.7-xhigh" && ReadDraft(form).ReasoningEffort == "xhigh", "saved Cursor Fast model migrates only to its exact advertised normal variant and retains effort");
+      options.Model = "not-advertised-low-fast";
+      FillCatalog(form, options, catalog);
+      Check(ReadDraft(form).UseDefaultModel && ReadDraft(form).ReasoningEffort == "" && !Find<ComboBox>(form, "translationModel").Items.Cast<object>().Any(m => m.ToString().IndexOf("Fast", StringComparison.OrdinalIgnoreCase) >= 0), "missing normal Cursor counterpart falls back to CLI default without reintroducing a saved Fast row");
+      var nativeEfforts = new System.Collections.Generic.List<CliReasoningEffort> {
+        new CliReasoningEffort { Id = "low", ModelId = "native-low" },
+        new CliReasoningEffort { Id = "", ModelId = "native", Description = "CLI default" }
+      };
+      catalog = new CliModelCatalog { DefaultModelId = "native", Models = {
+        new CliModel { Id = "native-low", Name = "Native Low", BaseModelId = "native", BaseModelName = "Native", DefaultReasoningEffort = "low", ReasoningEfforts = nativeEfforts },
+        new CliModel { Id = "native", Name = "Native", BaseModelId = "native", BaseModelName = "Native", DefaultReasoningEffort = "", ReasoningEfforts = nativeEfforts }
+      } };
+      options.Model = "native"; options.ReasoningEffort = "";
+      FillCatalog(form, options, catalog);
+      Check(efforts.Items.Count == 2 && efforts.Text == "\u041f\u043e \u0443\u043c\u043e\u043b\u0447\u0430\u043d\u0438\u044e \u0432 CLI" && ReadDraft(form).Model == "native" && ReadDraft(form).ReasoningEffort == "", "native Cursor default restores its exact unsuffixed model with one readable effort row");
+      efforts.SelectedIndex = 0;
+      Check(ReadDraft(form).Model == "native-low", "native default and explicit Cursor effort retain distinct returned IDs");
+      options.UseDefaultModel = true;
+      FillCatalog(form, options, catalog);
+      Check(efforts.Items.Count == 2 && efforts.Items.Cast<object>().Count(e => e.ToString().StartsWith("\u041f\u043e \u0443\u043c\u043e\u043b\u0447\u0430\u043d\u0438\u044e \u0432 CLI", StringComparison.Ordinal)) == 1 && ReadDraft(form).UseDefaultModel, "global CLI fallback does not duplicate or pin the native-default effort alias");
+      options = CliProfiles.Defaults("codex", options.Executable); options.UseDefaultModel = false; options.Model = "other-fast";
+      catalog = new CliModelCatalog { Models = { new CliModel { Id = "other-fast", Name = "Other Fast" } } };
+      FillCatalog(form, options, catalog);
+      Check(ReadDraft(form).Model == "other-fast" && !ReadDraft(form).UseDefaultModel, "Fast filtering and migration do not affect another CLI provider");
     }
   }
   private static TranslationOptions ReadDraft(SettingsForm form) => (TranslationOptions)typeof(SettingsForm).GetMethod("ReadTranslationDraft", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, null);
+  private static void ModelSortingSettings()
+  {
+    var settings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
+    settings.Translation.ShowButtons = false;
+    using (var form = new SettingsForm(settings)) {
+      var catalog = new CliModelCatalog { DefaultModelId = "aaa", Models = {
+        new CliModel { Id = "aaa", Name = "zeta", IsDefault = true },
+        new CliModel { Id = "z-last", Name = "alpha" },
+        new CliModel { Id = "a-first", Name = "ALPHA" },
+        new CliModel { Id = "middle", Name = "Bravo" },
+        new CliModel { Id = "empty-name", Name = "" }
+      } };
+      var options = CliProfiles.Defaults("codex", Assembly.GetExecutingAssembly().Location);
+      FillCatalog(form, options, catalog);
+      var models = Find<ComboBox>(form, "translationModel");
+      Check(models.SelectedIndex == 0 && ReadDraft(form).UseDefaultModel, "sorted CLI list keeps the configured default fallback first");
+      Check(models.Items.Cast<object>().Skip(1).Select(m => m.ToString()).SequenceEqual(new[] { "ALPHA (a-first)", "alpha (z-last)", "Bravo (middle)", "empty-name", "zeta (aaa) [\u043f\u043e \u0443\u043c\u043e\u043b\u0447\u0430\u043d\u0438\u044e]" }), "CLI models sort by display name ignoring case with deterministic IDs");
+      options.UseDefaultModel = false; options.Model = "middle";
+      FillCatalog(form, options, catalog);
+      Check(ReadDraft(form).Model == "middle" && models.Text == "Bravo (middle)", "CLI sorting restores an explicit saved model by ID");
+      models.SelectedItem = models.Items.Cast<object>().Single(m => m.ToString() == "alpha (z-last)");
+      var selected = ReadDraft(form);
+      catalog.Models.Reverse();
+      FillCatalog(form, selected, catalog);
+      Check(ReadDraft(form).Model == "z-last" && models.Text == "alpha (z-last)", "CLI refresh order does not change the selected model");
+      selected.Model = "outside-catalog";
+      FillCatalog(form, selected, catalog);
+      Check(ReadDraft(form).Model == "outside-catalog", "sorting preserves a saved CLI model absent from discovery");
+
+      Find<ComboBox>(form, "translationConnectionMode").SelectedIndex = 1;
+      var fill = typeof(SettingsForm).GetMethod("FillApiModels", BindingFlags.Instance | BindingFlags.NonPublic);
+      fill.Invoke(form, new object[] { catalog, "middle" });
+      var apiModels = Find<ComboBox>(form, "apiModel");
+      Check(apiModels.Items.Cast<CliModel>().Select(m => m.Id).SequenceEqual(new[] { "a-first", "z-last", "middle", "empty-name", "aaa" }), "API models sort by name ignoring case then ID, using ID for empty names");
+      Check(apiModels.SelectedItem.As<CliModel>().Id == "middle" && ReadDraft(form).ActiveApiConnection.Model == "middle", "API sorting restores the saved ID rather than the first sorted model");
+      apiModels.SelectedItem = apiModels.Items.Cast<CliModel>().Single(m => m.Id == "z-last");
+      var apiSelected = ReadDraft(form).ActiveApiConnection.Model;
+      catalog.Models.Reverse();
+      fill.Invoke(form, new object[] { catalog, apiSelected });
+      Check(apiModels.SelectedItem.As<CliModel>().Id == "z-last", "API refresh order preserves an explicit selection");
+      fill.Invoke(form, new object[] { catalog, "manual-unlisted-model" });
+      Check(apiModels.SelectedItem == null && apiModels.Text == "manual-unlisted-model" && ReadDraft(form).ActiveApiConnection.Model == "manual-unlisted-model", "sorting preserves a manually entered API model absent from discovery");
+    }
+  }
   private static void ApiSettings()
   {
     var settings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
@@ -194,6 +265,13 @@ internal static class SettingsTests
       form.SelectTranslationTab();
       Find<ComboBox>(form, "translationConnectionMode").SelectedIndex = 1;
       Check(ReadDraft(form).UseApi && ReadDraft(form).ApiConnections.Count == 1, "switching to API creates an editable connection without changing CLI settings");
+      var limit = Find<NumericUpDown>(form, "apiMaxTokens");
+      Check(limit.Minimum == 0 && limit.Value == 0, "new API connection preserves the service default output limit");
+      var presets = Find<ComboBox>(form, "apiPreset");
+      presets.SelectedItem = presets.Items.Cast<object>().Single(p => p.ToString() == "Anthropic");
+      Check(limit.Value == 8192, "Anthropic preset supplies its required explicit output limit");
+      presets.SelectedItem = presets.Items.Cast<object>().Single(p => p.ToString() == "OpenAI");
+      Check(limit.Value == 0 && ReadDraft(form).ActiveApiConnection.MaxOutputTokens == 0, "OpenAI preset restores the service default rather than a fixed reasoning budget");
       Find<TextBox>(form, "apiName").Text = "First endpoint";
       Find<TextBox>(form, "apiEndpoint").Text = "https://example.test/v1";
       Find<TextBox>(form, "apiKey").Text = "fake-key-for-settings-test";

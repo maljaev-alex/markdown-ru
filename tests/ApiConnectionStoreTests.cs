@@ -37,7 +37,7 @@ internal static class ApiConnectionStoreTests
     var connection = new ApiConnection { Name = "Test connection", ApiKey = key, AdditionalHeadersJson = headers };
     Check(connection.Id.Length == 32 && connection.Id != new ApiConnection().Id, "new connections have independent IDs");
     Check(connection.Protocol == "chat-completions" && connection.TokenLimitParameter == "max_tokens"
-      && connection.MaxOutputTokens == 8192 && connection.Temperature == null, "protocol defaults");
+      && connection.MaxOutputTokens == 0 && connection.Temperature == null, "protocol defaults");
     Check(connection.ToString() == connection.Name, "display uses connection name");
     var missing = Path.Combine(directory, "missing", "connections.json");
     Check(ApiConnectionStore.Load(missing).Count == 0 && !Directory.Exists(Path.GetDirectoryName(missing)), "missing file does not create storage");

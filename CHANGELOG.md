@@ -1,5 +1,12 @@
 ## Version History
 
+### Markdown RU 0.1.12-ru.6
+
+* Group Cursor effort aliases even when their display names omit the effort; hide Fast variants.
+* Sort CLI and API model selectors alphabetically while preserving the saved choice.
+* Let API services choose the output budget by default, avoiding an artificial 8192-token cap on reasoning and translation. Anthropic retains its required explicit limit.
+* Distinguish exhausted token budgets, model refusals, tool calls and incomplete responses without displaying partial translations or sensitive server output.
+
 ### NppAnotherMarkdown 0.1.12 (released 2026-08-17)
 * added support mermaid plugin (thanks to @MassimilianoPili)  
 ![](help/plugin-mermaid.jpg) 

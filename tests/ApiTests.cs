@@ -77,6 +77,7 @@ internal static class ApiTests
       await SuccessfulTranslation(protocol);
       await TruncatedTranslation(protocol);
     }
+    await AutomaticOutputBudget();
     await CustomSettings();
     await ModelLists();
     await CancellationAndTimeout();
@@ -119,6 +120,41 @@ internal static class ApiTests
     using (var server = new LoopbackServer(_ => Response.Json(response))) {
       var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, protocol), 5, CancellationToken.None), protocol + " rejects a token-truncated answer instead of saving partial Markdown");
       Check(error is InvalidOperationException, protocol + " exposes truncation as a failed translation");
+      Check(error.Message.Contains("0") && error.Message.Contains("effort"), protocol + " explains output-budget exhaustion and available settings");
+    }
+  }
+
+  private static async Task AutomaticOutputBudget()
+  {
+    foreach (var protocol in new[] { "chat-completions", "responses", "gemini" }) {
+      using (var server = new LoopbackServer(_ => Response.Json(Success(protocol)))) {
+        var connection = Connection(server, protocol); connection.MaxOutputTokens = 0;
+        var output = await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None);
+        var body = JObject.Parse((await server.FirstRequest).Body);
+        Check(output == Answer && body["max_tokens"] == null && body["max_completion_tokens"] == null && body["max_output_tokens"] == null && body["generationConfig"]?["maxOutputTokens"] == null,
+          protocol + " automatic budget uses the service default without an artificial 8192-token cap");
+      }
+    }
+    using (var server = new LoopbackServer(_ => Response.Json(Success("anthropic")))) {
+      var connection = Connection(server, "anthropic"); connection.MaxOutputTokens = 0;
+      await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "Anthropic requires an explicit budget");
+      Check(!server.HasConnections, "missing mandatory Anthropic max_tokens is caught before sending");
+    }
+    var response = Success("chat-completions");
+    response["choices"][0]["finish_reason"] = "length";
+    response["choices"][0]["message"]["content"] = "";
+    response["usage"] = JObject.Parse("{\"completion_tokens\":8192,\"completion_tokens_details\":{\"reasoning_tokens\":8192}}");
+    using (var server = new LoopbackServer(_ => Response.Json(response))) {
+      var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "chat-completions"), 5, CancellationToken.None), "reasoning-only exhausted budget fails safely");
+      Check(error.Message.Contains("8192") && error.Message.Contains("effort") && !error.ToString().Contains(FixtureKey), "reasoning budget diagnostic includes safe counts and never credentials");
+      Check(server.RequestCount == 1, "a token limit never triggers hidden paid retries");
+    }
+    foreach (var reason in new[] { "content_filter", "tool_calls", "unknown-" + FixtureKey }) {
+      response = Success("chat-completions"); response["choices"][0]["finish_reason"] = reason;
+      using (var server = new LoopbackServer(_ => Response.Json(response))) {
+        var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "chat-completions"), 5, CancellationToken.None), "non-final finish is rejected: " + reason.Split('-')[0]);
+        Check(!error.ToString().Contains(FixtureKey), "unknown finish reason cannot echo server secrets");
+      }
     }
   }
 
@@ -165,6 +201,7 @@ internal static class ApiTests
         if (protocol == "anthropic") connection.Endpoint += "/messages";
         if (protocol == "gemini") connection.Endpoint += "/models/old-model:generateContent";
         connection.Model = "";
+        if (protocol == "anthropic") connection.MaxOutputTokens = 0;
         var catalog = await new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None);
         Check(catalog.Models.Any(model => model.Id == (protocol == "gemini" ? "models/gemini-fixture" : "fixture-model")), protocol + " discovers usable model IDs without requiring a selected model");
         var request = await server.FirstRequest;
@@ -234,7 +271,7 @@ internal static class ApiTests
       new KeyValuePair<string, Action<ApiConnection>>("malformed parameters JSON", connection => connection.AdditionalParametersJson = "{"),
       new KeyValuePair<string, Action<ApiConnection>>("non-object parameters JSON", connection => connection.AdditionalParametersJson = "[]"),
       new KeyValuePair<string, Action<ApiConnection>>("header injection", connection => connection.AdditionalHeadersJson = "{\"X-Fixture\":\"ok\\r\\nX-Injected: yes\"}"),
-      new KeyValuePair<string, Action<ApiConnection>>("invalid output token limit", connection => connection.MaxOutputTokens = 0),
+      new KeyValuePair<string, Action<ApiConnection>>("invalid output token limit", connection => connection.MaxOutputTokens = -1),
       new KeyValuePair<string, Action<ApiConnection>>("non-finite temperature", connection => connection.Temperature = double.NaN),
       new KeyValuePair<string, Action<ApiConnection>>("unknown protocol", connection => connection.Protocol = "unknown")
     };

@@ -1,6 +1,6 @@
 # AnotherMarkdown for Notepad++
 
-> **Markdown RU fork:** translate previews using Codex, Cursor Agent and other popular CLI profiles, with automatic settings and model discovery where supported. Includes `.mdc` support alongside `.md`. See the [Russian usage, setup and build guide](docs/translation-ru.md).
+> **Markdown RU fork:** translate previews using Codex, Cursor Agent and other popular CLI profiles, or saved API connections (OpenAI-compatible, Anthropic and Gemini). Includes model discovery, separate effort selection and `.mdc` support alongside `.md`. See the [Russian usage, setup and build guide](docs/translation-ru.md).
 
 A plugin for previewing Markdown files in Notepad++.
 

@@ -103,7 +103,7 @@ namespace AnotherMarkdown.Forms
       apiLayout.Controls.Add(advanced, 0, 9); apiLayout.SetColumnSpan(advanced, 3);
       apiEffort = new ComboBox { Name = "apiEffort", AccessibleName = "Effort API (если поддерживается моделью)", DropDownStyle = ComboBoxStyle.DropDown, Dock = DockStyle.Fill };
       apiEffort.Items.AddRange(new object[] { "", "none", "minimal", "low", "medium", "high", "xhigh", "max" });
-      apiMaxTokens = new NumericUpDown { Name = "apiMaxTokens", Minimum = 1, Maximum = 2000000, Value = 8192, Width = 150 };
+      apiMaxTokens = new NumericUpDown { Name = "apiMaxTokens", AccessibleName = "Лимит ответа: 0 — по умолчанию сервиса", Minimum = 0, Maximum = 2000000, Value = 0, Width = 150 };
       apiTokenParameter = new ComboBox { Name = "apiTokenParameter", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
       apiTokenParameter.Items.AddRange(new object[] { "max_tokens", "max_completion_tokens" });
       var temperatureRow = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
@@ -119,7 +119,7 @@ namespace AnotherMarkdown.Forms
       var captions = new[] { "Effort (необязательно)", "Лимит ответа, токенов", "Поле лимита (Chat)", "Temperature", "Заголовок ключа", "Префикс ключа", "Параметры JSON", "Заголовки JSON" };
       for (var i = 0; i < captions.Length; i++) { advanced.RowStyles.Add(new RowStyle(SizeType.AutoSize)); advanced.Controls.Add(MakeSettingsLabel(captions[i]), 0, i); advanced.Controls.Add(advancedControls[i], 1, i); advancedControls[i].Margin = new Padding(3, 4, 3, 6); }
       advancedToggle.CheckedChanged += (_, __) => advanced.Visible = advancedToggle.Checked;
-      var advancedHelp = new Label { AutoSize = true, Dock = DockStyle.Fill, Text = "Пустой effort, выключенная temperature и пустой заголовок ключа сохраняют настройки протокола. Поддержка параметров зависит от модели. Дополнительные заголовки шифруются вместе с ключом." };
+      var advancedHelp = new Label { AutoSize = true, Dock = DockStyle.Fill, Text = "Лимит ответа 0 — по умолчанию сервиса; Anthropic требует явный лимит. Пустой effort, выключенная temperature и пустой заголовок ключа сохраняют настройки протокола. Поддержка параметров зависит от модели. Дополнительные заголовки шифруются вместе с ключом." };
       advanced.Controls.Add(advancedHelp, 0, 8); advanced.SetColumnSpan(advancedHelp, 2);
       apiTimeout = new NumericUpDown { Name = "apiTimeout", Minimum = 10, Maximum = 3600, Value = translationDraft.TimeoutSeconds, Width = 130 };
       AddTranslationRow(apiLayout, 10, "Тайм-аут, сек.", apiTimeout, new Label());
@@ -191,7 +191,7 @@ namespace AnotherMarkdown.Forms
       apiName.Text = value.Name; apiEndpoint.Text = value.Endpoint; apiKey.Text = value.ApiKey;
       apiProtocol.SelectedItem = apiProtocol.Items.Cast<ApiChoice>().FirstOrDefault(p => p.Id == value.Protocol);
       apiPreset.SelectedIndex = 0; apiModel.Items.Clear(); apiModel.Text = value.Model; apiEffort.Text = value.ReasoningEffort;
-      apiMaxTokens.Value = Math.Max(1, Math.Min(2000000, value.MaxOutputTokens));
+      apiMaxTokens.Value = Math.Max(0, Math.Min(2000000, value.MaxOutputTokens));
       apiTokenParameter.SelectedItem = value.TokenLimitParameter;
       apiUseTemperature.Checked = value.Temperature.HasValue;
       var temperature = value.Temperature ?? 0;
@@ -242,7 +242,7 @@ namespace AnotherMarkdown.Forms
       apiTokenParameter.SelectedItem = preset.TokenParameter ?? "max_tokens";
       apiKey.Text = ""; apiModel.Items.Clear(); apiModel.Text = "";
       apiEffort.Text = ""; apiHeaders.Text = "{}"; apiParameters.Text = "{}"; apiAuthHeader.Text = apiAuthPrefix.Text = "";
-      apiUseTemperature.Checked = false; apiMaxTokens.Value = 8192;
+      apiUseTemperature.Checked = false; apiMaxTokens.Value = preset.Protocol == "anthropic" ? 8192 : 0;
       apiKeyEdited = apiHeadersEdited = true; updatingApi = false;
       apiStatus.Text = "Настройки сервиса подставлены. Укажите ключ и модель этого подключения.";
     }
@@ -265,15 +265,12 @@ namespace AnotherMarkdown.Forms
         var translator = new ApiTranslator();
         if (translate) {
           await translator.TranslateAsync("# Connection test\nThe connection is working.", snapshot, (int)apiTimeout.Value, cancellation.Token);
-          if (!cancellation.IsCancellationRequested && generation == apiGeneration && !IsDisposed) apiStatus.Text = "Подключение работает: модель вернула перевод.";
+          if (!cancellation.IsCancellationRequested && generation == apiGeneration && !IsDisposed) apiStatus.Text = "Короткий тест перевода выполнен: модель вернула ответ.";
         }
         else {
           var catalog = await translator.LoadModelsAsync(snapshot, Math.Min(30, (int)apiTimeout.Value), cancellation.Token);
           if (cancellation.IsCancellationRequested || generation != apiGeneration || IsDisposed) return;
-          updatingApi = true; apiModel.Items.Clear(); apiModel.Items.AddRange(catalog.Models.ToArray());
-          apiModel.SelectedItem = catalog.Models.FirstOrDefault(m => m.Id == snapshot.Model);
-          if (apiModel.SelectedItem == null) apiModel.Text = snapshot.Model;
-          updatingApi = false;
+          FillApiModels(catalog, snapshot.Model);
           apiStatus.Text = "Моделей получено: " + catalog.Models.Count + ". Если нужной нет в списке, введите её ID.";
         }
       }
@@ -285,6 +282,20 @@ namespace AnotherMarkdown.Forms
         if (ReferenceEquals(apiCancellation, cancellation)) { apiCancellation = null; if (!IsDisposed) apiRefresh.Enabled = apiTest.Enabled = apiModel.Enabled = btnSave.Enabled = true; }
         cancellation.Dispose();
       }
+    }
+
+    private void FillApiModels(CliModelCatalog catalog, string selectedModel)
+    {
+      var wasUpdating = updatingApi;
+      updatingApi = true;
+      try {
+        apiModel.Items.Clear();
+        apiModel.Items.AddRange(catalog.Models.OrderBy(m => string.IsNullOrWhiteSpace(m.Name) ? m.Id : m.Name, StringComparer.OrdinalIgnoreCase)
+          .ThenBy(m => m.Id, StringComparer.OrdinalIgnoreCase).ToArray());
+        apiModel.SelectedItem = catalog.Models.FirstOrDefault(m => m.Id == selectedModel);
+        if (apiModel.SelectedItem == null) apiModel.Text = selectedModel;
+      }
+      finally { updatingApi = wasUpdating; }
     }
 
     private void CancelApiDiscovery()

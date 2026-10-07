@@ -22,13 +22,22 @@ internal static class TranslationTests
     if (args.Length > 0 && args[0] == "app-server") return FakeServer();
     if (args.Length > 0 && args[0] == "models") { Console.Write("\u001b[32mauto - Auto (default)\u001b[0m\ngrok-4.7-xhigh - Grok 4.7 Extra High\n"); return 0; }
     if (args.Length > 0 && args[0] == "models-real") {
-      foreach (var provider in new[] { "codex", "cursor" }) {
+      foreach (var provider in new[] { "codex", "cursor" }.Where(p => args.Length < 2 || args[1] == p)) {
         var installation = CliProfiles.DiscoverInstalled().FirstOrDefault(i => i.ProviderId == provider);
         if (installation == null) { Console.WriteLine("SKIP " + provider + ": no installation"); continue; }
         var path = installation.Executable;
         var catalog = new CliModelDiscovery().LoadAsync(provider, path, CancellationToken.None).GetAwaiter().GetResult();
         Console.WriteLine(provider + ": count=" + catalog.Models.Count + ", default=" + catalog.DefaultModelId + ", configRead=" + catalog.McpConfigurationRead + ", MCP names=" + catalog.McpServerNames.Count);
         foreach (var model in catalog.Models.Where(m => m.Id == "gpt-6-astra" || m.Id == "grok-4.7-xhigh")) Console.WriteLine(model.Id + " efforts: " + string.Join(",", model.ReasoningEfforts.Select(e => e.Id)));
+        if (provider == "cursor") {
+          Console.WriteLine("Cursor grouped models=" + catalog.Models.GroupBy(m => m.BaseModelId ?? m.Id).Count());
+          if (catalog.Models.Any(m => m.Id.EndsWith("-fast", StringComparison.OrdinalIgnoreCase))) return 1;
+          foreach (var id in new[] { "claude-opus-5-5-medium", "claude-opus-5-high", "claude-opus-4-8-high", "gpt-5.6-sol-medium" }) {
+            var model = catalog.Models.FirstOrDefault(m => m.Id == id);
+            if (model == null || model.BaseModelId == null || model.ReasoningEfforts.Count < 3) return 1;
+            Console.WriteLine(model.BaseModelName + ": " + string.Join(",", model.ReasoningEfforts.Select(e => e.Id)));
+          }
+        }
         if (!catalog.Models.Any(m => m.Id == (provider == "codex" ? "gpt-6-astra" : "grok-4.7-xhigh"))) return 1;
         if (provider == "codex" && !catalog.McpConfigurationRead) return 1;
       }
@@ -118,6 +127,75 @@ internal static class TranslationTests
     throw new Exception("FAIL: expected " + typeof(T).Name + ": " + label);
   }
 
+  private static void CursorAliases()
+  {
+    // Representative exact rows from agent models (2026-10-08). Several
+    // effort aliases intentionally have no effort label in the display name.
+    var variants = CliModelDiscovery.ParseCommandOutput("cursor", string.Join("\n", new[] {
+      "auto - Auto (default)",
+      "composer-2.5-fast - Composer 2.5 Fast",
+      "grok-code-fast-1 - Grok Code Fast 1",
+      "grok-4.7-low - Grok 4.7  Low",
+      "grok-4.7-high - Grok 4.7  High",
+      "grok-4.7-xhigh - Grok 4.7  Extra High",
+      "grok-4.7-xhigh-fast - Grok 4.7  Extra High Fast\u200b\u200b",
+      "claude-opus-5-5-low - Claude Opus 5.5 1M Low",
+      "claude-opus-5-5-medium - Claude Opus 5.5 1M",
+      "claude-opus-5-5-high - Claude Opus 5.5 1M High",
+      "claude-opus-5-5-xhigh - Claude Opus 5.5 1M Extra High",
+      "claude-opus-5-5-max - Claude Opus 5.5 1M Max",
+      "claude-opus-5-high - Claude Opus 5 1M",
+      "claude-opus-5-medium - Claude Opus 5 1M Medium",
+      "claude-opus-5-thinking-high - Claude Opus 5 1M Thinking",
+      "claude-opus-5-thinking-xhigh - Claude Opus 5 1M Extra High Thinking",
+      "claude-opus-4-8-high - Claude Opus 4.8 1M",
+      "claude-opus-4-8-max - Claude Opus 4.8 1M Max",
+      "claude-4.6-opus-high - Claude Opus 4.6 1M",
+      "claude-4.6-opus-max - Claude Opus 4.6 1M Max",
+      "claude-4.6-opus-high-thinking - Claude Opus 4.6 1M Thinking",
+      "claude-4.6-opus-max-thinking - Claude Opus 4.6 1M Max Thinking",
+      "gpt-5.6-sol-high - GPT-5.6 Sol 1M High",
+      "gpt-5.6-sol-medium - GPT-5.6 Sol 1M",
+      "gpt-5.6-sol-max - GPT-5.6 Sol 1M Max",
+      "gpt-5.3-codex-low - Codex 5.3 Low",
+      "gpt-5.3-codex - Codex 5.3",
+      "gpt-5.3-codex-high - Codex 5.3 High",
+      "gpt-5.3-codex-xhigh-fast - Codex 5.3 Extra High Fast",
+      "gpt-5.5-medium - GPT-5.5 1M",
+      "gpt-5.5-extra-high - GPT-5.5 1M Extra High",
+      "gemini-3.7-flash-high - Gemini 3.7 Flash",
+      "gemini-3.7-flash-low - Gemini 3.7 Flash Low",
+      "gemini-3.7-flash-medium - Gemini 3.7 Flash Medium",
+      "muse-spark-1.3-high - Muse Spark 1.3 1M",
+      "muse-spark-1.3-max - Muse Spark 1.3 1M Max",
+      "claude-haiku-5-5-low - Claude Haiku 5.5  Low No Thinking",
+      "claude-haiku-5-5-high - Claude Haiku 5.5  High No Thinking",
+      "claude-haiku-5-5-thinking-low - Claude Haiku 5.5  Low",
+      "claude-haiku-5-5-thinking-high - Claude Haiku 5.5  High",
+      "claude-fable-5-high - Claude Fable 5 1M (NO ZDR)",
+      "claude-fable-5-max - Claude Fable 5 1M Max (NO ZDR)",
+      "claude-4.5-sonnet - Claude Sonnet 4.5",
+      "claude-4.5-sonnet-thinking - Claude Sonnet 4.5 Thinking"
+    }), CancellationToken.None);
+    Func<string, CliModel> find = id => variants.Models.Single(m => m.Id == id);
+    Check(variants.Models.All(m => !m.Id.EndsWith("-fast", StringComparison.OrdinalIgnoreCase)) && variants.DefaultModelId == "auto", "Cursor removes Fast mode aliases while preserving native CLI default");
+    Check(find("grok-code-fast-1").BaseModelId == null, "Cursor retains genuine model families containing Fast inside their names");
+    Check(find("claude-opus-5-5-medium").BaseModelId == "claude-opus-5-5" && find("claude-opus-5-high").BaseModelId == "claude-opus-5" && find("claude-opus-4-8-high").BaseModelId == "claude-opus-4-8", "Cursor groups Claude effort aliases even when display names omit the effort");
+    Check(find("claude-opus-5-5-medium").ReasoningEfforts.Select(e => e.Id).SequenceEqual(new[] { "low", "medium", "high", "xhigh", "max" }) && find("claude-opus-5-5-high").BaseModelName == "Claude Opus 5.5 1M", "Cursor exposes ordered real Claude efforts with one shared context-preserving name");
+    Check(find("claude-4.6-opus-high-thinking").BaseModelId == "claude-4.6-opus-thinking" && find("claude-4.6-opus-high-thinking").ReasoningEfforts.Select(e => e.ModelId).SequenceEqual(new[] { "claude-4.6-opus-high-thinking", "claude-4.6-opus-max-thinking" }), "Cursor recognizes legacy effort-before-thinking aliases without changing exact IDs");
+    Check(find("claude-opus-5-high").BaseModelId != find("claude-opus-5-thinking-high").BaseModelId && find("claude-haiku-5-5-low").BaseModelId != find("claude-haiku-5-5-thinking-low").BaseModelId && find("claude-haiku-5-5-thinking-low").BaseModelName.EndsWith(" Thinking"), "Cursor preserves Thinking as a separate model variant even when its display label omits Thinking");
+    Check(find("gpt-5.6-sol-medium").BaseModelId == "gpt-5.6-sol" && find("gemini-3.7-flash-high").BaseModelId == "gemini-3.7-flash" && find("muse-spark-1.3-high").BaseModelId == "muse-spark-1.3", "Cursor groups GPT Gemini and Muse effort aliases without requiring display labels");
+    var native = find("gpt-5.3-codex");
+    Check(native.BaseModelId == "gpt-5.3-codex" && native.DefaultReasoningEffort == "" && native.ReasoningEfforts.Select(e => e.Id).SequenceEqual(new[] { "", "low", "high" }) && native.ReasoningEfforts[0].ModelId == native.Id && !string.IsNullOrWhiteSpace(native.ReasoningEfforts[0].ToString()), "Cursor unsuffixed native alias joins its family with an explicit default choice and no invented medium effort");
+    Check(find("gpt-5.5-extra-high").DefaultReasoningEffort == "xhigh" && find("gpt-5.5-extra-high").ReasoningEfforts.Single(e => e.Id == "xhigh").ModelId == "gpt-5.5-extra-high", "Cursor extra-high spelling normalizes effort only and preserves the actual model ID");
+    Check(variants.Models.SelectMany(m => m.ReasoningEfforts).All(e => variants.Models.Any(m => m.Id == e.ModelId)), "every Cursor effort launches an exact non-Fast alias from the returned catalog");
+    Check(find("claude-fable-5-high").BaseModelName == "Claude Fable 5 1M (NO ZDR)" && find("claude-4.5-sonnet-thinking").BaseModelId == null, "Cursor retains data-retention labels and does not invent effort for ordinary Thinking aliases");
+    var contexts = CliModelDiscovery.ParseCommandOutput("cursor", "example-low - Example 200K Low\nexample-high - Example 1M High\nexample-medium-1m - Example 1M Medium\nexample-max-1m - Example 1M Max\n", CancellationToken.None);
+    Check(contexts.Models[0].BaseModelId != contexts.Models[1].BaseModelId && contexts.Models[2].BaseModelId == contexts.Models[3].BaseModelId && contexts.Models[0].BaseModelName.Contains("200K") && contexts.Models[1].BaseModelName.Contains("1M"), "Cursor keeps explicitly different context variants separate and retains their labels");
+    var fastDefault = CliModelDiscovery.ParseCommandOutput("cursor", "example-high-fast - Example High Fast (default)\nexample-high - Example High\n", CancellationToken.None);
+    Check(fastDefault.DefaultModelId == "example-high-fast" && fastDefault.Models.Single().Id == "example-high" && !fastDefault.Models[0].IsDefault, "hiding Cursor Fast mode never invents a replacement for the configured native default");
+  }
+
   private static async Task Run()
   {
     Check(new TranslationOptions().Model == "gpt-6-astra", "requested model default");
@@ -144,8 +222,7 @@ internal static class TranslationTests
     finally { Console.InputEncoding = hostEncoding; }
     var cursorCatalog = await new CliModelDiscovery().LoadAsync("cursor", executable, CancellationToken.None);
     Check(cursorCatalog.Models.Count == 2 && cursorCatalog.DefaultModelId == "auto" && cursorCatalog.Models[1].Id == "grok-4.7-xhigh", "Cursor model list strips ANSI and parses default");
-    var variants = CliModelDiscovery.ParseCommandOutput("cursor", "grok-4.7-low - Grok 4.7 Low\ngrok-4.7-high - Grok 4.7 High\ngrok-4.7-xhigh - Grok 4.7 Extra High\ngrok-4.7-xhigh-fast - Grok 4.7 Extra High Fast\nother-high - Other\n", CancellationToken.None);
-    Check(variants.Models[0].ReasoningEfforts.Select(e => e.ModelId).SequenceEqual(new[] { "grok-4.7-low", "grok-4.7-high", "grok-4.7-xhigh" }) && variants.Models[3].ReasoningEfforts.Single().ModelId == "grok-4.7-xhigh-fast" && variants.Models[4].BaseModelId == null, "Cursor effort uses only matching advertised variants, keeps Fast separate and never guesses suffixes");
+    CursorAliases();
     Check(CliTranslator.DecodeOutput("{\"result\":\"    indented code\\n\"}\n{\"type\":\"stats\"}", "json-result").StartsWith("    "), "JSONL answer survives trailing stats and preserves Markdown indentation");
     Check(CliTranslator.DecodeOutput("{\"type\":\"text\",\"part\":{\"id\":\"1\",\"text\":\"old\"}}\n{\"type\":\"text\",\"part\":{\"id\":\"1\",\"text\":\"new\"}}", "opencode-json") == "new", "OpenCode cumulative text snapshots are not duplicated");
     await Throws<InvalidOperationException>(() => Task.FromResult(CliTranslator.DecodeOutput("{\"result\":\"denied\",\"is_error\":true}", "json-result")), "denied", "structured CLI failure is not a translation");

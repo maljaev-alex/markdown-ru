@@ -46,7 +46,7 @@ namespace AnotherMarkdown.Translation
       public double? Temperature;
     }
 
-    public static void Validate(ApiConnection connection) { Prepare(connection); }
+    public static void Validate(ApiConnection connection) { ValidateOutputBudget(Prepare(connection)); }
 
     public async Task<string> TranslateAsync(string markdown, ApiConnection connection, int timeoutSeconds, CancellationToken token)
     {
@@ -54,6 +54,7 @@ namespace AnotherMarkdown.Translation
       RequireCredentialsAvailable(connection);
       var prepared = Prepare(connection);
       ValidateTimeout(timeoutSeconds);
+      ValidateOutputBudget(prepared);
       if (string.IsNullOrWhiteSpace(prepared.Model)) throw new ArgumentException("Укажите модель API.");
       if (string.IsNullOrWhiteSpace(markdown)) throw new ArgumentException("Документ пуст.");
       if (markdown.Length > 1000000) throw new ArgumentException("Документ превышает 1 млн символов. Разделите его на части.");
@@ -134,8 +135,8 @@ namespace AnotherMarkdown.Translation
         MaxOutputTokens = connection.MaxOutputTokens, Temperature = connection.Temperature,
         TokenLimitParameter = (connection.TokenLimitParameter ?? "max_tokens").Trim()
       };
-      if (prepared.MaxOutputTokens < 1 || prepared.MaxOutputTokens > 2000000)
-        throw new ArgumentException("Лимит выходных токенов должен быть от 1 до 2000000.");
+      if (prepared.MaxOutputTokens < 0 || prepared.MaxOutputTokens > 2000000)
+        throw new ArgumentException("Лимит выходных токенов должен быть от 0 до 2000000. Ноль — настройки сервиса.");
       if (prepared.Temperature.HasValue && (double.IsNaN(prepared.Temperature.Value) || double.IsInfinity(prepared.Temperature.Value) || prepared.Temperature < 0 || prepared.Temperature > 2))
         throw new ArgumentException("Температура должна быть от 0 до 2.");
       if (ContainsControl(prepared.Model) || ContainsControl(prepared.ApiKey) || ContainsControl(prepared.AuthPrefix))
@@ -162,6 +163,12 @@ namespace AnotherMarkdown.Translation
       // Validate controlled merges before any network request, including model discovery.
       CreateBody(prepared, "validation");
       return prepared;
+    }
+
+    private static void ValidateOutputBudget(PreparedConnection connection)
+    {
+      if (connection.Protocol == "anthropic" && connection.MaxOutputTokens == 0)
+        throw new ArgumentException("Anthropic требует явный лимит выходных токенов. Задайте его в дополнительных параметрах.");
     }
 
     private static void ValidateTimeout(int timeoutSeconds)
@@ -212,8 +219,8 @@ namespace AnotherMarkdown.Translation
       JObject body;
       switch (connection.Protocol) {
         case "responses":
-          body = new JObject { ["model"] = connection.Model, ["input"] = prompt, ["store"] = false, ["stream"] = false,
-            ["max_output_tokens"] = connection.MaxOutputTokens, ["tools"] = new JArray() };
+          body = new JObject { ["model"] = connection.Model, ["input"] = prompt, ["store"] = false, ["stream"] = false, ["tools"] = new JArray() };
+          if (connection.MaxOutputTokens > 0) body["max_output_tokens"] = connection.MaxOutputTokens;
           if (connection.Effort.Length != 0) body["reasoning"] = new JObject { ["effort"] = connection.Effort };
           break;
         case "anthropic":
@@ -222,14 +229,15 @@ namespace AnotherMarkdown.Translation
           if (connection.Effort.Length != 0) body["output_config"] = new JObject { ["effort"] = connection.Effort };
           break;
         case "gemini":
-          var generation = new JObject { ["maxOutputTokens"] = connection.MaxOutputTokens };
+          var generation = new JObject();
+          if (connection.MaxOutputTokens > 0) generation["maxOutputTokens"] = connection.MaxOutputTokens;
           if (connection.Temperature.HasValue) generation["temperature"] = connection.Temperature.Value;
           if (connection.Effort.Length != 0) generation["thinkingConfig"] = new JObject { ["thinkingLevel"] = connection.Effort.ToUpperInvariant() };
           body = new JObject { ["contents"] = new JArray(new JObject { ["role"] = "user", ["parts"] = new JArray(new JObject { ["text"] = prompt }) }), ["generationConfig"] = generation };
           break;
         default:
-          body = new JObject { ["model"] = connection.Model, ["messages"] = new JArray(new JObject { ["role"] = "user", ["content"] = prompt }),
-            [connection.TokenLimitParameter] = connection.MaxOutputTokens, ["stream"] = false };
+          body = new JObject { ["model"] = connection.Model, ["messages"] = new JArray(new JObject { ["role"] = "user", ["content"] = prompt }), ["stream"] = false };
+          if (connection.MaxOutputTokens > 0) body[connection.TokenLimitParameter] = connection.MaxOutputTokens;
           if (connection.Effort.Length != 0) body["reasoning_effort"] = connection.Effort;
           break;
       }
@@ -360,13 +368,20 @@ namespace AnotherMarkdown.Translation
       if (protocol == "chat-completions") {
         var choice = (root["choices"] as JArray)?.OfType<JObject>().FirstOrDefault();
         var message = choice?["message"] as JObject;
-        if (Text(choice?["finish_reason"]) != "stop" || message == null || Text(message["role"]) != "assistant" || HasItems(message["tool_calls"]) || message["function_call"] != null && message["function_call"].Type != JTokenType.Null || !string.IsNullOrEmpty(Text(message["refusal"])))
-          throw new InvalidOperationException("API не завершил перевод: ответ ограничен, отклонён или содержит вызов инструмента.");
+        var finish = Text(choice?["finish_reason"]);
+        if (finish == "length") throw OutputLimitError(root["usage"]);
+        if (finish == "content_filter" || !string.IsNullOrEmpty(Text(message?["refusal"])))
+          throw new InvalidOperationException("API отклонил перевод из-за ограничений модели.");
+        if (HasItems(message?["tool_calls"]) || message?["function_call"] != null && message["function_call"].Type != JTokenType.Null || finish == "tool_calls" || finish == "function_call")
+          throw new InvalidOperationException("API вернул вызов инструмента вместо перевода. Выберите текстовую модель или проверьте параметры API.");
+        if (finish != "stop" || message == null || Text(message["role"]) != "assistant")
+          throw new InvalidOperationException("API не подтвердил завершение перевода. Неполный ответ не показан.");
         if (message["content"]?.Type == JTokenType.String) return (string)message["content"];
         var parts = message["content"] as JArray;
         if (parts != null && parts.All(p => p is JObject && Text(p["type"]) == "text" && p["text"]?.Type == JTokenType.String)) return string.Concat(parts.Select(p => Text(p["text"])));
       }
       else if (protocol == "responses") {
+        if (Text(root["incomplete_details"]?["reason"]) == "max_output_tokens") throw OutputLimitError(root["usage"]);
         if (Text(root["status"]) != "completed" || root["incomplete_details"] != null && root["incomplete_details"].Type != JTokenType.Null)
           throw new InvalidOperationException("API Responses не завершил перевод. Проверьте лимит выходных токенов.");
         var output = root["output"] as JArray;
@@ -380,7 +395,8 @@ namespace AnotherMarkdown.Translation
       }
       else if (protocol == "anthropic") {
         var stop = Text(root["stop_reason"]);
-        if (stop != "end_turn" && stop != "stop_sequence") throw new InvalidOperationException("Anthropic не завершил перевод. Проверьте лимит токенов и параметры модели.");
+        if (stop == "max_tokens") throw OutputLimitError(root["usage"]);
+        if (stop != "end_turn" && stop != "stop_sequence") throw new InvalidOperationException("Anthropic не завершил перевод. Проверьте параметры модели.");
         var content = root["content"] as JArray;
         if (content != null && content.All(p => p is JObject && new[] { "text", "thinking", "redacted_thinking" }.Contains(Text(p["type"])) && (Text(p["type"]) != "text" || p["text"]?.Type == JTokenType.String)))
           return string.Concat(content.Where(p => Text(p["type"]) == "text").Select(p => Text(p["text"])));
@@ -389,13 +405,25 @@ namespace AnotherMarkdown.Translation
         var block = Text(root["promptFeedback"]?["blockReason"]);
         if (!string.IsNullOrEmpty(block) && block != "BLOCK_REASON_UNSPECIFIED") throw new InvalidOperationException("Gemini отклонил запрос перевода.");
         var candidate = (root["candidates"] as JArray)?.OfType<JObject>().FirstOrDefault();
-        if (Text(candidate?["finishReason"]) != "STOP") throw new InvalidOperationException("Gemini не завершил перевод. Проверьте лимит токенов и ограничения ответа.");
+        if (Text(candidate?["finishReason"]) == "MAX_TOKENS") throw OutputLimitError(root["usageMetadata"]);
+        if (Text(candidate?["finishReason"]) != "STOP") throw new InvalidOperationException("Gemini не завершил перевод. Проверьте ограничения ответа.");
         var parts = candidate?["content"]?["parts"] as JArray;
         if (parts != null && parts.All(p => p is JObject && p["text"]?.Type == JTokenType.String && p["functionCall"] == null && p["executableCode"] == null && p["codeExecutionResult"] == null))
           return string.Concat(parts.Where(p => !Boolean(p["thought"])).Select(p => Text(p["text"])));
       }
       throw new InvalidOperationException("API не вернул окончательный текст перевода.");
     }
+
+    private static Exception OutputLimitError(JToken usage)
+    {
+      var output = UsageCount(usage?["completion_tokens"] ?? usage?["output_tokens"] ?? usage?["candidatesTokenCount"]);
+      var reasoning = UsageCount(usage?["completion_tokens_details"]?["reasoning_tokens"] ?? usage?["output_tokens_details"]?["reasoning_tokens"] ?? usage?["thoughtsTokenCount"]);
+      var detail = output.HasValue ? " Использовано выходных токенов: " + output.Value.ToString(CultureInfo.InvariantCulture) + "." : "";
+      if (reasoning.HasValue) detail += " Токенов рассуждений: " + reasoning.Value.ToString(CultureInfo.InvariantCulture) + ".";
+      return new InvalidOperationException("API исчерпал лимит ответа и не завершил перевод." + detail + " В дополнительных параметрах увеличьте лимит или выберите 0 (по умолчанию сервиса, кроме Anthropic). Для reasoning-моделей можно уменьшить effort. Неполный перевод не показан.");
+    }
+
+    private static long? UsageCount(JToken token) => token?.Type == JTokenType.Integer && long.TryParse(token.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var value) && value >= 0 ? (long?)value : null;
 
     private static bool HasItems(JToken token) => token is JArray array ? array.Count != 0 : token != null && token.Type != JTokenType.Null;
     private static string Text(JToken token) => token?.Type == JTokenType.String ? (string)token : null;
