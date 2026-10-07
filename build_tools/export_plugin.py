@@ -32,7 +32,11 @@ def export_plugin(dll, ildasm, ilasm, work):
             raise RuntimeError("Missing CLR header flags")
         il.write_text(text, encoding="utf-8-sig")
         result = folder / dll.name
-        subprocess.run([str(ilasm), str(il), "/dll", "/x64", "/quiet", "/output=" + str(result)], cwd=folder, check=True)
+        resources = il.with_suffix(".res")
+        arguments = [str(ilasm), str(il), "/dll", "/x64", "/quiet", "/output=" + str(result)]
+        if resources.exists():
+            arguments.append("/resource=" + str(resources))
+        subprocess.run(arguments, cwd=folder, check=True)
         shutil.copy2(result, dll)
         library = ctypes.WinDLL(str(dll))
         for name in entrypoints:
