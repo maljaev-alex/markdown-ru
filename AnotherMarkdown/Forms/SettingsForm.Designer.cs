@@ -21,7 +21,8 @@
       MinimumSize = new System.Drawing.Size(800, 720);
       StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
       Name = "SettingsForm";
-      Text = "Настройки AnotherMarkdown";
+      Text = "Настройки — " + PluginBranding.Name;
+      Icon = PluginIcon.ApplicationIcon();
       MinimizeBox = false;
       ShowInTaskbar = false;
       var root = new System.Windows.Forms.TableLayoutPanel {
@@ -33,12 +34,14 @@
       root.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
       root.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
       Controls.Add(root);
-      var title = new System.Windows.Forms.Label {
-        Text = "AnotherMarkdown", AutoSize = true,
-        Font = new System.Drawing.Font(Font, System.Drawing.FontStyle.Bold),
-        Margin = new System.Windows.Forms.Padding(8, 12, 8, 8)
-      };
-      root.Controls.Add(title, 0, 0);
+      var heading = new System.Windows.Forms.FlowLayoutPanel { Dock = System.Windows.Forms.DockStyle.Fill, WrapContents = false };
+      heading.Controls.Add(new PluginLogo { Size = new System.Drawing.Size(32, 32), Margin = new System.Windows.Forms.Padding(6, 4, 10, 4) });
+      heading.Controls.Add(new System.Windows.Forms.Label {
+        Text = PluginBranding.Name, AutoSize = true,
+        Font = new System.Drawing.Font("Segoe UI", 11F, System.Drawing.FontStyle.Bold),
+        Margin = new System.Windows.Forms.Padding(0, 10, 8, 8)
+      });
+      root.Controls.Add(heading, 0, 0);
       settingsTabs = new System.Windows.Forms.TabControl { Name = "settingsTabs", Dock = System.Windows.Forms.DockStyle.Fill, TabIndex = 0 };
       previewPage = new System.Windows.Forms.TabPage("Просмотр") { Name = "previewPage", Padding = new System.Windows.Forms.Padding(8) };
       translationPage = new System.Windows.Forms.TabPage("Перевод") { Name = "translationPage", Padding = new System.Windows.Forms.Padding(8) };

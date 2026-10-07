@@ -43,7 +43,7 @@ def export_plugin(dll, ildasm, ilasm, work):
             getattr(library, name)
         library.isUnicode.restype = ctypes.c_int
         library.getName.restype = ctypes.c_void_p
-        if library.isUnicode() != 1 or ctypes.wstring_at(library.getName()) != "AnotherMarkdown":
+        if library.isUnicode() != 1 or ctypes.wstring_at(library.getName()) != "AnotherMarkdown + Translate-RU":
             raise RuntimeError("Native plugin ABI smoke test failed")
         print("Exported x64 Notepad++ ABI:", ", ".join(entrypoints))
 

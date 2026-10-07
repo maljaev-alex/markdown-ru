@@ -1,5 +1,11 @@
 ## Version History
 
+### Markdown RU 0.1.12-ru.7
+
+* Rename the plugin UI to AnotherMarkdown + Translate-RU; show the fork URL and retain upstream credits.
+* Update the installed Help/README with translation, CLI/API setup and current model/effort behavior.
+* Replace the stretched legacy artwork with a square vector mark, native icon sizes from 16 to 256 pixels, and light/dark toolbar variants.
+
 ### Markdown RU 0.1.12-ru.6
 
 * Group Cursor effort aliases even when their display names omit the effort; hide Fast variants.

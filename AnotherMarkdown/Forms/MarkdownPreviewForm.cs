@@ -23,6 +23,8 @@ namespace AnotherMarkdown.Forms
     {
       OnEvent = new EventDispatcher();
       InitializeComponent();
+      Text = PluginBranding.Name;
+      Icon = PluginIcon.ApplicationIcon();
       InitializeTranslation(settings);
 
       var webView = new Webview2WebbrowserControl();

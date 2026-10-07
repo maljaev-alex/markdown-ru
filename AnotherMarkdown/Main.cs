@@ -33,10 +33,10 @@ namespace AnotherMarkdown
     }
 
     // PluginName is used as npp plugin's menu entry
-    public const string PluginName = "AnotherMarkdown";
+    public const string PluginName = PluginBranding.Name;
     // Modulename is used as config name (ini-file) and as _nppTbData.pszModuleName
     public const string ModuleName = "AnotherMarkdown";
-    public const string PluginTitle = "AnotherMarkdown";
+    public const string PluginTitle = PluginBranding.Name;
 
     private static MarkdownPanelController mdpanel;
   }

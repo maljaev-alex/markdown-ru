@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Drawing;
-using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -11,7 +10,6 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using AnotherMarkdown.Entities;
 using AnotherMarkdown.Forms;
-using AnotherMarkdown.Properties;
 using AnotherMarkdown.Translation;
 using DiffPlex;
 using Kbg.NppPluginNET.PluginInfrastructure;
@@ -206,14 +204,14 @@ namespace AnotherMarkdown
 
     public void InitCommandMenu()
     {
-      PluginBase.SetCommand(0, "Toggle &Markdown Panel", TogglePanelVisible);
+      PluginBase.SetCommand(0, "Показать / скрыть &Markdown", TogglePanelVisible);
       PluginBase.SetCommand(1, "---", null);
       PluginBase.SetCommand(2, "Synchronize with &caret position", SyncViewWithCaretClicked, _settings.SyncViewWithCaretPosition);
       PluginBase.SetCommand(3, "Synchronize with &first visible line in editor", SyncViewWithFirstVisibleLineClicked, _settings.SyncViewWithFirstVisibleLine);
       PluginBase.SetCommand(4, "---", null);
-      PluginBase.SetCommand(5, "&Settings", () => EditSettings());
-      PluginBase.SetCommand(6, "&Help", ShowHelp);
-      PluginBase.SetCommand(7, "&About", ShowAboutDialog);
+      PluginBase.SetCommand(5, "&Настройки", () => EditSettings());
+      PluginBase.SetCommand(6, "&Справка", ShowHelp);
+      PluginBase.SetCommand(7, "&О плагине", ShowAboutDialog);
       _myDlgId = 0;
     }
 
@@ -440,13 +438,20 @@ namespace AnotherMarkdown
 
     public void SetToolBarIcon()
     {
-      toolbarIcons tbIconsOld = new toolbarIcons();
-      tbIconsOld.hToolbarBmp = Resources.markdown_16x16_solid.GetHbitmap();
-      tbIconsOld.hToolbarIcon = Resources.markdown_16x16_solid_dark.GetHicon();
-      IntPtr pTbIcons = Marshal.AllocHGlobal(Marshal.SizeOf(tbIconsOld));
-      Marshal.StructureToPtr(tbIconsOld, pTbIcons, false);
-      Win32.SendMessage(PluginBase.nppData._nppHandle, (uint) NppMsg.NPPM_ADDTOOLBARICON, PluginBase._funcItems.Items[_myDlgId]._cmdID, pTbIcons);
-      Marshal.FreeHGlobal(pTbIcons);
+      var size = PluginIcon.ScaleForWindow(32, PluginBase.nppData._nppHandle);
+      if (_toolbarIcon == null) {
+        _toolbarIcon = PluginIcon.Create(size);
+        _toolbarDarkIcon = PluginIcon.Create(size, true);
+        using (var image = PluginIcon.Render(size)) _toolbarBitmap = image.GetHbitmap();
+      }
+      var icons = new toolbarIcons { hToolbarBmp = _toolbarBitmap, hToolbarIcon = _toolbarIcon.Handle, hToolbarIconDarkMode = _toolbarDarkIcon.Handle };
+      var pointer = Marshal.AllocHGlobal(Marshal.SizeOf(icons));
+      try {
+        Marshal.StructureToPtr(icons, pointer, false);
+        var result = Win32.SendMessage(PluginBase.nppData._nppHandle, (uint)NppMsg.NPPM_ADDTOOLBARICON_FORDARKMODE, PluginBase._funcItems.Items[_myDlgId]._cmdID, pointer);
+        if (result == IntPtr.Zero) Win32.SendMessage(PluginBase.nppData._nppHandle, (uint)NppMsg.NPPM_ADDTOOLBARICON, PluginBase._funcItems.Items[_myDlgId]._cmdID, pointer);
+      }
+      finally { Marshal.FreeHGlobal(pointer); }
     }
 
     public void PluginCleanUp()
@@ -491,8 +496,7 @@ namespace AnotherMarkdown
 
     private void ShowAboutDialog()
     {
-      var aboutDialog = new AboutForm();
-      aboutDialog.ShowDialog();
+      using (var aboutDialog = new AboutForm()) aboutDialog.ShowDialog(new PluginWindowOwner(PluginBase.nppData._nppHandle));
     }
 
     private void TogglePanelVisible()
@@ -503,7 +507,8 @@ namespace AnotherMarkdown
         tbData.pszName = Main.PluginTitle;
         tbData.dlgID = _myDlgId;
         tbData.uMask = NppTbMsg.DWS_DF_CONT_RIGHT | NppTbMsg.DWS_ICONTAB | NppTbMsg.DWS_ICONBAR;
-        tbData.hIconTab = (uint) ConvertBitmapToIcon(Resources.markdown_16x16_solid_bmp).Handle;
+        if (_icon == null) _icon = PluginIcon.Create(PluginIcon.ScaleForWindow(16, PluginBase.nppData._nppHandle));
+        tbData.hIconTab = _icon.Handle;
         tbData.pszModuleName = $"{Main.ModuleName}.dll";
 
         _ptrNppTbData = Marshal.AllocHGlobal(Marshal.SizeOf(tbData));
@@ -523,26 +528,6 @@ namespace AnotherMarkdown
         PreviewForm.UpdateSettings(_settings);
         RenderMarkdown(force: true);
       }
-    }
-
-    private Icon ConvertBitmapToIcon(Bitmap bitmapImage)
-    {
-      if (_icon != null) {
-        return _icon;
-      }
-
-      _iconBmp = new Bitmap(16, 16);
-      using (Graphics g = Graphics.FromImage(_iconBmp)) {
-        ColorMap[] colorMap = new ColorMap[1];
-        colorMap[0] = new ColorMap();
-        colorMap[0].OldColor = Color.Fuchsia;
-        colorMap[0].NewColor = Color.FromKnownColor(KnownColor.ButtonFace);
-        ImageAttributes attr = new ImageAttributes();
-        attr.SetRemapTable(colorMap);
-        g.DrawImage(bitmapImage, new Rectangle(0, 0, 16, 16), 0, 0, 16, 16, GraphicsUnit.Pixel, attr);
-        _icon = Icon.FromHandle(_iconBmp.GetHicon());
-      }
-      return _icon;
     }
 
     public void RenderMarkdown(bool force = false)
@@ -608,9 +593,10 @@ namespace AnotherMarkdown
       _disposedValue = true;
 
       _icon?.Dispose();
-      _iconBmp?.Dispose();
       _icon = null;
-      _iconBmp = null;
+      _toolbarIcon?.Dispose(); _toolbarDarkIcon?.Dispose();
+      if (_toolbarBitmap != IntPtr.Zero) DeleteObject(_toolbarBitmap);
+      _toolbarIcon = _toolbarDarkIcon = null; _toolbarBitmap = IntPtr.Zero;
 
       if (_ptrNppTbData.HasValue) {
         Marshal.DestroyStructure(_ptrNppTbData.Value, typeof(NppTbData));
@@ -642,7 +628,9 @@ namespace AnotherMarkdown
     private Settings _settings;
     private IntPtr? _ptrNppTbData;
     private Icon _icon;
-    private Bitmap _iconBmp;
+    private Icon _toolbarIcon, _toolbarDarkIcon;
+    private IntPtr _toolbarBitmap;
+    [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr handle);
     private bool _disposedValue;
 
     private DateTime _skipSyncEventsDue = DateTime.MinValue;

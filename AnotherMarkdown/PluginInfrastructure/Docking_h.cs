@@ -46,7 +46,7 @@ namespace Kbg.NppPluginNET.PluginInfrastructure
     public int dlgID;                // int: a funcItem provides the function pointer to start a dialog. Please parse here these ID
     // user modifications
     public NppTbMsg uMask;                // UINT: mask params: look to above defines
-    public uint hIconTab;            // HICON: icon for tabs
+    public IntPtr hIconTab;          // HICON: pointer-sized icon handle
     public string pszAddInfo;        // TCHAR*: for plugin to display additional informations
     // internal data, do not use !!!
     public RECT rcFloat;            // RECT: floating position

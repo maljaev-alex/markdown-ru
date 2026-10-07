@@ -12,6 +12,7 @@
     <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
     <PackagesDirectory Condition="'$(PackagesDirectory)' == ''">$(MSBuildThisFileDirectory)..\packages</PackagesDirectory>
     <TargetFrameworkProfile />
+    <ApplicationIcon>Resources\translate-ru.ico</ApplicationIcon>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|x86' ">
     <DebugSymbols>true</DebugSymbols>
@@ -127,6 +128,9 @@
     <Compile Include="PluginInfrastructure\DllExport\DllExportAttribute.cs" />
     <Compile Include="PluginInfrastructure\Win32.cs" />
     <Compile Include="Main.cs" />
+    <Compile Include="PluginBranding.cs" />
+    <Compile Include="PluginIcon.cs" />
+    <Compile Include="Forms\PluginLogo.cs" />
     <Compile Include="PluginInfrastructure\GatewayDomain.cs" />
     <Compile Include="PluginInfrastructure\NotepadPPGateway.cs" />
     <Compile Include="PluginInfrastructure\ScintillaGateway.cs" />
@@ -167,6 +171,9 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />
+    <EmbeddedResource Include="Resources\translate-ru.ico" />
+    <None Include="Resources\translate-ru.svg" />
+    <None Include="Resources\translate-ru.png" />
     <None Include="packages.config" />
     <None Include="Resources\markdown-16x16-solid.png" />
   </ItemGroup>

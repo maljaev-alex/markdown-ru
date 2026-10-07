@@ -5,11 +5,11 @@ using System.Runtime.InteropServices;
 // General Information about an assembly is controlled through the following 
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle("AnotherMarkdown")]
-[assembly: AssemblyDescription("Plugin to preview markdown files for Notepad++")]
+[assembly: AssemblyTitle(AnotherMarkdown.PluginBranding.Name)]
+[assembly: AssemblyDescription("Markdown and MDC previews with Russian translation via CLI or API. Fork: https://github.com/maljaev-alex/markdown-ru")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("")]
-[assembly: AssemblyProduct("AnotherMarkdown")]
+[assembly: AssemblyProduct(AnotherMarkdown.PluginBranding.Name)]
 [assembly: AssemblyCopyright("Copyright ©Evgeny Zyuzin 2025")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
@@ -32,6 +32,6 @@ using System.Runtime.InteropServices;
 // You can specify all the values or you can default the Build and Revision Numbers 
 // by using the '*' as shown below:
 // [assembly: AssemblyVersion("1.0.*")]
-[assembly: AssemblyVersion("0.1.12.6")]
-[assembly: AssemblyFileVersion("0.1.12.6")]
-[assembly: AssemblyInformationalVersion("0.1.12-ru.6")]
+[assembly: AssemblyVersion("0.1.12.7")]
+[assembly: AssemblyFileVersion("0.1.12.7")]
+[assembly: AssemblyInformationalVersion("0.1.12-ru.7")]

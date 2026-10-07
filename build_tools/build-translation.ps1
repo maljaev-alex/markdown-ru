@@ -71,7 +71,7 @@ if (-not $SkipTests) {
     }
     $settingsTests = Join-Path $CacheRoot 'SettingsTests.exe'
     $settingsSources = @($sources | Where-Object { $_ -notlike '*TranslationTests.cs' })
-    $settingsSources += @('AnotherMarkdown\Entities\Settings.cs', 'AnotherMarkdown\Forms\SettingsForm.cs', 'AnotherMarkdown\Forms\SettingsForm.Designer.cs', 'AnotherMarkdown\Forms\SettingsForm.Translation.cs', 'AnotherMarkdown\Forms\SettingsForm.Api.cs', 'tests\SettingsTests.cs') | ForEach-Object { Join-Path $projectRoot $_ }
+    $settingsSources += @('AnotherMarkdown\PluginBranding.cs', 'AnotherMarkdown\PluginIcon.cs', 'AnotherMarkdown\Forms\PluginLogo.cs', 'AnotherMarkdown\Entities\Settings.cs', 'AnotherMarkdown\Forms\SettingsForm.cs', 'AnotherMarkdown\Forms\SettingsForm.Designer.cs', 'AnotherMarkdown\Forms\SettingsForm.Translation.cs', 'AnotherMarkdown\Forms\SettingsForm.Api.cs', 'tests\SettingsTests.cs') | ForEach-Object { Join-Path $projectRoot $_ }
     & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe "/out:$settingsTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Net.Http.dll" "/r:$ref\System.Security.dll" "/r:$ref\System.Drawing.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$jsonAssembly" $settingsSources
     if ($LASTEXITCODE -ne 0) { throw 'Settings test compilation failed.' }
     $testAssets = Join-Path $CacheRoot 'assets\markdown'
@@ -101,7 +101,14 @@ try {
     }
     Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\loader.js') -Destination (Join-Path $stage 'assets\loader.js') -Force
     Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\translation-ru.md') -Destination (Join-Path $stage 'TRANSLATION-RU.md')
-    $archive = Join-Path $OutputDirectory 'AnotherMarkdown-0.1.12-ru.6-x64.zip'
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination (Join-Path $stage 'README.md') -Force
+    $guideDirectory = Join-Path $stage 'docs'
+    New-Item -ItemType Directory -Path $guideDirectory -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\translation-ru.md') -Destination $guideDirectory -Force
+    $brandDirectory = Join-Path $stage 'assets\branding'
+    New-Item -ItemType Directory -Path $brandDirectory -Force | Out-Null
+    Copy-Item -Path (Join-Path $projectRoot 'AnotherMarkdown\Resources\translate-ru.*') -Destination $brandDirectory -Force
+    $archive = Join-Path $OutputDirectory 'AnotherMarkdown-0.1.12-ru.7-x64.zip'
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -Force
     Write-Output "Package: $archive"
     Get-FileHash -LiteralPath $archive -Algorithm SHA256
