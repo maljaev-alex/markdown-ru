@@ -13,6 +13,7 @@ namespace AnotherMarkdown.Translation
   {
     public int ExitCode;
     public string StandardOutput;
+    public byte[] StandardOutputBytes;
     public string StandardError;
   }
 
@@ -47,7 +48,7 @@ namespace AnotherMarkdown.Translation
       if (selectedProvider == "curl-api") {
         info.EnvironmentVariables.Remove("SSLKEYLOGFILE");
         // Windows curl can write localized ANSI diagnostics. They are discarded;
-        // only stdout carries the API response and must remain strict UTF-8.
+        // stdout is read as raw response bytes and validated by the API parser.
         info.StandardErrorEncoding = new UTF8Encoding(false, false);
       }
       if (CliProfiles.IsBatchPath(executable)) {
@@ -101,13 +102,14 @@ namespace AnotherMarkdown.Translation
 
     public static Task<CliCommandResult> RunAsync(string executable, string arguments, string input,
       int timeoutSeconds, CancellationToken cancellation, string workingDirectory = null, string providerId = null,
-      int maximumOutputCharacters = 8000000, bool detectOutputEncoding = true) =>
-      Task.Run(() => RunCoreAsync(executable, arguments, input, timeoutSeconds, cancellation, workingDirectory, providerId, maximumOutputCharacters, detectOutputEncoding), cancellation);
+      int maximumOutputCharacters = 8000000, bool detectOutputEncoding = true, int maximumStandardOutputBytes = 0) =>
+      Task.Run(() => RunCoreAsync(executable, arguments, input, timeoutSeconds, cancellation, workingDirectory, providerId, maximumOutputCharacters, detectOutputEncoding, maximumStandardOutputBytes), cancellation);
 
     private static async Task<CliCommandResult> RunCoreAsync(string executable, string arguments, string input,
-      int timeoutSeconds, CancellationToken cancellation, string workingDirectory, string providerId, int maximumOutputCharacters, bool detectOutputEncoding)
+      int timeoutSeconds, CancellationToken cancellation, string workingDirectory, string providerId, int maximumOutputCharacters, bool detectOutputEncoding, int maximumStandardOutputBytes)
     {
       if (maximumOutputCharacters < 1 || maximumOutputCharacters > 32001000) throw new ArgumentOutOfRangeException(nameof(maximumOutputCharacters));
+      if (maximumStandardOutputBytes < 0 || maximumStandardOutputBytes > 32001000) throw new ArgumentOutOfRangeException(nameof(maximumStandardOutputBytes));
       var ownsDirectory = workingDirectory == null;
       var directory = workingDirectory ?? Path.Combine(Path.GetTempPath(), "AnotherMarkdown", "probe-" + Guid.NewGuid().ToString("N"));
       Directory.CreateDirectory(directory);
@@ -119,7 +121,10 @@ namespace AnotherMarkdown.Translation
           using (var process = CliProcess.Start(StartInfo(executable, arguments, directory, providerId), job, detectOutputEncoding: detectOutputEncoding)) {
             try {
               using (timeout.Token.Register(() => StopOwnedProcess(process, job))) {
-                var stdout = ReadAsync(process.StandardOutput, timeout.Token, () => StopOwnedProcess(process, job), maximumOutputCharacters);
+                var stdout = maximumStandardOutputBytes == 0
+                  ? ReadAsync(process.StandardOutput, timeout.Token, () => StopOwnedProcess(process, job), maximumOutputCharacters) : null;
+                var stdoutBytes = maximumStandardOutputBytes == 0 ? null
+                  : ReadBytesAsync(process.StandardOutput.BaseStream, timeout.Token, () => StopOwnedProcess(process, job), maximumStandardOutputBytes);
                 var stderr = ReadAsync(process.StandardError, timeout.Token, () => StopOwnedProcess(process, job), maximumOutputCharacters);
                 Exception inputError = null;
                 try {
@@ -128,10 +133,11 @@ namespace AnotherMarkdown.Translation
                   process.StandardInput.Close();
                 }
                 catch (IOException error) { inputError = error; }
-                await WithCancellationAsync(Task.WhenAll(stdout, stderr, Task.Run(() => process.WaitForExit())), timeout.Token).ConfigureAwait(false);
+                await WithCancellationAsync(Task.WhenAll((Task)stdout ?? stdoutBytes, stderr, Task.Run(() => process.WaitForExit())), timeout.Token).ConfigureAwait(false);
                 timeout.Token.ThrowIfCancellationRequested();
                 if (process.ExitCode == 0 && inputError != null) throw new IOException("CLI закрыл stdin до получения документа.", inputError);
-                return new CliCommandResult { ExitCode = process.ExitCode, StandardOutput = await stdout.ConfigureAwait(false), StandardError = await stderr.ConfigureAwait(false) };
+                return new CliCommandResult { ExitCode = process.ExitCode, StandardOutput = stdout == null ? null : await stdout.ConfigureAwait(false),
+                  StandardOutputBytes = stdoutBytes == null ? null : await stdoutBytes.ConfigureAwait(false), StandardError = await stderr.ConfigureAwait(false) };
               }
             }
             catch (Exception) when (timeout.IsCancellationRequested) {
@@ -166,6 +172,21 @@ namespace AnotherMarkdown.Translation
           result.Append(buffer, 0, count);
         }
         return result.ToString();
+      }
+      catch { abort(); throw; }
+    }
+
+    private static async Task<byte[]> ReadBytesAsync(Stream stream, CancellationToken cancellation, Action abort, int maximumBytes)
+    {
+      try {
+        using (var result = new MemoryStream()) {
+          var buffer = new byte[8192]; int count;
+          while ((count = await WithCancellationAsync(stream.ReadAsync(buffer, 0, buffer.Length, cancellation), cancellation).ConfigureAwait(false)) != 0) {
+            if (result.Length + count > maximumBytes) throw new InvalidOperationException("Ответ CLI превысил допустимый размер.");
+            result.Write(buffer, 0, count);
+          }
+          return result.ToArray();
+        }
       }
       catch { abort(); throw; }
     }

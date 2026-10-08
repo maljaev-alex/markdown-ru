@@ -313,11 +313,14 @@ internal static class CliLauncherTests
     })) {
       await WaitForFile(path);
       var record = JObject.Parse(File.ReadAllText(path));
-      using (var child = Process.GetProcessById((int)record["child"]))
+      using (var child = Process.GetProcessById((int)record["child"])) {
         Check(job.Contains(child), "immediate child inherits the specific owned job before its parent can exit");
-      job.Dispose();
-      await WaitForDead(parent.Id); await WaitForDead((int)record["child"]);
-      Check(parent.HasExited && !Alive((int)record["child"]), "closing the assigned job removes immediate parent and child");
+        job.Dispose();
+        // PID lookup can disappear before the pinned process handles signal.
+        var timer = Stopwatch.StartNew();
+        while ((!parent.HasExited || !child.HasExited) && timer.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(10);
+        Check(parent.HasExited && child.HasExited, "closing the assigned job removes immediate parent and child");
+      }
     }
     var failedPid = 0;
     using (var closedJob = new ProcessJob()) {

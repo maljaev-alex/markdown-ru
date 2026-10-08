@@ -60,6 +60,7 @@ internal static class SocksApiTests
     await SuccessfulRequests(true);
     await LocalDnsAndLoopback();
     await SafeHttpFailures();
+    await MalformedErrorBodies();
     await FailedProxyNeverFallsBack();
     await CancelAndTimeout(false);
     await CancelAndTimeout(true);
@@ -167,6 +168,28 @@ internal static class SocksApiTests
     }
   }
 
+  private static async Task MalformedErrorBodies()
+  {
+    const string privateBody = "SYNTHETIC_PRIVATE_INVALID_UTF8_RESPONSE";
+    var bytes = new byte[] { 0xff }.Concat(Utf8.GetBytes(privateBody)).ToArray();
+    foreach (var status in new[] { 401, 302 }) {
+      using (var trap = new Origin(_ => Success()))
+      using (var origin = new Origin(_ => new Response {
+        Status = status, RawBody = bytes, Headers = "Location: http://127.0.0.1:" + trap.Port + "/private-redirect\r\n"
+      }))
+      using (var proxy = new SocksProxy(origin.Port)) {
+        var connection = Connection(origin, proxy);
+        var translation = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None));
+        var models = await Failure(() => new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None));
+        Check(new[] { translation, models }.All(error => error is InvalidOperationException && error.Message.Contains(status.ToString())
+          && !error.Message.Contains("UTF-8") && !error.ToString().Contains(privateBody) && !error.ToString().Contains(ApiKey)),
+          "SOCKS preserves HTTP " + status + " for translation and models despite invalid UTF-8 error bytes without body or credential disclosure");
+        Check(trap.Requests.Count == 0 && proxy.Handshakes.Count == 2 && origin.Requests.Count == 2,
+          "SOCKS HTTP " + status + " with invalid UTF-8 performs no redirect or additional destination request");
+      }
+    }
+  }
+
   private static async Task FailedProxyNeverFallsBack()
   {
     using (var origin = new Origin(_ => Success()))
@@ -243,6 +266,12 @@ internal static class SocksApiTests
         var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(origin, proxy), 5, CancellationToken.None));
         Check(error is InvalidOperationException && origin.Requests.Count == 1, "SOCKS rejects UTF-16 BOM and invalid UTF-8 rather than silently changing the API response encoding");
       }
+    }
+    var utf8Bom = new byte[] { 0xef, 0xbb, 0xbf }.Concat(Utf8.GetBytes(Success().Body)).ToArray();
+    using (var origin = new Origin(_ => new Response { RawBody = utf8Bom }))
+    using (var proxy = new SocksProxy(origin.Port)) {
+      Check(await Within(new ApiTranslator().TranslateAsync(Source, Connection(origin, proxy), 5, CancellationToken.None)) == Answer
+        && origin.Requests.Count == 1, "SOCKS accepts a valid UTF-8 BOM without weakening response decoding");
     }
   }
 

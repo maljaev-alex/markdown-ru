@@ -16,7 +16,7 @@ namespace AnotherMarkdown.Translation
   {
     private const int MaximumResponseBytes = 32000000;
     private const string TrailerEnd = "__AM_END__";
-    private static readonly Encoding Utf8 = new UTF8Encoding(false, true);
+    private static readonly byte[] TrailerEndBytes = Encoding.ASCII.GetBytes(TrailerEnd);
     private readonly Uri proxyAddress;
     private readonly string username, password;
     private readonly int timeoutSeconds;
@@ -41,26 +41,45 @@ namespace AnotherMarkdown.Translation
       CliCommandResult result;
       try {
         result = await CliCommand.RunAsync(executable, "--disable --config -", config, timeoutSeconds, cancellationToken,
-          workingDirectory: Environment.SystemDirectory, providerId: "curl-api", maximumOutputCharacters: MaximumResponseBytes + 128, detectOutputEncoding: false).ConfigureAwait(false);
+          workingDirectory: Environment.SystemDirectory, providerId: "curl-api", detectOutputEncoding: false, maximumStandardOutputBytes: MaximumResponseBytes + 128).ConfigureAwait(false);
       }
       catch (OperationCanceledException) { throw; }
       catch (TimeoutException) { throw new TimeoutException("API через SOCKS5 не ответил за " + timeoutSeconds + " секунд."); }
-      catch (DecoderFallbackException) { throw new InvalidOperationException("API вернул ответ в недопустимой кодировке UTF-8."); }
       catch (Exception error) when (error is Win32Exception || error is IOException || error is InvalidOperationException || error is UnauthorizedAccessException) {
         throw new InvalidOperationException("Не удалось выполнить запрос API через системный curl. Проверьте SOCKS5-прокси и размер ответа.");
       }
       cancellationToken.ThrowIfCancellationRequested();
+      var output = result.StandardOutputBytes ?? new byte[0];
+      int status, bodyLength;
+      var hasStatus = ReadStatusTrailer(output, marker, out status, out bodyLength);
+      // HTTP failures have priority over an arbitrary (possibly non-UTF-8 or
+      // incomplete) error body, matching the native HTTP transport's behavior.
+      if (hasStatus && (status < 200 || status >= 300))
+        return new HttpResponseMessage((HttpStatusCode)status) { RequestMessage = request, Content = new ByteArrayContent(new byte[0]) };
       if (result.ExitCode != 0) throw CurlError(result.ExitCode);
-      var output = result.StandardOutput ?? "";
-      var trailerLength = marker.Length + 3 + TrailerEnd.Length;
-      var offset = output.Length - trailerLength;
-      int status;
-      if (offset < 0 || string.CompareOrdinal(output, offset, marker, 0, marker.Length) != 0 || !output.EndsWith(TrailerEnd, StringComparison.Ordinal)
-          || !int.TryParse(output.Substring(offset + marker.Length, 3), NumberStyles.None, CultureInfo.InvariantCulture, out status) || status < 100 || status > 599)
+      if (!hasStatus)
         throw new InvalidOperationException("Системный curl не вернул корректный статус HTTP API.");
-      var responseBody = output.Substring(0, offset);
-      if (Utf8.GetByteCount(responseBody) > MaximumResponseBytes) throw new InvalidOperationException("Ответ API превышает допустимый размер.");
-      return new HttpResponseMessage((HttpStatusCode)status) { RequestMessage = request, Content = new ByteArrayContent(Utf8.GetBytes(responseBody)) };
+      if (bodyLength > MaximumResponseBytes) throw new InvalidOperationException("Ответ API превышает допустимый размер.");
+      // Keep bytes intact: ApiTranslator checks successful response UTF-8 before
+      // parsing JSON. A nonzero curl exit can never produce a successful result.
+      return new HttpResponseMessage((HttpStatusCode)status) { RequestMessage = request, Content = new ByteArrayContent(output, 0, bodyLength) };
+    }
+
+    private static bool ReadStatusTrailer(byte[] output, string marker, out int status, out int bodyLength)
+    {
+      status = 0;
+      var prefix = Encoding.ASCII.GetBytes(marker);
+      bodyLength = output.Length - prefix.Length - 3 - TrailerEndBytes.Length;
+      if (bodyLength < 0) return false;
+      for (var index = 0; index < prefix.Length; index++) if (output[bodyLength + index] != prefix[index]) return false;
+      var statusOffset = bodyLength + prefix.Length;
+      for (var index = 0; index < 3; index++) {
+        var digit = output[statusOffset + index];
+        if (digit < (byte)'0' || digit > (byte)'9') return false;
+        status = status * 10 + digit - (byte)'0';
+      }
+      for (var index = 0; index < TrailerEndBytes.Length; index++) if (output[statusOffset + 3 + index] != TrailerEndBytes[index]) return false;
+      return status >= 100 && status <= 599;
     }
 
     private string CreateConfig(HttpRequestMessage request, string body, string marker)
