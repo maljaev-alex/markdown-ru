@@ -1,7 +1,9 @@
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -19,6 +21,36 @@ internal static class CliLauncherTests
     Console.InputEncoding = Utf8;
     Console.OutputEncoding = Utf8;
     executable = System.Reflection.Assembly.GetExecutingAssembly().Location;
+    if (args.Length > 0 && args[0] == "raw-bytes") {
+      using (var data = new MemoryStream()) {
+        Console.OpenStandardInput().CopyTo(data);
+        Console.Write(Convert.ToBase64String(data.ToArray()));
+      }
+      return 0;
+    }
+    if (args.Length > 0 && args[0] == "environment") {
+      Console.Write(new JObject {
+        ["opencode"] = Environment.GetEnvironmentVariable("OPENCODE_PERMISSION"),
+        ["opencodeUpdate"] = Environment.GetEnvironmentVariable("OPENCODE_DISABLE_AUTOUPDATE"),
+        ["opencodeLsp"] = Environment.GetEnvironmentVariable("OPENCODE_DISABLE_LSP_DOWNLOAD"),
+        ["opencodePlugins"] = Environment.GetEnvironmentVariable("OPENCODE_DISABLE_DEFAULT_PLUGINS"),
+        ["kimiUpdate"] = Environment.GetEnvironmentVariable("KIMI_CODE_NO_AUTO_UPDATE"),
+        ["kimiTelemetry"] = Environment.GetEnvironmentVariable("KIMI_DISABLE_TELEMETRY"),
+        ["copilotUpdate"] = Environment.GetEnvironmentVariable("COPILOT_AUTO_UPDATE")
+      }.ToString(Newtonsoft.Json.Formatting.None));
+      return 0;
+    }
+    if (args.Length > 0 && args[0] == "signal-handle") { SetEvent(new IntPtr(long.Parse(args[1]))); return 0; }
+    if (args.Length > 0 && (args[0] == "spawn-exit" || args[0] == "spawn-wait")) {
+      using (var child = Process.Start(new ProcessStartInfo(executable, "sleep") { UseShellExecute = false, CreateNoWindow = true })) {
+        var record = new JObject { ["parent"] = Process.GetCurrentProcess().Id, ["child"] = child.Id };
+        File.WriteAllText(args[1] + ".tmp", record.ToString(Newtonsoft.Json.Formatting.None), Utf8);
+        File.Move(args[1] + ".tmp", args[1]);
+      }
+      if (args[0] == "spawn-wait") Thread.Sleep(60000);
+      return 0;
+    }
+    if (args.Length > 0 && args[0] == "flood") { Console.Write(new string('x', 8000001)); Console.Out.Flush(); Thread.Sleep(60000); return 0; }
     if (args.Length > 0 && args[0] == "echo") {
       Console.Write(new JObject { ["argv"] = new JArray(args.Skip(1)), ["stdin"] = Console.In.ReadToEnd() }.ToString(Newtonsoft.Json.Formatting.None));
       return 0;
@@ -100,6 +132,18 @@ internal static class CliLauncherTests
         Check(literalOperators.ExitCode == 0 && !File.Exists(marker) && JObject.Parse(literalOperators.StandardOutput)["argv"].Values<string>().Take(2).SequenceEqual(new[] { "&", "echo" }), extension + " raw shell operators become literal arguments");
         Throws<ArgumentException>(() => CliCommand.StartInfo(launcher, CliTranslator.QuoteArgument(new string('a', 8100)), directory), extension + " cmd command-length cap");
       }
+      var dshLauncher = Path.Combine(scriptDirectory, "dsh.cmd");
+      File.WriteAllText(dshLauncher, "@echo off\r\n\"" + executable + "\" echo %*\r\n", Utf8);
+      var dshOptions = CliProfiles.Defaults("dsh", dshLauncher);
+      var previousTemp = Environment.GetEnvironmentVariable("TEMP");
+      try {
+        Environment.SetEnvironmentVariable("TEMP", directory);
+        var document = "# Heading\n\"quoted\" & %PATH% ! ^\n" + new string('a', 12000);
+        var answer = JObject.Parse(await new CliTranslator().TranslateAsync(document, dshOptions, CancellationToken.None));
+        Check(answer["argv"].Values<string>().SequenceEqual(new[] { "--profile", "headless" }), "DeepSeek batch profile keeps the document out of argv");
+        Check(((string)answer["stdin"]).Contains(document), "DeepSeek batch receives long multiline Markdown and metacharacters verbatim over stdin");
+      }
+      finally { Environment.SetEnvironmentVariable("TEMP", previousTemp); }
       var forbidden = Path.Combine(directory, "forbidden.ps1");
       File.WriteAllText(forbidden, "", Utf8);
       Throws<ArgumentException>(() => CliTranslator.ResolveExecutable(forbidden), "PowerShell launcher remains unsupported");
@@ -120,7 +164,147 @@ internal static class CliLauncherTests
         catch (ArgumentException) { }
         Check(!alive, "batch cancellation leaves no descendant");
       }
+      await NativeTransport(directory, scriptDirectory, nativeDirectory);
     }
     finally { Directory.Delete(directory, true); }
   }
+
+  private static async Task NativeTransport(string directory, string scripts, string nativeDirectory)
+  {
+    var wrapper = Path.Combine(scripts, "transport.cmd");
+    File.WriteAllText(wrapper, "@echo off\r\n\"" + executable + "\" %*\r\n", Utf8);
+    var hostEncoding = Console.InputEncoding;
+    var document = "# \u041f\u0440\u0438\u0432\u0435\u0442 \ud83c\udf0d\nquotes \" & %PATH% ! ^ | < >\n";
+    try {
+      foreach (var encoding in new Encoding[] { new UTF8Encoding(true), new UnicodeEncoding(false, true) }) {
+        Console.InputEncoding = encoding;
+        foreach (var launcher in new[] { executable, wrapper }) {
+          var result = await CliCommand.RunAsync(launcher, "raw-bytes", document, 5, CancellationToken.None, directory);
+          Check(result.ExitCode == 0 && Convert.FromBase64String(result.StandardOutput).SequenceEqual(Utf8.GetBytes(document)), "native/batch stdin is exact UTF-8 without host UTF-8/UTF-16 BOM");
+          Check(Console.InputEncoding.CodePage == encoding.CodePage && Console.InputEncoding.GetPreamble().SequenceEqual(encoding.GetPreamble()), "native transport preserves host Console.InputEncoding");
+        }
+      }
+    }
+    finally { Console.InputEncoding = hostEncoding; }
+
+    var renamed = Path.Combine(nativeDirectory, "oc.exe");
+    File.Copy(executable, renamed);
+    File.Copy(typeof(JObject).Assembly.Location, Path.Combine(nativeDirectory, "Newtonsoft.Json.dll"));
+    foreach (var provider in new[] { "opencode", "kimi", "copilot" }) {
+      var info = CliCommand.StartInfo(renamed, "environment", directory, provider);
+      var result = await CliCommand.RunAsync(renamed, "environment", "", 5, CancellationToken.None, directory, provider);
+      var payload = JObject.Parse(result.StandardOutput);
+      if (provider == "opencode") Check(info.EnvironmentVariables["OPENCODE_PERMISSION"] == "{\"*\":\"deny\"}" && (string)payload["opencode"] == "{\"*\":\"deny\"}" && (string)payload["opencodeUpdate"] == "true" && (string)payload["opencodeLsp"] == "true" && (string)payload["opencodePlugins"] == "true", "selected OpenCode provider retains deny-all environment for renamed oc.exe");
+      if (provider == "kimi") Check((string)payload["kimiUpdate"] == "1" && (string)payload["kimiTelemetry"] == "1", "selected Kimi provider retains no-update environment for renamed executable");
+      if (provider == "copilot") Check((string)payload["copilotUpdate"] == "false", "selected Copilot provider retains no-update environment for renamed executable");
+    }
+    using (var unrelated = new EventWaitHandle(false, EventResetMode.ManualReset)) {
+      var handle = unrelated.SafeWaitHandle.DangerousGetHandle();
+      if (!SetHandleInformation(handle, 1, 1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+      await CliCommand.RunAsync(executable, "signal-handle " + handle.ToInt64(), "", 5, CancellationToken.None, directory);
+      Check(!unrelated.WaitOne(0), "explicit handle list prevents inheriting an unrelated inheritable host event");
+    }
+    var concurrent = await Task.WhenAll(Enumerable.Range(0, 4).Select(index => CliCommand.RunAsync(index % 2 == 0 ? executable : wrapper,
+      "raw-bytes", document + index, 5, CancellationToken.None, directory)));
+    Check(concurrent.Select((result, index) => result.ExitCode == 0 && Convert.FromBase64String(result.StandardOutput).SequenceEqual(Utf8.GetBytes(document + index))).All(value => value),
+      "concurrent native and batch pipes keep each UTF-8 document independent and reach EOF");
+    await LegacyRaceWitness(directory);
+    await SuspendedJobOwnership(directory);
+    foreach (var launcher in new[] { executable, wrapper }) {
+      foreach (var cancel in new[] { false, true }) {
+        var recordFile = Path.Combine(directory, "immediate-" + Guid.NewGuid().ToString("N") + ".json");
+        using (var cancellation = new CancellationTokenSource()) {
+          var timer = Stopwatch.StartNew();
+          var pending = CliCommand.RunAsync(launcher, "spawn-exit " + CliTranslator.QuoteArgument(recordFile), new string('x', 1000000), cancel ? 10 : 1, cancellation.Token, directory);
+          await WaitForFile(recordFile);
+          var record = JObject.Parse(File.ReadAllText(recordFile));
+          if (cancel) cancellation.Cancel();
+          try { await pending; throw new Exception("FAIL immediate shim should be canceled or timed out"); }
+          catch (OperationCanceledException) when (cancel) { Check(true, "immediate native/batch shim cancellation propagates"); }
+          catch (TimeoutException) when (!cancel) { Check(true, "immediate native/batch shim timeout propagates"); }
+          Check(timer.Elapsed < TimeSpan.FromSeconds(5), "blocked stdin and inherited output pipes cannot delay cancellation/timeout");
+          await WaitForDead((int)record["parent"]); await WaitForDead((int)record["child"]);
+          Check(!Alive((int)record["parent"]) && !Alive((int)record["child"]), "immediate shim cancellation/timeout kills both owned parent and descendant");
+        }
+      }
+    }
+    var floodTimer = Stopwatch.StartNew();
+    try { await CliCommand.RunAsync(executable, "flood", "", 10, CancellationToken.None, directory); throw new Exception("FAIL output cap should fail"); }
+    catch (InvalidOperationException error) { Check(error.Message.Contains("8"), "stdout cap fails with the bounded-output diagnostic"); }
+    Check(floodTimer.Elapsed < TimeSpan.FromSeconds(5), "stdout overflow terminates owned process rather than waiting for the full timeout");
+  }
+
+  private static bool Alive(int pid)
+  {
+    try { using (var process = Process.GetProcessById(pid)) return !process.HasExited; }
+    catch (ArgumentException) { return false; }
+  }
+
+  private static async Task WaitForFile(string path)
+  {
+    for (var attempt = 0; attempt < 200 && !File.Exists(path); attempt++) await Task.Delay(10);
+    Check(File.Exists(path), "owned process fixture published its atomic PID record");
+  }
+
+  private static async Task WaitForDead(int pid)
+  {
+    for (var attempt = 0; attempt < 100 && Alive(pid); attempt++) await Task.Delay(10);
+  }
+
+  private static async Task LegacyRaceWitness(string directory)
+  {
+    var path = Path.Combine(directory, "legacy-race.json");
+    Process child = null;
+    using (var job = new ProcessJob())
+    using (var parent = new Process { StartInfo = CliCommand.StartInfo(executable, "spawn-exit " + CliTranslator.QuoteArgument(path), directory) }) {
+      try {
+        parent.Start();
+        // Deliberately let the immediate shim create its child and exit before
+        // assignment, making the old sequencing race deterministic.
+        await WaitForFile(path);
+        parent.WaitForExit();
+        var record = JObject.Parse(File.ReadAllText(path));
+        child = Process.GetProcessById((int)record["child"]);
+        Check(!job.Contains(child), "legacy Process.Start-before-job ordering deterministically lets the child escape");
+        try { job.Add(parent); } catch (Win32Exception) { }
+        job.Dispose();
+        Check(!child.HasExited, "closing the late-assigned job cannot kill the already escaped owned child");
+      }
+      finally {
+        // Only this test's own recorded child is terminated, never user sessions.
+        if (child != null) { if (!child.HasExited) child.Kill(); child.WaitForExit(); child.Dispose(); }
+      }
+    }
+  }
+
+  private static async Task SuspendedJobOwnership(string directory)
+  {
+    var path = Path.Combine(directory, "suspended-race.json");
+    using (var job = new ProcessJob())
+    using (var parent = CliProcess.Start(CliCommand.StartInfo(executable, "spawn-exit " + CliTranslator.QuoteArgument(path), directory), job, pid => {
+      Thread.Sleep(100);
+      Check(!File.Exists(path) && Alive(pid), "CreateProcess suspended cannot run an immediate shim before assignment");
+    })) {
+      await WaitForFile(path);
+      var record = JObject.Parse(File.ReadAllText(path));
+      using (var child = Process.GetProcessById((int)record["child"]))
+        Check(job.Contains(child), "immediate child inherits the specific owned job before its parent can exit");
+      job.Dispose();
+      await WaitForDead(parent.Id); await WaitForDead((int)record["child"]);
+      Check(parent.HasExited && !Alive((int)record["child"]), "closing the assigned job removes immediate parent and child");
+    }
+    var failedPid = 0;
+    using (var closedJob = new ProcessJob()) {
+      try {
+        using (CliProcess.Start(CliCommand.StartInfo(executable, "spawn-exit " + CliTranslator.QuoteArgument(path + ".failed"), directory), closedJob, pid => { failedPid = pid; closedJob.Dispose(); })) { }
+        throw new Exception("FAIL assignment to closed job should fail");
+      }
+      catch (ObjectDisposedException) { Check(true, "failed job assignment refuses to resume the suspended process"); }
+      await WaitForDead(failedPid);
+      Check(!Alive(failedPid) && !File.Exists(path + ".failed"), "failed assignment terminates the unstarted owned process without creating a child");
+    }
+  }
+
+  [DllImport("kernel32.dll", SetLastError = true)] private static extern bool SetHandleInformation(IntPtr handle, uint mask, uint flags);
+  [DllImport("kernel32.dll", SetLastError = true)] private static extern bool SetEvent(IntPtr handle);
 }

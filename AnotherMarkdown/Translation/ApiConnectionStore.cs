@@ -31,10 +31,13 @@ namespace AnotherMarkdown.Translation
         if (connections == null) throw new JsonSerializationException();
         foreach (var connection in connections) {
           if (connection == null) throw new JsonSerializationException();
-          bool keyUnavailable, headersUnavailable;
+          bool keyUnavailable, headersUnavailable, usernameUnavailable, passwordUnavailable;
           var key = Unprotect(connection.EncryptedApiKey, "", out keyUnavailable);
           var headers = Unprotect(connection.EncryptedHeaders, "{}", out headersUnavailable);
-          connection.RestoreCredentials(key, keyUnavailable, headers, headersUnavailable);
+          var username = Unprotect(connection.EncryptedProxyUsername, "", out usernameUnavailable);
+          var password = Unprotect(connection.EncryptedProxyPassword, "", out passwordUnavailable);
+          connection.RestoreCredentials(key, keyUnavailable, headers, headersUnavailable,
+            username, usernameUnavailable, password, passwordUnavailable);
         }
         return connections;
       }
@@ -47,8 +50,15 @@ namespace AnotherMarkdown.Translation
       }
     }
 
-    public static void Save(string path, IEnumerable<ApiConnection> connections)
+    public static string Save(string path, IEnumerable<ApiConnection> connections)
     {
+      string ignored;
+      return Save(path, connections, false, out ignored);
+    }
+
+    public static string Save(string path, IEnumerable<ApiConnection> connections, bool preserveOriginal, out string backupWarning)
+    {
+      backupWarning = null;
       if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("An API settings path is required.", nameof(path));
       if (connections == null) throw new ArgumentNullException(nameof(connections));
       string temporary = null;
@@ -56,12 +66,16 @@ namespace AnotherMarkdown.Translation
         var snapshot = new List<ApiConnection>();
         foreach (var connection in connections) {
           if (connection == null) throw new ArgumentException("An API connection cannot be null.");
+          ApiTranslator.ValidateEndpointCredentials(connection.Endpoint);
+          ApiTranslator.ValidateProxyDraft(connection);
           var saved = connection.Copy();
           if (!saved.PreserveEncryptedApiKey) saved.EncryptedApiKey = Protect(saved.ApiKey);
           if (!saved.PreserveEncryptedHeaders) {
             var headers = saved.AdditionalHeadersJson;
             saved.EncryptedHeaders = Protect(string.IsNullOrWhiteSpace(headers) || headers.Trim() == "{}" ? "" : headers);
           }
+          if (!saved.PreserveEncryptedProxyUsername) saved.EncryptedProxyUsername = Protect(saved.ProxyUsername);
+          if (!saved.PreserveEncryptedProxyPassword) saved.EncryptedProxyPassword = Protect(saved.ProxyPassword);
           snapshot.Add(saved);
         }
         string json;
@@ -77,10 +91,38 @@ namespace AnotherMarkdown.Translation
         using (var writer = new StreamWriter(stream, Utf8, 4096, true)) {
           writer.Write(json); writer.Flush(); stream.Flush(true);
         }
-        // Keep the previous bytes, including a malformed file, for recovery. No delete/move gap.
-        if (File.Exists(destination)) File.Replace(temporary, destination, destination + ".bak");
+        string recovery = null;
+        if (File.Exists(destination)) {
+          List<ApiConnection> previous = null;
+          var preserve = preserveOriginal;
+          if (!preserve) {
+            try { previous = Load(destination); }
+            catch (InvalidDataException) { preserve = true; }
+          }
+          if (preserve) {
+            // A rolling .bak is overwritten on the next save; preserve the unreadable
+            // original separately before replacing it for the first time.
+            recovery = destination + ".unreadable-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff", System.Globalization.CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N");
+            File.Copy(destination, recovery, false);
+          }
+          var removedCredentials = !preserve && previous != null && previous.Exists(old => {
+            var current = snapshot.Find(value => value.Id == old.Id);
+            return (!string.IsNullOrEmpty(old.EncryptedApiKey) && string.IsNullOrEmpty(current?.EncryptedApiKey))
+              || (!string.IsNullOrEmpty(old.EncryptedHeaders) && string.IsNullOrEmpty(current?.EncryptedHeaders))
+              || (!string.IsNullOrEmpty(old.EncryptedProxyUsername) && string.IsNullOrEmpty(current?.EncryptedProxyUsername))
+              || (!string.IsNullOrEmpty(old.EncryptedProxyPassword) && string.IsNullOrEmpty(current?.EncryptedProxyPassword));
+          });
+          File.Replace(temporary, destination, removedCredentials ? null : destination + ".bak");
+          if (removedCredentials) {
+            try { File.Delete(destination + ".bak"); }
+            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) {
+              backupWarning = "Настройки сохранены, но не удалось удалить резервную копию со старыми данными: " + destination + ".bak. Проверьте права и атрибут «Только чтение» этого файла.";
+            }
+          }
+        }
         else File.Move(temporary, destination);
         temporary = null;
+        return recovery;
       }
       catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is JsonException
         || error is CryptographicException || error is ArgumentException || error is NotSupportedException) {

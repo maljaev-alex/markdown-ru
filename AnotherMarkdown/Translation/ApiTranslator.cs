@@ -44,9 +44,87 @@ namespace AnotherMarkdown.Translation
       public JObject Headers, Parameters;
       public int MaxOutputTokens;
       public double? Temperature;
+      public PreparedProxy Proxy;
+    }
+
+    private sealed class PreparedProxy
+    {
+      public string Mode, Username, Password;
+      public Uri Address;
+      public bool UseDefaultCredentials;
+    }
+
+    // System resolution is delegated, while credentials belong to this
+    // connection, never the global proxy. Framework's unconditional loopback
+    // bypass is rejected during validation for an explicitly selected proxy.
+    private sealed class ConnectionProxy : IWebProxy
+    {
+      private readonly IWebProxy resolver;
+      private readonly Uri fixedAddress;
+      public ICredentials Credentials { get; set; }
+      public ConnectionProxy(IWebProxy resolver, Uri fixedAddress, ICredentials credentials)
+      {
+        this.resolver = resolver; this.fixedAddress = fixedAddress; Credentials = credentials;
+      }
+      public Uri GetProxy(Uri destination) => fixedAddress ?? resolver?.GetProxy(destination) ?? destination;
+      public bool IsBypassed(Uri destination) => fixedAddress == null && (resolver?.IsBypassed(destination) ?? true);
     }
 
     public static void Validate(ApiConnection connection) { ValidateOutputBudget(Prepare(connection)); }
+
+    internal static void ValidateDraft(ApiConnection connection)
+    {
+      if (connection == null) return;
+      var draft = connection.Copy();
+      if (string.IsNullOrWhiteSpace(draft.Endpoint)) draft.Endpoint = "https://example.invalid/v1";
+      Prepare(draft);
+    }
+
+    internal static void ValidateProxyDraft(ApiConnection connection)
+    {
+      if (connection != null) PrepareProxy(connection);
+    }
+
+    private static PreparedProxy PrepareProxy(ApiConnection connection)
+    {
+      if (connection == null) throw new ArgumentException("Выберите подключение API.");
+      var mode = (connection.ProxyMode ?? "system").Trim().ToLowerInvariant();
+      if (mode != "system" && mode != "direct" && mode != "custom")
+        throw new ArgumentException("Выберите системный прокси, прямое подключение или заданный HTTP-прокси.");
+      var address = (connection.ProxyAddress ?? "").Trim();
+      ValidateEndpointCredentials(address);
+      Uri proxy = null;
+      if (mode == "custom" && address.Length != 0 && (ContainsControl(address) || !Uri.TryCreate(address, UriKind.Absolute, out proxy)
+          || proxy.Scheme != Uri.UriSchemeHttp || string.IsNullOrEmpty(proxy.Host) || proxy.Port < 1 || proxy.Port > 65535
+          || proxy.UserInfo.Length != 0 || proxy.AbsolutePath != "/" || address.IndexOfAny(new[] { '?', '#' }) >= 0))
+        throw new ArgumentException("Поддерживается только HTTP-прокси вида http://сервер:порт без логина, пароля, пути, query и fragment. Авторизацию задайте в отдельных полях. SOCKS и HTTPS-прокси не поддерживаются.");
+      if (mode == "custom" && proxy == null) throw new ArgumentException("Укажите адрес заданного HTTP-прокси вида http://сервер:порт.");
+      Uri destination;
+      if (mode == "custom" && Uri.TryCreate((connection.Endpoint ?? "").Trim(), UriKind.Absolute, out destination)
+          && (destination.Scheme == Uri.UriSchemeHttp || destination.Scheme == Uri.UriSchemeHttps) && destination.IsLoopback)
+        throw new ArgumentException(".NET Framework обходит заданный прокси для локальных API (localhost/loopback). Выберите прямое подключение для локального API: запрос через заданный прокси не отправлен.");
+      return new PreparedProxy { Mode = mode, Address = proxy, Username = connection.ProxyUsername ?? "", Password = connection.ProxyPassword ?? "",
+        UseDefaultCredentials = connection.ProxyUseDefaultCredentials };
+    }
+
+    internal static HttpClientHandler CreateHttpHandler(ApiConnection connection) => CreateHttpHandler(PrepareProxy(connection));
+
+    private static HttpClientHandler CreateHttpHandler(PreparedProxy proxy)
+    {
+      var handler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, SslProtocols = SslProtocols.Tls12,
+        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate, UseProxy = proxy.Mode != "direct",
+        UseDefaultCredentials = false, Credentials = null, DefaultProxyCredentials = null };
+      if (proxy.Mode == "system") {
+        handler.Proxy = new ConnectionProxy(WebRequest.DefaultWebProxy, null, proxy.UseDefaultCredentials ? CredentialCache.DefaultCredentials : null);
+      }
+      else if (proxy.Mode == "custom") {
+        var credentials = proxy.UseDefaultCredentials ? CredentialCache.DefaultCredentials
+          : proxy.Username.Length == 0 ? null : new NetworkCredential(proxy.Username, proxy.Password);
+        var configured = new WebProxy(proxy.Address, false) { Credentials = credentials };
+        handler.Proxy = new ConnectionProxy(configured, configured.Address, configured.Credentials);
+      }
+      return handler;
+    }
 
     public async Task<string> TranslateAsync(string markdown, ApiConnection connection, int timeoutSeconds, CancellationToken token)
     {
@@ -117,10 +195,12 @@ namespace AnotherMarkdown.Translation
     private static PreparedConnection Prepare(ApiConnection connection)
     {
       if (connection == null) throw new ArgumentException("Выберите подключение API.");
+      var proxy = PrepareProxy(connection);
       var protocol = (connection.Protocol ?? "").Trim().ToLowerInvariant();
       if (protocol != "chat-completions" && protocol != "responses" && protocol != "anthropic" && protocol != "gemini")
         throw new ArgumentException("Выберите поддерживаемый протокол API.");
       var endpointText = (connection.Endpoint ?? "").Trim();
+      ValidateEndpointCredentials(endpointText);
       Uri endpoint;
       if (ContainsControl(endpointText) || !Uri.TryCreate(endpointText, UriKind.Absolute, out endpoint) ||
           (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps) ||
@@ -133,12 +213,13 @@ namespace AnotherMarkdown.Translation
         Headers = ReadObject(connection.AdditionalHeadersJson, "Дополнительные заголовки"),
         Parameters = ReadObject(connection.AdditionalParametersJson, "Дополнительные параметры"),
         MaxOutputTokens = connection.MaxOutputTokens, Temperature = connection.Temperature,
-        TokenLimitParameter = (connection.TokenLimitParameter ?? "max_tokens").Trim()
+        TokenLimitParameter = (connection.TokenLimitParameter ?? "max_tokens").Trim(), Proxy = proxy
       };
       if (prepared.MaxOutputTokens < 0 || prepared.MaxOutputTokens > 2000000)
         throw new ArgumentException("Лимит выходных токенов должен быть от 0 до 2000000. Ноль — настройки сервиса.");
-      if (prepared.Temperature.HasValue && (double.IsNaN(prepared.Temperature.Value) || double.IsInfinity(prepared.Temperature.Value) || prepared.Temperature < 0 || prepared.Temperature > 2))
-        throw new ArgumentException("Температура должна быть от 0 до 2.");
+      var maximumTemperature = protocol == "anthropic" ? 1 : 2;
+      if (prepared.Temperature.HasValue && (double.IsNaN(prepared.Temperature.Value) || double.IsInfinity(prepared.Temperature.Value) || prepared.Temperature < 0 || prepared.Temperature > maximumTemperature))
+        throw new ArgumentException("Температура должна быть от 0 до " + maximumTemperature + ".");
       if (ContainsControl(prepared.Model) || ContainsControl(prepared.ApiKey) || ContainsControl(prepared.AuthPrefix))
         throw new ArgumentException("Модель и параметры авторизации не должны содержать управляющие символы.");
       if (protocol == "chat-completions" && prepared.TokenLimitParameter != "max_tokens" && prepared.TokenLimitParameter != "max_completion_tokens")
@@ -163,6 +244,34 @@ namespace AnotherMarkdown.Translation
       // Validate controlled merges before any network request, including model discovery.
       CreateBody(prepared, "validation");
       return prepared;
+    }
+
+    internal static void ValidateEndpointCredentials(string endpoint)
+    {
+      var text = (endpoint ?? "").Trim();
+      var queryStart = text.IndexOf('?');
+      var fragmentStart = text.IndexOf('#');
+      // Drafts can omit their scheme or be malformed. Credential checks must
+      // still run before such a draft reaches plaintext configuration storage.
+      if (queryStart >= 0 && (fragmentStart < 0 || queryStart < fragmentStart)) {
+        var queryEnd = fragmentStart < 0 ? text.Length : fragmentStart;
+        foreach (var parameter in text.Substring(queryStart + 1, queryEnd - queryStart - 1).Split('&')) {
+          var separator = parameter.IndexOf('=');
+          var encodedName = separator < 0 ? parameter : parameter.Substring(0, separator);
+          var name = Uri.UnescapeDataString(encodedName.Replace("+", " "));
+          if (new[] { "key", "api_key", "api-key", "apikey", "access_token" }.Contains(name, StringComparer.OrdinalIgnoreCase))
+            throw new ArgumentException("Ключ нельзя указывать в URL API. Используйте отдельное поле ключа API.");
+        }
+      }
+      Uri uri;
+      if (Uri.TryCreate(text, UriKind.Absolute, out uri) && uri.UserInfo.Length != 0)
+        throw new ArgumentException("Авторизацию нельзя указывать в URL API. Используйте отдельное поле ключа API.");
+      var scheme = Regex.Match(text, @"^[A-Za-z][A-Za-z0-9+.-]*://");
+      var authorityStart = scheme.Success ? scheme.Length : text.StartsWith("//", StringComparison.Ordinal) ? 2 : 0;
+      var authorityEnd = text.IndexOfAny(new[] { '/', '\\', '?', '#' }, authorityStart);
+      if (authorityEnd < 0) authorityEnd = text.Length;
+      if (text.Substring(authorityStart, authorityEnd - authorityStart).IndexOf('@') >= 0)
+        throw new ArgumentException("Авторизацию нельзя указывать в URL API. Используйте отдельное поле ключа API.");
     }
 
     private static void ValidateOutputBudget(PreparedConnection connection)
@@ -296,7 +405,7 @@ namespace AnotherMarkdown.Translation
     private static async Task<JObject> SendAsync(PreparedConnection connection, HttpMethod method, Uri uri, JObject body, int timeoutSeconds, CancellationToken token)
     {
       using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(token))
-      using (var handler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, SslProtocols = SslProtocols.Tls12, AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate })
+      using (var handler = CreateHttpHandler(connection.Proxy))
       using (var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan })
       using (var request = new HttpRequestMessage(method, uri)) {
         timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
@@ -305,6 +414,8 @@ namespace AnotherMarkdown.Translation
         SetHeaders(request, connection);
         try {
           using (var response = await WithCancellationAsync(client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token), timeout.Token).ConfigureAwait(false)) {
+            if (response.StatusCode == HttpStatusCode.ProxyAuthenticationRequired)
+              throw new InvalidOperationException("Прокси вернул HTTP 407. Проверьте параметры авторизации прокси.");
             if (!response.IsSuccessStatusCode) throw new InvalidOperationException("API вернул HTTP " + (int)response.StatusCode + ". Проверьте подключение, авторизацию и параметры запроса.");
             var text = await ReadResponseAsync(response.Content, timeout.Token).ConfigureAwait(false);
             JObject parsed;
@@ -381,7 +492,7 @@ namespace AnotherMarkdown.Translation
         if (parts != null && parts.All(p => p is JObject && Text(p["type"]) == "text" && p["text"]?.Type == JTokenType.String)) return string.Concat(parts.Select(p => Text(p["text"])));
       }
       else if (protocol == "responses") {
-        if (Text(root["incomplete_details"]?["reason"]) == "max_output_tokens") throw OutputLimitError(root["usage"]);
+        if (Text(Child(root["incomplete_details"], "reason")) == "max_output_tokens") throw OutputLimitError(root["usage"]);
         if (Text(root["status"]) != "completed" || root["incomplete_details"] != null && root["incomplete_details"].Type != JTokenType.Null)
           throw new InvalidOperationException("API Responses не завершил перевод. Проверьте лимит выходных токенов.");
         var output = root["output"] as JArray;
@@ -402,12 +513,12 @@ namespace AnotherMarkdown.Translation
           return string.Concat(content.Where(p => Text(p["type"]) == "text").Select(p => Text(p["text"])));
       }
       else {
-        var block = Text(root["promptFeedback"]?["blockReason"]);
+        var block = Text(Child(root["promptFeedback"], "blockReason"));
         if (!string.IsNullOrEmpty(block) && block != "BLOCK_REASON_UNSPECIFIED") throw new InvalidOperationException("Gemini отклонил запрос перевода.");
         var candidate = (root["candidates"] as JArray)?.OfType<JObject>().FirstOrDefault();
         if (Text(candidate?["finishReason"]) == "MAX_TOKENS") throw OutputLimitError(root["usageMetadata"]);
         if (Text(candidate?["finishReason"]) != "STOP") throw new InvalidOperationException("Gemini не завершил перевод. Проверьте ограничения ответа.");
-        var parts = candidate?["content"]?["parts"] as JArray;
+        var parts = Child(candidate?["content"], "parts") as JArray;
         if (parts != null && parts.All(p => p is JObject && p["text"]?.Type == JTokenType.String && p["functionCall"] == null && p["executableCode"] == null && p["codeExecutionResult"] == null))
           return string.Concat(parts.Where(p => !Boolean(p["thought"])).Select(p => Text(p["text"])));
       }
@@ -416,8 +527,9 @@ namespace AnotherMarkdown.Translation
 
     private static Exception OutputLimitError(JToken usage)
     {
-      var output = UsageCount(usage?["completion_tokens"] ?? usage?["output_tokens"] ?? usage?["candidatesTokenCount"]);
-      var reasoning = UsageCount(usage?["completion_tokens_details"]?["reasoning_tokens"] ?? usage?["output_tokens_details"]?["reasoning_tokens"] ?? usage?["thoughtsTokenCount"]);
+      var output = UsageCount(Child(usage, "completion_tokens")) ?? UsageCount(Child(usage, "output_tokens")) ?? UsageCount(Child(usage, "candidatesTokenCount"));
+      var reasoning = UsageCount(Child(Child(usage, "completion_tokens_details"), "reasoning_tokens"))
+        ?? UsageCount(Child(Child(usage, "output_tokens_details"), "reasoning_tokens")) ?? UsageCount(Child(usage, "thoughtsTokenCount"));
       var detail = output.HasValue ? " Использовано выходных токенов: " + output.Value.ToString(CultureInfo.InvariantCulture) + "." : "";
       if (reasoning.HasValue) detail += " Токенов рассуждений: " + reasoning.Value.ToString(CultureInfo.InvariantCulture) + ".";
       return new InvalidOperationException("API исчерпал лимит ответа и не завершил перевод." + detail + " В дополнительных параметрах увеличьте лимит или выберите 0 (по умолчанию сервиса, кроме Anthropic). Для reasoning-моделей можно уменьшить effort. Неполный перевод не показан.");
@@ -425,6 +537,7 @@ namespace AnotherMarkdown.Translation
 
     private static long? UsageCount(JToken token) => token?.Type == JTokenType.Integer && long.TryParse(token.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var value) && value >= 0 ? (long?)value : null;
 
+    private static JToken Child(JToken token, string name) => (token as JObject)?[name];
     private static bool HasItems(JToken token) => token is JArray array ? array.Count != 0 : token != null && token.Type != JTokenType.Null;
     private static string Text(JToken token) => token?.Type == JTokenType.String ? (string)token : null;
     private static bool Boolean(JToken token) => token?.Type == JTokenType.Boolean && (bool)token;

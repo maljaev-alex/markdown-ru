@@ -26,8 +26,12 @@ internal static class SettingsTests
       }
       var settings = new Settings { ZoomLevel = 9000, EnabledMarkdownPlugins = new[] { "attrs" } };
       EffortSettings();
+      SimpleModelSettings();
       ModelSortingSettings();
       ApiSettings();
+      ApiProxySettings();
+      DraftSettings();
+      GeometrySettings();
       settings.Translation.ShowButtons = false;
       using (var form = new SettingsForm(settings)) {
         Check(Find<TrackBar>(form, "trackBar1").Value == 800, "invalid stored zoom is clamped");
@@ -55,6 +59,114 @@ internal static class SettingsTests
       return 0;
     }
     catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+  }
+  private static void Save(SettingsForm form) => typeof(SettingsForm).GetMethod("btnSave_Click", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { null, EventArgs.Empty });
+  private static void DraftSettings()
+  {
+    var settings = new Settings { ZoomLevel = 100, EnabledMarkdownPlugins = new[] { "attrs" } };
+    settings.Translation.Executable = "missing-cli-xyz";
+    settings.Translation.Model = "";
+    settings.Translation.ShowButtons = true;
+    using (var form = new SettingsForm(settings)) {
+      Find<TrackBar>(form, "trackBar1").Value = 150;
+      Find<TextBox>(form, "tbCssFile").Text = "draft.css";
+      Save(form);
+      Check(form.DialogResult == DialogResult.OK && form.ZoomLevel == 150 && form.CssFileName == "draft.css", "preview settings save with translation buttons enabled before a CLI is installed");
+      Check(form.TranslationOptions.ShowButtons && form.TranslationOptions.Executable == "missing-cli-xyz" && form.TranslationOptions.Model == "", "saving an incomplete CLI draft preserves its missing executable and empty model");
+    }
+    using (var form = new SettingsForm(settings)) {
+      Find<TextBox>(form, "translationExecutable").Text = "";
+      Save(form);
+      Check(form.DialogResult == DialogResult.OK && form.TranslationOptions.Executable == "", "an empty CLI draft does not block preview settings");
+    }
+    using (var form = new SettingsForm(settings)) {
+      Find<TextBox>(form, "translationExecutable").Text = "\"invalid.exe\"";
+      Save(form);
+      Check(form.DialogResult != DialogResult.OK, "draft saving still rejects malformed CLI executable syntax");
+    }
+    using (var form = new SettingsForm(settings)) {
+      Find<TextBox>(form, "tbAssetsPath").Text = "%TEMP%";
+      Save(form);
+      Check(form.DialogResult == DialogResult.OK && Directory.Exists(form.AssetsPath) && form.AssetsPath == Environment.ExpandEnvironmentVariables("%TEMP%"), "assets path saves the expanded environment-variable directory that was validated");
+    }
+    settings.Translation.ShowButtons = false;
+    settings.Translation.UseCustomArguments = true;
+    using (var form = new SettingsForm(settings)) {
+      var arguments = Find<TextBox>(form, "translationArguments");
+      Check(arguments.MaxLength == TranslationOptions.MaximumStoredArgumentCharacters, "argument editor retains the lossless INI storage limit");
+      arguments.Text = new string('a', TranslationOptions.MaximumStoredArgumentCharacters + 1);
+      Save(form);
+      Check(form.DialogResult != DialogResult.OK, "hidden translation buttons cannot bypass the custom-argument storage limit");
+    }
+
+    settings.Translation = new TranslationOptions { ConnectionMode = "api", ShowButtons = true };
+    using (var form = new SettingsForm(settings)) {
+      Find<TrackBar>(form, "trackBar1").Value = 160;
+      Save(form);
+      Check(form.DialogResult == DialogResult.OK && form.ZoomLevel == 160 && form.TranslationOptions.ApiConnections.Count == 0, "preview settings save when API mode has no connection yet");
+    }
+    settings.Translation.ApiConnections.Add(new ApiConnection { Protocol = "anthropic", Endpoint = "https://example.test/v1", Model = "", MaxOutputTokens = 0 });
+    using (var form = new SettingsForm(settings)) {
+      Find<TextBox>(form, "tbCssFile").Text = "api-draft.css";
+      Save(form);
+      Check(form.DialogResult == DialogResult.OK && form.CssFileName == "api-draft.css" && form.TranslationOptions.ActiveApiConnection.Model == "" && form.TranslationOptions.ActiveApiConnection.MaxOutputTokens == 0, "incomplete API model and required output budget can be saved as a draft with preview settings");
+    }
+    using (var form = new SettingsForm(settings)) {
+      Find<TextBox>(form, "apiEndpoint").Text = "not an API URL";
+      Save(form);
+      Check(form.DialogResult != DialogResult.OK, "incomplete API readiness never bypasses malformed endpoint validation");
+    }
+    using (var form = new SettingsForm(settings)) {
+      Find<TextBox>(form, "apiHeaders").Text = "{invalid-json";
+      Save(form);
+      Check(form.DialogResult != DialogResult.OK, "incomplete API readiness never bypasses malformed header JSON validation");
+    }
+    settings.Translation.ConnectionMode = "cli";
+    settings.Translation.ShowButtons = false;
+    settings.Translation.ApiConnections.Add(new ApiConnection { Endpoint = "https://example.test/v1?key=SYNTHETIC_INACTIVE_SECRET" });
+    using (var form = new SettingsForm(settings)) {
+      Save(form);
+      var status = typeof(SettingsForm).GetField("translationModelStatus", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form).As<Label>();
+      Check(form.DialogResult != DialogResult.OK && !status.Text.Contains("SYNTHETIC_INACTIVE_SECRET"), "inactive API profiles retain the credential URL guard even while CLI buttons are hidden");
+    }
+  }
+  private static Rectangle BoundsInForm(Control control, Form form)
+  {
+    var bounds = control.Bounds;
+    for (var parent = control.Parent; parent != null && parent != form; parent = parent.Parent) bounds.Offset(parent.Location);
+    return bounds;
+  }
+  private static void GeometrySettings()
+  {
+    foreach (var workingArea in new[] { new Rectangle(0, 0, 1920, 1032), new Rectangle(-1366, 40, 1366, 728) }) {
+      var settings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
+      settings.Translation.ShowButtons = false;
+      using (var form = new SettingsForm(settings)) {
+        form.Scale(new SizeF(1.5F, 1.5F));
+        form.Location = new Point(workingArea.Right + 100, workingArea.Bottom + 100);
+        form.ClampToWorkingArea(workingArea);
+        Check(workingArea.Contains(form.Bounds), "scaled settings outer bounds fit a " + workingArea.Width + "x" + workingArea.Height + " working area");
+        Check(form.ClientRectangle.Contains(BoundsInForm(Find<Button>(form, "btnSave"), form)) && form.ClientRectangle.Contains(BoundsInForm(Find<Button>(form, "btnCancel"), form)), "scaled Save and Cancel remain inside the client and screen at " + workingArea.Width + "x" + workingArea.Height);
+        Check(Find<TabPage>(form, "previewPage").AutoScroll && Find<TabPage>(form, "translationPage").AutoScroll && Find<TableLayoutPanel>(form, "previewLayout").AutoScroll, "settings pages can scroll when scaled content exceeds available space");
+      }
+    }
+    var apiSettings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
+    apiSettings.Translation = new TranslationOptions { ConnectionMode = "api", ApiConnections = { new ApiConnection {
+      Endpoint = "https://example.test/v1", Model = "test-model", ProxyMode = "custom", ProxyAddress = "http://127.0.0.1:3128"
+    } } };
+    using (var form = new BackgroundSettings(apiSettings)) {
+      form.SelectTranslationTab(); form.Show();
+      form.Font = new Font("Segoe UI", 13.5F);
+      form.ClampToWorkingArea(new Rectangle(form.Left, form.Top, 640, 480));
+      var actions = Find<FlowLayoutPanel>(form, "apiActions");
+      Find<TabPage>(form, "translationPage").ScrollControlIntoView(Find<Button>(form, "apiClearCredentials"));
+      form.PerformLayout(); Application.DoEvents();
+      Check(actions.Controls.Cast<Control>().All(control => actions.ClientRectangle.Contains(control.Bounds)),
+        "all API action buttons remain reachable at 640x480 with a large font");
+      Check(form.ClientRectangle.Contains(BoundsInForm(Find<Button>(form, "btnSave"), form)) && form.ClientRectangle.Contains(BoundsInForm(Find<Button>(form, "btnCancel"), form)),
+        "large-font small API window retains the Save and Cancel footer");
+      form.Close();
+    }
   }
   private sealed class BackgroundSettings : SettingsForm
   {
@@ -117,7 +229,8 @@ internal static class SettingsTests
   {
     var result = 1;
     var settings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
-    var connection = new ApiConnection { Name = "Example API", Endpoint = "https://example.test/v1", Model = "example-model", ApiKey = "fake-ui-key" };
+    var connection = new ApiConnection { Name = "Example API", Endpoint = "https://example.test/v1", Model = "example-model", ApiKey = "fake-ui-key",
+      ProxyMode = "custom", ProxyAddress = "http://127.0.0.1:3128", ProxyUsername = "fake-ui-proxy-user", ProxyPassword = "fake-ui-proxy-password" };
     settings.Translation.ConnectionMode = "api"; settings.Translation.ApiConnections.Add(connection); settings.Translation.SelectedApiConnectionId = connection.Id;
     using (var form = new BackgroundSettings(settings)) {
       form.SelectTranslationTab();
@@ -126,6 +239,8 @@ internal static class SettingsTests
           var directory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
           using (var bitmap = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(bitmap, new Rectangle(0, 0, form.Width, form.Height)); bitmap.Save(Path.Combine(directory, "settings-api-basic.png")); }
           Check(Find<TextBox>(form, "apiKey").UseSystemPasswordChar && Find<ComboBox>(form, "translationConnectionMode").SelectedIndex == 1, "live API form restores selected mode and masks the key");
+          Check(Find<TextBox>(form, "apiProxyPassword").UseSystemPasswordChar && Find<TableLayoutPanel>(form, "apiProxyLayout").Visible,
+            "live API form exposes custom proxy fields and masks the proxy password");
           Find<CheckBox>(form, "apiAdvanced").Checked = true;
           using (var bitmap = new Bitmap(form.Width, form.Height)) { form.DrawToBitmap(bitmap, new Rectangle(0, 0, form.Width, form.Height)); bitmap.Save(Path.Combine(directory, "settings-api-advanced.png")); }
           var profile = ReadDraft(form).ActiveApiConnection;
@@ -133,6 +248,8 @@ internal static class SettingsTests
           ApiConnectionStore.Save(path, new[] { profile });
           var loaded = ApiConnectionStore.Load(path).Single();
           Check(loaded.ApiKey == "fake-ui-key" && loaded.Model == "example-model" && !File.ReadAllText(path).Contains("fake-ui-key"), "live API form values persist encrypted and restore correctly");
+          Check(loaded.ProxyMode == "custom" && loaded.ProxyUsername == "fake-ui-proxy-user" && loaded.ProxyPassword == "fake-ui-proxy-password"
+            && !File.ReadAllText(path).Contains("fake-ui-proxy"), "live proxy fields roundtrip through protected storage");
           Find<Button>(form, "btnSave").PerformClick();
           Check(form.DialogResult == DialogResult.OK && form.TranslationOptions.UseApi, "live API form saves without invoking CLI or external API");
           result = 0;
@@ -211,6 +328,38 @@ internal static class SettingsTests
       Check(ReadDraft(form).Model == "other-fast" && !ReadDraft(form).UseDefaultModel, "Fast filtering and migration do not affect another CLI provider");
     }
   }
+  private static void SimpleModelSettings()
+  {
+    var settings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
+    settings.Translation.ShowButtons = false;
+    using (var form = new SettingsForm(settings)) {
+      var catalog = CliModelDiscovery.ParseCommandOutput("cursor", "claude-haiku-5-5-low - Claude Haiku 5.5 No Thinking\nclaude-haiku-5-5-thinking-low - Claude Haiku 5.5 Thinking\nclaude-haiku-5-5-thinking-max - Claude Haiku 5.5 Thinking\nclaude-fable-5-1m - Claude Fable 5 1M (NO ZDR)\nclaude-fable-5-1m-thinking - Claude Fable 5 1M Thinking (NO ZDR)\n", default(System.Threading.CancellationToken));
+      var options = CliProfiles.Defaults("cursor", "agent.cmd");
+      options.UseDefaultModel = false; options.Model = "claude-haiku-5-5-low"; options.ReasoningEffort = "low";
+      FillCatalog(form, options, catalog);
+      var models = Find<ComboBox>(form, "translationModel");
+      var efforts = Find<ComboBox>(form, "translationEffort");
+      Check(models.Items.Count == 3 && models.Items.Cast<object>().Skip(1).Select(m => m.ToString()).SequenceEqual(new[] { "Claude Fable 5 1M", "Claude Haiku 5.5" }), "Cursor model selector shows one simple name per family without ZDR or Thinking variants");
+      Check(ReadDraft(form).Model == "claude-haiku-5-5-low" && ReadDraft(form).ReasoningEffort == "low", "restoring a saved normal alias preserves its exact advertised ID when an equivalent thinking alias exists");
+      efforts.SelectedItem = efforts.Items.Cast<object>().Single(e => e.ToString() == "max");
+      Check(ReadDraft(form).Model == "claude-haiku-5-5-thinking-max" && ReadDraft(form).ReasoningEffort == "max", "the effort selector chooses the exact advertised thinking alias behind the simple model name");
+      options.Model = "claude-haiku-5-5-thinking-low";
+      FillCatalog(form, options, catalog);
+      Check(ReadDraft(form).Model == options.Model, "restoring a saved thinking alias also retains its exact advertised ID");
+      models.SelectedItem = models.Items.Cast<object>().Single(model => model.ToString() == "Claude Fable 5 1M");
+      Check(efforts.Items.Count == 1 && !efforts.Enabled, "effort is disabled when the CLI exposes only one unspecified mode rather than an actual level choice");
+      options.Model = "missing-thinking-model-no-zdr";
+      FillCatalog(form, options, new CliModelCatalog());
+      Check(models.Text.IndexOf("thinking", StringComparison.OrdinalIgnoreCase) < 0 && models.Text.IndexOf("zdr", StringComparison.OrdinalIgnoreCase) < 0 && ReadDraft(form).Model == options.Model, "saved-model fallback hides technical markers while preserving its request ID");
+      var apiCatalog = new CliModelCatalog { Models = {
+        new CliModel { Id = "vendor/beta-thinking", Name = "Beta Thinking (NO ZDR)" },
+        new CliModel { Id = "vendor/alpha", Name = "Alpha ZDR" }
+      } };
+      typeof(SettingsForm).GetMethod("FillApiModels", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { apiCatalog, "vendor/beta-thinking" });
+      var apiModels = Find<ComboBox>(form, "apiModel");
+      Check(apiModels.Items.Cast<CliModel>().Select(m => m.ToString()).SequenceEqual(new[] { "Alpha", "Beta" }) && (apiModels.SelectedItem as CliModel)?.Id == "vendor/beta-thinking", "API model display is simple and sorted while exact request IDs are retained");
+    }
+  }
   private static TranslationOptions ReadDraft(SettingsForm form) => (TranslationOptions)typeof(SettingsForm).GetMethod("ReadTranslationDraft", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, null);
   private static void ModelSortingSettings()
   {
@@ -228,15 +377,15 @@ internal static class SettingsTests
       FillCatalog(form, options, catalog);
       var models = Find<ComboBox>(form, "translationModel");
       Check(models.SelectedIndex == 0 && ReadDraft(form).UseDefaultModel, "sorted CLI list keeps the configured default fallback first");
-      Check(models.Items.Cast<object>().Skip(1).Select(m => m.ToString()).SequenceEqual(new[] { "ALPHA (a-first)", "alpha (z-last)", "Bravo (middle)", "empty-name", "zeta (aaa) [\u043f\u043e \u0443\u043c\u043e\u043b\u0447\u0430\u043d\u0438\u044e]" }), "CLI models sort by display name ignoring case with deterministic IDs");
+      Check(models.Items.Cast<object>().Skip(1).Select(m => m.ToString()).SequenceEqual(new[] { "ALPHA", "alpha", "Bravo", "empty-name", "zeta" }), "CLI models sort by display name ignoring case with deterministic IDs");
       options.UseDefaultModel = false; options.Model = "middle";
       FillCatalog(form, options, catalog);
-      Check(ReadDraft(form).Model == "middle" && models.Text == "Bravo (middle)", "CLI sorting restores an explicit saved model by ID");
-      models.SelectedItem = models.Items.Cast<object>().Single(m => m.ToString() == "alpha (z-last)");
+      Check(ReadDraft(form).Model == "middle" && models.Text == "Bravo", "CLI sorting restores an explicit saved model by ID");
+      models.SelectedItem = models.Items.Cast<object>().Single(m => m.ToString() == "alpha");
       var selected = ReadDraft(form);
       catalog.Models.Reverse();
       FillCatalog(form, selected, catalog);
-      Check(ReadDraft(form).Model == "z-last" && models.Text == "alpha (z-last)", "CLI refresh order does not change the selected model");
+      Check(ReadDraft(form).Model == "z-last" && models.Text == "alpha", "CLI refresh order does not change the selected model");
       selected.Model = "outside-catalog";
       FillCatalog(form, selected, catalog);
       Check(ReadDraft(form).Model == "outside-catalog", "sorting preserves a saved CLI model absent from discovery");
@@ -270,8 +419,10 @@ internal static class SettingsTests
       var presets = Find<ComboBox>(form, "apiPreset");
       presets.SelectedItem = presets.Items.Cast<object>().Single(p => p.ToString() == "Anthropic");
       Check(limit.Value == 8192, "Anthropic preset supplies its required explicit output limit");
+      Check(Find<NumericUpDown>(form, "apiTemperature").Maximum == 1, "Anthropic temperature control uses its protocol-specific maximum");
       presets.SelectedItem = presets.Items.Cast<object>().Single(p => p.ToString() == "OpenAI");
       Check(limit.Value == 0 && ReadDraft(form).ActiveApiConnection.MaxOutputTokens == 0, "OpenAI preset restores the service default rather than a fixed reasoning budget");
+      Check(Find<NumericUpDown>(form, "apiTemperature").Maximum == 2, "switching API protocol restores the matching temperature range");
       Find<TextBox>(form, "apiName").Text = "First endpoint";
       Find<TextBox>(form, "apiEndpoint").Text = "https://example.test/v1";
       Find<TextBox>(form, "apiKey").Text = "fake-key-for-settings-test";
@@ -300,6 +451,13 @@ internal static class SettingsTests
     }
     settings.Translation = new TranslationOptions { ConnectionMode = "api", ApiConnections = { new ApiConnection { Name = "Saved API", Endpoint = "https://example.test/v1", Model = "saved-model", ApiKey = "fake-saved-key" } } };
     settings.Translation.SelectedApiConnectionId = settings.Translation.ApiConnections[0].Id;
+    settings.Translation.ShowButtons = false;
+    using (var form = new SettingsForm(settings)) {
+      Find<TextBox>(form, "apiEndpoint").Text = "https://example.test/v1?key=SYNTHETIC_URL_SECRET";
+      typeof(SettingsForm).GetMethod("btnSave_Click", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { null, EventArgs.Empty });
+      Check(form.DialogResult != DialogResult.OK && !Find<Label>(form, "apiStatus").Text.Contains("SYNTHETIC_URL_SECRET"), "hidden translation buttons cannot bypass endpoint-secret validation on save");
+    }
+    settings.Translation.ShowButtons = true;
     using (var form = new SettingsForm(settings)) {
       Check(ReadDraft(form).UseApi && Find<TextBox>(form, "apiKey").Text == "fake-saved-key", "API mode and stored connection restore independently of CLI discovery");
       Find<TextBox>(form, "apiEndpoint").Text = "https://example.test/custom/v1";
@@ -307,6 +465,77 @@ internal static class SettingsTests
       Check(form.DialogResult == DialogResult.OK && form.TranslationOptions.ActiveApiConnection.Endpoint == "https://example.test/custom/v1" && settings.Translation.ActiveApiConnection.Endpoint == "https://example.test/v1", "Save captures API values without requiring a CLI executable or mutating original settings");
     }
   }
+  private static void ApiProxySettings()
+  {
+    var settings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
+    var original = new ApiConnection { Name = "Proxy endpoint", Endpoint = "https://example.test/v1", Model = "test-model" };
+    settings.Translation = new TranslationOptions { ConnectionMode = "api", ApiConnections = { original }, SelectedApiConnectionId = original.Id };
+    using (var form = new SettingsForm(settings)) {
+      form.SelectTranslationTab();
+      var mode = Find<ComboBox>(form, "apiProxyMode");
+      var address = Find<TextBox>(form, "apiProxyAddress");
+      var username = Find<TextBox>(form, "apiProxyUsername");
+      var password = Find<TextBox>(form, "apiProxyPassword");
+      var windows = Find<CheckBox>(form, "apiProxyUseDefaultCredentials");
+      Check(ReadDraft(form).ActiveApiConnection.ProxyMode == "system" && password.UseSystemPasswordChar,
+        "older API profiles default to the system proxy and proxy passwords are masked");
+      mode.SelectedIndex = 2;
+      address.Text = "http://127.0.0.1:3128";
+      username.Text = "synthetic-proxy-user";
+      password.Text = "  synthetic-proxy-password  ";
+      var profile = ReadDraft(form).ActiveApiConnection;
+      Check(profile.ProxyMode == "custom" && profile.ProxyAddress == address.Text && profile.ProxyUsername == username.Text && profile.ProxyPassword == password.Text,
+        "custom proxy fields reach the draft without trimming significant credential whitespace");
+      windows.Checked = true;
+      Check(!username.Enabled && !password.Enabled && ReadDraft(form).ActiveApiConnection.ProxyUseDefaultCredentials,
+        "Windows proxy authentication disables explicit credentials without discarding them");
+      windows.Checked = false;
+      Check(username.Enabled && password.Enabled && password.Text == "  synthetic-proxy-password  ",
+        "switching proxy authentication back restores the explicit credentials");
+      using (var waiting = new System.Threading.CancellationTokenSource()) {
+        typeof(SettingsForm).GetField("apiCancellation", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(form, waiting);
+        address.Text = "http://127.0.0.1:3129";
+        Check(waiting.IsCancellationRequested, "editing the proxy cancels an outstanding API discovery request");
+      }
+      var preset = Find<ComboBox>(form, "apiPreset");
+      preset.SelectedItem = preset.Items.Cast<object>().Single(p => p.ToString() == "Anthropic");
+      profile = ReadDraft(form).ActiveApiConnection;
+      Check(profile.ProxyMode == "custom" && profile.ProxyPassword == "  synthetic-proxy-password  ",
+        "changing the API service preserves the independently configured proxy");
+      Find<ComboBox>(form, "apiModel").Text = "test-model";
+      Click(Find<Button>(form, "apiAdd"));
+      Check(ReadDraft(form).ActiveApiConnection.ProxyMode == "system" && Find<TextBox>(form, "apiProxyPassword").Text == "",
+        "new endpoint starts with independent proxy settings and no copied password");
+      Find<ComboBox>(form, "apiConnections").SelectedIndex = 0;
+      Check(Find<TextBox>(form, "apiProxyPassword").Text == "  synthetic-proxy-password  " && Find<TextBox>(form, "apiProxyAddress").Text.EndsWith(":3129"),
+        "switching endpoints restores each proxy draft");
+      mode.SelectedIndex = 1;
+      Check(!Find<TableLayoutPanel>(form, "apiProxyLayout").Visible && ReadDraft(form).ActiveApiConnection.ProxyMode == "direct",
+        "direct mode hides proxy details while retaining the draft for switching back");
+      mode.SelectedIndex = 2;
+      var copy = ReadDraft(form); copy.ActiveApiConnection.ProxyPassword = "modified-copy";
+      Check(ReadDraft(form).ActiveApiConnection.ProxyPassword == "  synthetic-proxy-password  " && original.ProxyMode == "system" && original.ProxyPassword == "",
+        "proxy edits and draft copies do not mutate the supplied settings");
+      Save(form);
+      profile = form.TranslationOptions.ActiveApiConnection;
+      Check(form.DialogResult == DialogResult.OK && profile.ProxyMode == "custom" && profile.ProxyPassword == "  synthetic-proxy-password  ",
+        "Save captures the selected endpoint proxy and credentials");
+    }
+    original.ProxyMode = "custom"; original.ProxyAddress = "http://127.0.0.1:3128";
+    original.ProxyUsername = "synthetic-proxy-user"; original.ProxyPassword = "synthetic-proxy-password";
+    using (var form = new SettingsForm(settings)) {
+      Click(Find<Button>(form, "apiClearCredentials"));
+      Check(ReadDraft(form).ActiveApiConnection.ProxyUsername == "" && ReadDraft(form).ActiveApiConnection.ProxyPassword == "" && Find<TextBox>(form, "apiProxyPassword").Text == "",
+        "explicit credential clearing also clears both saved proxy credentials");
+    }
+    using (var form = new SettingsForm(settings)) {
+      Find<TextBox>(form, "apiProxyAddress").Text = "http://user:SYNTHETIC_PROXY_SECRET@proxy.example:3128";
+      Save(form);
+      Check(form.DialogResult != DialogResult.OK && !Find<Label>(form, "apiStatus").Text.Contains("SYNTHETIC_PROXY_SECRET"),
+        "proxy credentials inside the URL are rejected on save without exposing them");
+    }
+  }
+
   private static void FillCatalog(SettingsForm form, TranslationOptions options, CliModelCatalog catalog)
   {
     var type = typeof(SettingsForm);

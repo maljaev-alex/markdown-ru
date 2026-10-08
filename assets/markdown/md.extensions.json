@@ -1,86 +1,86 @@
 {
   "abbr": {
-    "title": "abbr: add <abbr> abbreviation tag support"
+    "title": "abbr: поддержка сокращений с тегом <abbr>"
   },
   "alert": {
-    "title": "alert: GFM style alerts blocks"
+    "title": "alert: блоки уведомлений в стиле GFM"
   },
   "align": {
-    "title": "align: plugin to align contents"
+    "title": "align: выравнивание содержимого"
   },
   "attrs": {
-    "title": "attrs: add attrs to Markdown content"
+    "title": "attrs: атрибуты элементов Markdown"
   },
   "container": {
-    "title": "container: Creating block-level custom containers"
+    "title": "container: пользовательские блочные контейнеры"
   },
   "dl": {
-    "title": "dl: Definition lists"
+    "title": "dl: списки определений"
   },
   "emoji": {
-    "title": "emoji: convert text Emoji to graphics symbols"
+    "title": "emoji: преобразование текстовых обозначений в эмодзи"
   },
   "highlightjs": {
-    "title": "highlight.js: code syntax highlight"
+    "title": "highlight.js: подсветка синтаксиса кода"
   },  
   "figure": {
-    "title": "figure: generating figures with captions from images"
+    "title": "figure: изображения с подписями"
   },
   "footnote": {
-    "title": "footnote: footnotes"
+    "title": "footnote: сноски"
   },
   "icon": {
-    "title": "icon: custom Icons"
+    "title": "icon: пользовательские значки"
   },
   "imgLazyload": {
-    "title": "imgLazyload: lazy loading for images"
+    "title": "imgLazyload: отложенная загрузка изображений"
   },
   "imgMark": {
-    "title": "imgMark: mark images by ID suffix for theme mode"
+    "title": "imgMark: выбор изображений для темы по суффиксу ID"
   },
   "imgSize": {
-    "title": "imgSize: support setting size for images"
+    "title": "imgSize: настройка размеров изображений"
   },
   "ins": {
-    "title": "ins: add <insert> tag support"
+    "title": "ins: выделение вставленного текста"
   },
   "katex": {
-    "title": "KaTeX: Math Expressions"
+    "title": "KaTeX: математические формулы"
   },
   "mark": {
-    "title": "mark: mark and highlight contents"
+    "title": "mark: выделение и подсветка содержимого"
   },
   "pano360": {
-    "title": "pano360: display panoramic 360 Photo"
+    "title": "pano360: панорамные фотографии 360°"
   },  
   "plantuml": {
-    "title": "plantuml: support plant uml schemes"
+    "title": "plantuml: схемы PlantUML"
   },
   "mermaid": {
-    "title": "mermaid: render mermaid diagrams (flowchart, sequence, gantt)"
+    "title": "mermaid: диаграммы Mermaid (блок-схемы, последовательности, Ганта)"
   },
   "qrcode": {
-    "title": "qrcode: convert text to qrcode"
+    "title": "qrcode: преобразование текста в QR-код"
   },
   "ruby": {
-    "title": "ruby: add support <ruby> ruby annotation"
+    "title": "ruby: пояснения к тексту с тегом <ruby>"
   },
   "spoiler": {
-    "title": "spoiler: plugin to hide content"
+    "title": "spoiler: скрываемые блоки содержимого"
   },
   "stylize": {
-    "title": "stylize: plugin for stylizing tokens"
+    "title": "stylize: оформление элементов текста"
   },
   "sub": {
-    "title": "sub: plugin to support subscript"
+    "title": "sub: подстрочный индекс"
   },
   "sup": {
-    "title": "sup: plugin to support superscript"
+    "title": "sup: надстрочный индекс"
   },
   "tab": {
-    "title": "tab: block-level custom tabs"
+    "title": "tab: пользовательские блоки вкладок"
   },
   "tasks-list": {
-    "title": "tasks-list: support tasklists with checkboxes"
+    "title": "tasks-list: списки задач с флажками"
   }
 }

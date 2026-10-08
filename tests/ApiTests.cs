@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
@@ -62,27 +63,38 @@ internal static class ApiTests
       case "chat-completions":
         return JObject.FromObject(new { choices = new[] { new { message = new { role = "assistant", content = Answer }, finish_reason = "stop" } } });
       case "responses":
-        return JObject.FromObject(new { status = "completed", output = new[] { new { type = "message", role = "assistant", content = new[] { new { type = "output_text", text = Answer } } } } });
+        return JObject.FromObject(new { status = "completed", incomplete_details = (object)null, error = (object)null,
+          usage = new { input_tokens = 24, output_tokens = 12, output_tokens_details = new { reasoning_tokens = 0 } },
+          output = new[] { new { type = "message", role = "assistant", status = "completed", content = new[] { new { type = "output_text", text = Answer } } } } });
       case "anthropic":
         return JObject.FromObject(new { type = "message", role = "assistant", content = new[] { new { type = "text", text = Answer } }, stop_reason = "end_turn" });
       case "gemini":
-        return JObject.FromObject(new { candidates = new[] { new { content = new { role = "model", parts = new[] { new { text = Answer } } }, finishReason = "STOP" } } });
+        return JObject.FromObject(new { promptFeedback = (object)null, candidates = new[] { new { content = new { role = "model", parts = new[] { new { text = Answer } } }, finishReason = "STOP" } } });
       default: throw new ArgumentException("Unknown fixture protocol.");
     }
   }
 
   private static async Task Run()
   {
+    var cachedConnection = new ApiConnection { Endpoint = "https://example.test/v1", Model = "fixture-model", MaxOutputTokens = 512 };
+    var cachedOptions = new TranslationOptions { ConnectionMode = "api", SelectedApiConnectionId = cachedConnection.Id, ApiConnections = { cachedConnection } };
+    var cacheKey = TranslationCache.Key(Source, cachedOptions);
+    cachedConnection.TokenLimitParameter = "max_completion_tokens";
+    Check(cacheKey != TranslationCache.Key(Source, cachedOptions), "changing the API token-limit field changes the translation cache key");
     foreach (var protocol in new[] { "chat-completions", "responses", "anthropic", "gemini" }) {
       await SuccessfulTranslation(protocol);
       await TruncatedTranslation(protocol);
     }
     await AutomaticOutputBudget();
+    await NullableResponseNodes();
     await CustomSettings();
     await ModelLists();
     await CancellationAndTimeout();
     await SafeErrorsAndRedirects();
     await InvalidSettings();
+    await EndpointCredentials();
+    await TemperatureRanges();
+    await ProxySettings();
   }
 
   private static async Task SuccessfulTranslation(string protocol)
@@ -155,6 +167,60 @@ internal static class ApiTests
         var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "chat-completions"), 5, CancellationToken.None), "non-final finish is rejected: " + reason.Split('-')[0]);
         Check(!error.ToString().Contains(FixtureKey), "unknown finish reason cannot echo server secrets");
       }
+    }
+  }
+
+  private static async Task NullableResponseNodes()
+  {
+    foreach (var protocol in new[] { "chat-completions", "responses", "anthropic", "gemini" }) {
+      var payload = Success(protocol);
+      if (protocol == "chat-completions") payload["choices"][0]["finish_reason"] = "length";
+      if (protocol == "responses") { payload["status"] = "incomplete"; payload["incomplete_details"] = new JObject { ["reason"] = "max_output_tokens" }; }
+      if (protocol == "anthropic") payload["stop_reason"] = "max_tokens";
+      if (protocol == "gemini") payload["candidates"][0]["finishReason"] = "MAX_TOKENS";
+      payload[protocol == "gemini" ? "usageMetadata" : "usage"] = JValue.CreateNull();
+      using (var server = new LoopbackServer(_ => Response.Json(payload))) {
+        var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, protocol), 5, CancellationToken.None), protocol + " rejects truncation with explicit null usage");
+        Check(error is InvalidOperationException && error.Message.Contains("effort") && error.Message.Contains("0"), protocol + " null usage preserves the friendly output-budget diagnostic");
+      }
+    }
+    foreach (var details in new JToken[] { JValue.CreateNull(), new JValue(FixtureKey), new JArray() }) {
+      var payload = Success("chat-completions");
+      payload["choices"][0]["finish_reason"] = "length";
+      payload["usage"] = new JObject { ["completion_tokens"] = 8192, ["completion_tokens_details"] = details, ["output_tokens_details"] = JValue.CreateNull() };
+      using (var server = new LoopbackServer(_ => Response.Json(payload))) {
+        var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "chat-completions"), 5, CancellationToken.None), "malformed or null token details fail as exhausted budget");
+        Check(error.Message.Contains("8192") && error.Message.Contains("effort") && !error.ToString().Contains(FixtureKey) && !error.ToString().Contains("JValue"), "token-details diagnostics retain safe numeric counts without raw JSON values");
+      }
+    }
+    foreach (var usage in new JToken[] { new JValue(FixtureKey), new JArray() }) {
+      var payload = Success("chat-completions"); payload["choices"][0]["finish_reason"] = "length"; payload["usage"] = usage;
+      using (var server = new LoopbackServer(_ => Response.Json(payload))) {
+        var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "chat-completions"), 5, CancellationToken.None), "non-object usage fails as exhausted budget");
+        Check(error.Message.Contains("effort") && !error.ToString().Contains(FixtureKey) && !error.ToString().Contains("JValue"), "non-object usage cannot expose server strings or a JSON-indexing exception");
+      }
+    }
+    using (var server = new LoopbackServer(_ => { var payload = Success("responses"); payload["usage"] = JValue.CreateNull(); return Response.Json(payload); })) {
+      var translated = await new ApiTranslator().TranslateAsync(Source, Connection(server, "responses"), 5, CancellationToken.None);
+      Check(translated == Answer, "standard completed Responses accepts null incomplete_details/error/usage and completed message status");
+    }
+    foreach (var content in new JToken[] { JValue.CreateNull(), new JValue(FixtureKey), new JArray() }) {
+      var payload = Success("gemini"); payload["candidates"][0]["content"] = content;
+      using (var server = new LoopbackServer(_ => Response.Json(payload))) {
+        var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "gemini"), 5, CancellationToken.None), "Gemini rejects missing or non-object content");
+        Check(error is InvalidOperationException && !error.ToString().Contains(FixtureKey) && !error.ToString().Contains("JValue"), "Gemini malformed content receives a safe final-text diagnostic");
+      }
+    }
+    foreach (var feedback in new JToken[] { new JValue(FixtureKey), new JArray() }) {
+      var payload = Success("gemini"); payload["promptFeedback"] = feedback;
+      using (var server = new LoopbackServer(_ => Response.Json(payload))) {
+        var translated = await new ApiTranslator().TranslateAsync(Source, Connection(server, "gemini"), 5, CancellationToken.None);
+        Check(translated == Answer, "Gemini ignores non-object optional feedback without indexing a JSON scalar");
+      }
+    }
+    using (var server = new LoopbackServer(_ => { var payload = Success("responses"); payload["incomplete_details"] = FixtureKey; return Response.Json(payload); })) {
+      var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "responses"), 5, CancellationToken.None), "Responses rejects non-object incomplete details");
+      Check(error is InvalidOperationException && !error.ToString().Contains(FixtureKey) && !error.ToString().Contains("JValue"), "malformed incomplete details cannot leak the server value");
     }
   }
 
@@ -288,6 +354,232 @@ internal static class ApiTests
       var connection = Connection(server, "chat-completions"); connection.Model = "";
       await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "translation requires a selected API model");
       Check(!server.HasConnections, "missing model fails before network");
+    }
+  }
+
+  private static async Task EndpointCredentials()
+  {
+    foreach (var name in new[] { "key", "KEY", "api_key", "Api_Key", "api-key", "ApIkEy", "access_token", "ACCESS_TOKEN", "%6b%65%79", "%61pi%5fkey", "api%2Dkey", "%61%70%69%6b%65%79", "%61ccess%5ftoken" }) {
+      var current = name;
+      await InvalidConnection("credential query " + current, connection => connection.Endpoint += "?api-version=2026-01-01&" + current + "=" + FixtureKey);
+      using (var server = new LoopbackServer(_ => Response.Json(new JObject { ["data"] = new JArray() }))) {
+        var connection = Connection(server, "chat-completions"); connection.Endpoint += "?" + current + "=" + FixtureKey;
+        var storage = await Failure(() => { ApiTranslator.ValidateEndpointCredentials(connection.Endpoint); return Task.FromResult(0); }, "storage helper rejects credential query " + current);
+        var discovery = await Failure(() => new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None), "model discovery rejects credential query " + current);
+        Check(storage is ArgumentException && discovery is ArgumentException && !server.HasConnections
+          && !storage.ToString().Contains(FixtureKey) && !discovery.ToString().Contains(FixtureKey), "credential query helper and discovery reject before network without exposing values");
+      }
+    }
+    var userInfo = await Failure(() => { ApiTranslator.ValidateEndpointCredentials("https://fixture:" + FixtureKey + "@example.test/v1"); return Task.FromResult(0); }, "storage helper rejects URL user information");
+    Check(userInfo is ArgumentException && !userInfo.ToString().Contains(FixtureKey), "userinfo rejection uses a generic diagnostic rather than the credential URL");
+    var credentialDrafts = new[] {
+      "generativelanguage.googleapis.com/v1beta?key=" + FixtureKey,
+      "//example.test/v1?Api_Key=" + FixtureKey,
+      "custom://example.test/v1?access_token=" + FixtureKey,
+      "http://[invalid/v1?api%5fkey=" + FixtureKey,
+      "not an absolute URI?apikey=" + FixtureKey,
+      "example.test/v1?%6b%65%79=" + FixtureKey + "#draft",
+      "example.test/v1?api-version=2026-01-01&API-KEY=" + FixtureKey,
+      "user:" + FixtureKey + "@example.test/v1",
+      "//user:" + FixtureKey + "@example.test/v1",
+      "custom://user:" + FixtureKey + "@example.test/v1",
+      "https://user:" + FixtureKey + "@[invalid/v1"
+    };
+    foreach (var draft in credentialDrafts) {
+      using (var server = new LoopbackServer(_ => Response.Json(new JObject { ["data"] = new JArray() }))) {
+        var connection = Connection(server, "chat-completions"); connection.Endpoint = draft;
+        var storage = await Failure(() => { ApiTranslator.ValidateEndpointCredentials(draft); return Task.FromResult(0); }, "storage helper rejects credentials even in a malformed or schemeless draft");
+        var validation = await Failure(() => { ApiTranslator.Validate(connection); return Task.FromResult(0); }, "credential draft fails API validation");
+        var translation = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "credential draft fails before translation");
+        var discovery = await Failure(() => new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None), "credential draft fails before model discovery");
+        Check(new[] { storage, validation, translation, discovery }.All(error => error is ArgumentException && !error.ToString().Contains(FixtureKey))
+          && !server.HasConnections, "all credential draft checks refuse before network without echoing secret values");
+      }
+    }
+    foreach (var draft in new[] { "", "not an absolute URL", "https://", "http://[bad", "file:///fixture.json", "https://example.test/v1#draft", "https://example.test/v1?api-version=2026-01-01&tenant=fixture" }) {
+      ApiTranslator.ValidateEndpointCredentials(draft);
+      Check(true, "credential-only storage validation preserves unrelated invalid or noncredential draft URLs");
+    }
+    foreach (var draft in new[] { "example.test/v1?api-version=2026-01-01", "//example.test/v1?tenant=owner@example.test", "http://[invalid/v1?tenant=owner@example.test", "custom://example.test/v1?tenant=owner@example.test", "https://example.test/v1/owner@example.test", "example.test/v1/owner@example.test", "/notes/owner@example.test", "notes/https://owner@example.test", "example.test/v1#notes?key=not-a-query" }) {
+      ApiTranslator.ValidateEndpointCredentials(draft);
+      Check(true, "credential-only draft validation ignores email-like path/query values and fragment text");
+    }
+    using (var server = new LoopbackServer(_ => Response.Json(Success("chat-completions")))) {
+      var connection = Connection(server, "chat-completions"); connection.Endpoint += "?api-version=2026-01-01&tenant=fixture";
+      ApiTranslator.Validate(connection);
+      Check(await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None) == Answer, "noncredential endpoint query remains usable");
+      Check((await server.FirstRequest).Target.EndsWith("?api-version=2026-01-01&tenant=fixture"), "endpoint normalization preserves noncredential query parameters");
+    }
+  }
+
+  private static async Task TemperatureRanges()
+  {
+    foreach (var temperature in new[] { 0.0, 1.0 }) {
+      using (var server = new LoopbackServer(_ => Response.Json(Success("anthropic")))) {
+        var connection = Connection(server, "anthropic"); connection.Temperature = temperature;
+        ApiTranslator.Validate(connection);
+        Check(await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None) == Answer, "Anthropic accepts the documented temperature boundary " + temperature);
+        Check((double)JObject.Parse((await server.FirstRequest).Body)["temperature"] == temperature, "Anthropic sends the configured supported temperature");
+      }
+    }
+    using (var server = new LoopbackServer(_ => Response.Json(Success("anthropic")))) {
+      var connection = Connection(server, "anthropic"); connection.Temperature = 1.01;
+      var validation = await Failure(() => { ApiTranslator.Validate(connection); return Task.FromResult(0); }, "Anthropic rejects temperature greater than one during validation");
+      var translation = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "Anthropic rejects temperature greater than one during translation");
+      Check(validation is ArgumentException && translation is ArgumentException && !server.HasConnections, "Anthropic temperature validation happens before any network request");
+    }
+    foreach (var protocol in new[] { "chat-completions", "responses", "gemini" }) {
+      using (var server = new LoopbackServer(_ => Response.Json(Success(protocol)))) {
+        var connection = Connection(server, protocol); connection.Temperature = 2;
+        ApiTranslator.Validate(connection);
+        Check(await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None) == Answer, protocol + " retains its existing maximum temperature of two");
+      }
+    }
+  }
+
+  private static async Task ProxySettings()
+  {
+    const string proxyUsername = "fixture-proxy-user";
+    const string proxyPassword = "fixture-proxy-password-not-real";
+    var expectedProxyAuth = "Basic " + Convert.ToBase64String(Encoding.ASCII.GetBytes(proxyUsername + ":" + proxyPassword));
+    var systemProxy = WebRequest.DefaultWebProxy;
+    var systemCredentials = systemProxy?.Credentials;
+    foreach (var windowsCredentials in new[] { false, true }) {
+      using (var handler = ApiTranslator.CreateHttpHandler(new ApiConnection { ProxyMode = "system", ProxyUseDefaultCredentials = windowsCredentials })) {
+        Check(handler.UseProxy && handler.Proxy != null && ReferenceEquals(handler.Proxy.Credentials, windowsCredentials ? CredentialCache.DefaultCredentials : null), "system proxy uses per-connection optional Windows credentials");
+        Check(!handler.UseDefaultCredentials && handler.Credentials == null && handler.DefaultProxyCredentials == null, "proxy factory never assigns origin credentials or mutating default-proxy credentials");
+      }
+    }
+    Check(ReferenceEquals(WebRequest.DefaultWebProxy, systemProxy) && ReferenceEquals(systemProxy?.Credentials, systemCredentials), "system proxy factory leaves global proxy instance and credentials untouched");
+    using (var handler = ApiTranslator.CreateHttpHandler(new ApiConnection { ProxyMode = "direct", ProxyUseDefaultCredentials = true, ProxyUsername = proxyUsername, ProxyPassword = proxyPassword }))
+      Check(!handler.UseProxy && handler.Proxy == null && !handler.UseDefaultCredentials && handler.Credentials == null, "direct mode bypasses proxy and ignores retained proxy credentials");
+    using (var handler = ApiTranslator.CreateHttpHandler(new ApiConnection { ProxyMode = "custom", ProxyAddress = "http://127.0.0.1:8080", ProxyUsername = proxyUsername, ProxyPassword = proxyPassword })) {
+      var credentials = handler.Proxy.Credentials.GetCredential(new Uri("http://127.0.0.1:8080"), "Basic");
+      Check(credentials.UserName == proxyUsername && credentials.Password == proxyPassword, "custom proxy owns explicit NetworkCredential without exposing it in an origin header");
+      Check(!handler.Proxy.IsBypassed(new Uri("http://api-proxy-fixture.invalid/v1")) && handler.Proxy.GetProxy(new Uri("http://api-proxy-fixture.invalid/v1")).Port == 8080, "custom proxy selects its fixed route for remote API destinations");
+      Check(!handler.AllowAutoRedirect && !handler.UseCookies && handler.ServerCertificateCustomValidationCallback == null, "proxy handler retains redirect, cookie and certificate protections");
+    }
+    using (var handler = ApiTranslator.CreateHttpHandler(new ApiConnection { ProxyMode = "custom", ProxyAddress = "http://127.0.0.1:8080", ProxyUsername = proxyUsername, ProxyPassword = proxyPassword, ProxyUseDefaultCredentials = true }))
+      Check(ReferenceEquals(handler.Proxy.Credentials, CredentialCache.DefaultCredentials), "Windows proxy credentials take precedence over preserved manual credentials");
+    using (var origin = new LoopbackServer(_ => Response.Json(Success("chat-completions"))))
+    using (var proxy = new LoopbackServer(_ => Response.Json(Success("chat-completions")))) {
+      foreach (var host in new[] { "127.0.0.1", "localhost", "[::1]" }) {
+        var connection = Connection(origin, "chat-completions"); connection.ProxyMode = "custom"; connection.ProxyAddress = proxy.Address;
+        connection.Endpoint = new UriBuilder(connection.Endpoint) { Host = host }.Uri.AbsoluteUri;
+        var saved = await Failure(() => { ApiTranslator.ValidateProxyDraft(connection); return Task.FromResult(0); }, "saved custom proxy profile rejects a known loopback API destination");
+        var translation = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "custom proxy cannot silently send local API translation directly");
+        var discovery = await Failure(() => new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None), "custom proxy cannot silently bypass model discovery for a local API");
+        Check(new[] { saved, translation, discovery }.All(error => error is ArgumentException && error.Message.Contains("loopback")) && !origin.HasConnections && !proxy.HasConnections,
+          "Framework loopback proxy limitation fails closed before any network request");
+      }
+    }
+
+    var originRequests = new List<Request>();
+    var proxyRequests = new List<Request>();
+    using (var origin = new LoopbackServer(request => {
+      lock (originRequests) originRequests.Add(request);
+      return Response.Json(request.Target.EndsWith("/models") ? JObject.Parse("{\"data\":[{\"id\":\"fixture-model\"}]}") : Success("chat-completions"));
+    }))
+    using (var proxy = new LoopbackServer(request => {
+      lock (proxyRequests) proxyRequests.Add(request);
+      return ForwardProxyRequest(request, origin.Address);
+    })) {
+      var connection = ProxiedConnection(origin, proxy);
+      Check(await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None) == Answer, "custom HTTP proxy forwards a real translation to loopback origin");
+      var catalog = await new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None);
+      Check(catalog.Models.Any(model => model.Id == "fixture-model"), "proxied model discovery parses origin model IDs");
+      Check(proxy.RequestCount == 2 && origin.RequestCount == 2, "model discovery uses the same per-connection custom proxy route (proxy=" + proxy.RequestCount + ", origin=" + origin.RequestCount + ")");
+      Check(proxyRequests.All(request => request.Target.StartsWith("http://api-proxy-fixture.invalid:", StringComparison.Ordinal)) && proxyRequests[1].Method == "GET", "proxy receives absolute remote request targets without DNS or internet access");
+      Check(originRequests.All(request => request.Header("Proxy-Authorization") == "" && request.Header("Authorization") == "Bearer " + FixtureKey), "proxy credentials never replace or leak into origin authorization");
+      connection.ProxyMode = "direct"; connection.Endpoint = origin.Address + "/gateway/v1"; connection.ProxyUsername = proxyUsername; connection.ProxyPassword = proxyPassword;
+      Check(await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None) == Answer && proxy.RequestCount == 2 && origin.RequestCount == 3, "switching to direct bypasses retained custom proxy settings");
+    }
+
+    originRequests.Clear(); proxyRequests.Clear();
+    using (var origin = new LoopbackServer(request => { lock (originRequests) originRequests.Add(request); return Response.Json(Success("chat-completions")); }))
+    using (var proxy = new LoopbackServer(request => {
+      lock (proxyRequests) proxyRequests.Add(request);
+      return request.Header("Proxy-Authorization") == expectedProxyAuth ? ForwardProxyRequest(request, origin.Address)
+        : new Response { Status = 407, Headers = new Dictionary<string, string> { ["Proxy-Authenticate"] = "Basic realm=\"fixture\"" }, Body = "rejected " + proxyPassword };
+    })) {
+      var connection = ProxiedConnection(origin, proxy);
+      connection.ProxyUsername = proxyUsername; connection.ProxyPassword = proxyPassword;
+      Check(await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None) == Answer && proxy.RequestCount >= 2, "HTTP 407 challenge authenticates using this connection's proxy credentials");
+      Check(proxyRequests.Any(request => request.Header("Proxy-Authorization") == expectedProxyAuth)
+        && originRequests.All(request => request.Header("Proxy-Authorization") == "" && request.Header("Authorization") == "Bearer " + FixtureKey), "proxy Basic authorization is confined to proxy transport and absent at the origin");
+      connection.ProxyUsername = "wrong-fixture-user";
+      var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "invalid proxy credentials fail safely after HTTP 407");
+      Check(error.Message.Contains("407") && !error.ToString().Contains(proxyPassword) && !error.ToString().Contains(proxyUsername) && !error.ToString().Contains(FixtureKey) && !error.ToString().Contains(expectedProxyAuth), "407 diagnostic omits keys, proxy credentials and echoed error body");
+    }
+
+    using (var origin = new LoopbackServer(_ => Response.Json(Success("chat-completions"))))
+    using (var proxy = new LoopbackServer(_ => new Response { Status = 302, Headers = new Dictionary<string, string> { ["Location"] = origin.Address + "/stolen" } })) {
+      var connection = ProxiedConnection(origin, proxy);
+      await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "proxy redirect is not followed");
+      Check(proxy.RequestCount == 1 && !origin.HasConnections, "proxy redirect cannot move origin credentials to another request");
+    }
+    using (var origin = new LoopbackServer(_ => Response.Json(Success("chat-completions"))))
+    using (var proxy = new LoopbackServer(_ => new Response { DelayMilliseconds = 30000 }))
+    using (var cancellation = new CancellationTokenSource()) {
+      var connection = ProxiedConnection(origin, proxy);
+      var pending = new ApiTranslator().TranslateAsync(Source, connection, 5, cancellation.Token);
+      await proxy.FirstRequest; var timer = Stopwatch.StartNew(); cancellation.Cancel();
+      var error = await Failure(() => pending, "canceling a request accepted by the proxy aborts translation");
+      Check(error is OperationCanceledException && timer.Elapsed < TimeSpan.FromSeconds(3) && !origin.HasConnections, "proxy cancellation returns promptly without contacting the origin");
+    }
+    using (var origin = new LoopbackServer(_ => Response.Json(Success("chat-completions"))))
+    using (var proxy = new LoopbackServer(_ => new Response { DelayMilliseconds = 30000 })) {
+      var connection = ProxiedConnection(origin, proxy);
+      var error = await Failure(() => new ApiTranslator().LoadModelsAsync(connection, 1, CancellationToken.None), "proxy model discovery obeys the configured timeout");
+      Check(error is TimeoutException && proxy.RequestCount == 1 && !origin.HasConnections, "proxy discovery timeout does not fall back to a direct request");
+    }
+
+    foreach (var address in new[] { "", "127.0.0.1:8080", "socks5://127.0.0.1:1080", "https://127.0.0.1:8080", "http://[invalid", "http://127.0.0.1:0", "http://127.0.0.1:70000", "http://127.0.0.1:8080/path", "http://127.0.0.1:8080?tenant=x", "http://127.0.0.1:8080#fragment", "http://user:" + proxyPassword + "@127.0.0.1:8080", "127.0.0.1:8080?key=" + proxyPassword }) {
+      using (var server = new LoopbackServer(_ => Response.Json(Success("chat-completions")))) {
+        var connection = Connection(server, "chat-completions"); connection.ProxyMode = "custom"; connection.ProxyAddress = address;
+        var draft = connection.Copy(); draft.Endpoint = ""; draft.Model = "";
+        var standalone = await Failure(() => { ApiTranslator.ValidateProxyDraft(draft); return Task.FromResult(0); }, "standalone proxy validation rejects unsupported route without requiring API endpoint/model");
+        var savedDraft = await Failure(() => { ApiTranslator.ValidateDraft(draft); return Task.FromResult(0); }, "incomplete API draft still validates its proxy settings");
+        var translation = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "malformed custom proxy is rejected before translation");
+        var discovery = await Failure(() => new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None), "malformed custom proxy is rejected before discovery");
+        Check(new[] { standalone, savedDraft, translation, discovery }.All(error => error is ArgumentException && !error.ToString().Contains(proxyPassword)) && !server.HasConnections, "invalid proxy settings produce safe diagnostics before any network activity");
+      }
+    }
+    foreach (var mode in new[] { "system", "direct" }) {
+      ApiTranslator.ValidateProxyDraft(new ApiConnection { ProxyMode = mode, ProxyAddress = "unfinished ordinary proxy draft" });
+      Check(true, "inactive custom proxy address can remain an unfinished noncredential draft");
+      var error = await Failure(() => { ApiTranslator.ValidateProxyDraft(new ApiConnection { ProxyMode = mode, ProxyAddress = "user:" + proxyPassword + "@example.test:8080" }); return Task.FromResult(0); }, "inactive proxy mode cannot persist inline URL credentials");
+      Check(error is ArgumentException && !error.ToString().Contains(proxyPassword), "inactive proxy credential validation omits the secret");
+    }
+    var unknownMode = await Failure(() => { ApiTranslator.ValidateProxyDraft(new ApiConnection { ProxyMode = "unknown-" + proxyPassword }); return Task.FromResult(0); }, "unknown proxy mode is rejected");
+    Check(unknownMode is ArgumentException && !unknownMode.ToString().Contains(proxyPassword), "unknown mode diagnostic never echoes its raw value");
+  }
+
+  private static ApiConnection ProxiedConnection(LoopbackServer origin, LoopbackServer proxy)
+  {
+    var connection = Connection(origin, "chat-completions");
+    connection.Endpoint = new UriBuilder(connection.Endpoint) { Host = "api-proxy-fixture.invalid" }.Uri.AbsoluteUri;
+    connection.ProxyMode = "custom"; connection.ProxyAddress = proxy.Address;
+    return connection;
+  }
+
+  private static Response ForwardProxyRequest(Request request, string originAddress)
+  {
+    var target = new Uri(request.Target, UriKind.Absolute);
+    if (target.Host != "api-proxy-fixture.invalid") throw new InvalidOperationException("Proxy fixture received an unexpected synthetic host.");
+    var origin = new Uri(originAddress);
+    var destination = new UriBuilder(target) { Host = origin.Host, Port = origin.Port }.Uri;
+    if (!destination.IsLoopback || destination.Scheme != "http") throw new InvalidOperationException("Proxy fixture only forwards to loopback HTTP origins.");
+    using (var handler = new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false, UseCookies = false })
+    using (var client = new HttpClient(handler))
+    using (var forwarded = new HttpRequestMessage(new HttpMethod(request.Method), destination)) {
+      if (request.Body.Length > 0) forwarded.Content = new StringContent(request.Body, Utf8, "application/json");
+      foreach (var header in request.Headers) {
+        if (new[] { "Host", "Proxy-Authorization", "Proxy-Connection", "Connection", "Content-Length", "Content-Type", "Expect" }.Contains(header.Key, StringComparer.OrdinalIgnoreCase)) continue;
+        forwarded.Headers.TryAddWithoutValidation(header.Key, header.Value);
+      }
+      using (var response = client.SendAsync(forwarded).GetAwaiter().GetResult())
+        return new Response { Status = (int)response.StatusCode, Body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult() };
     }
   }
 

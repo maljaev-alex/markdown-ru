@@ -203,10 +203,10 @@ namespace Kbg.NppPluginNET.PluginInfrastructure
       return retval;
     }
 
-    [DllImport("kernel32")]
+    [DllImport("kernel32", CharSet = CharSet.Unicode)]
     public static extern int GetPrivateProfileInt(string lpAppName, string lpKeyName, int nDefault, string lpFileName);
 
-    [DllImport("kernel32")]
+    [DllImport("kernel32", CharSet = CharSet.Unicode)]
     public static extern int GetPrivateProfileString(
       string lpAppName,
       string lpKeyName,
@@ -215,7 +215,7 @@ namespace Kbg.NppPluginNET.PluginInfrastructure
       int nSize,
       string lpFileName);
 
-    [DllImport("kernel32")]
+    [DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern bool WritePrivateProfileString(string lpAppName, string lpKeyName, string lpString, string lpFileName);
 
     [DllImport("user32")]
@@ -258,17 +258,46 @@ namespace Kbg.NppPluginNET.PluginInfrastructure
     public static string ReadIniValue(string section, string key, string iniFileName, string defaultValue = "")
     {
       // CLI argument templates and long paths exceed the old 254-character limit.
-      for (var capacity = 512; capacity <= 32768; capacity *= 2) {
+      // A WinForms TextBox can save 32767 characters; allow an extra probe
+      // beyond that boundary so a full value is distinguishable from truncation.
+      for (var capacity = 512; capacity <= 65536; capacity *= 2) {
         var temp = new StringBuilder(capacity);
         var length = GetPrivateProfileString(section, key, defaultValue, temp, capacity, iniFileName);
         if (length < capacity - 1) return temp.ToString();
       }
-      throw new InvalidOperationException("INI value is longer than 32766 characters: " + section + "/" + key);
+      throw new InvalidOperationException("INI value is longer than 65534 characters: " + section + "/" + key);
     }
 
     public static void WriteIniValue(string section, string key, string value, string iniFileName)
     {
-      WritePrivateProfileString(section, key, value, iniFileName);
+      try { PrepareIniValueEncoding(section, key, value, iniFileName); }
+      catch (UnauthorizedAccessException error) { throw new System.IO.IOException("Cannot access the settings file: " + iniFileName, error); }
+      if (!WritePrivateProfileString(section, key, value, iniFileName)) {
+        var error = new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        throw new System.IO.IOException("Не удалось записать настройки в файл: " + iniFileName + ".\r\nWindows (" + error.NativeErrorCode + "): " + error.Message, error);
+      }
+    }
+
+    private static void PrepareIniValueEncoding(string section, string key, string value, string iniFileName)
+    {
+      // New profiles use UTF-16; existing profiles retain their original encoding.
+      // The W API still converts values to ACP in legacy ANSI files, silently
+      // replacing unsupported characters. Reject that conversion before writing.
+      if (!System.IO.File.Exists(iniFileName) && System.IO.Directory.Exists(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(iniFileName)))) {
+        try {
+          using (var stream = new System.IO.FileStream(iniFileName, System.IO.FileMode.CreateNew, System.IO.FileAccess.Write)) {
+            var preamble = Encoding.Unicode.GetPreamble();
+            stream.Write(preamble, 0, preamble.Length);
+          }
+        }
+        catch (System.IO.IOException) when (System.IO.File.Exists(iniFileName)) { }
+      }
+      if (value != null && value != Encoding.Default.GetString(Encoding.Default.GetBytes(value)) && System.IO.File.Exists(iniFileName)) {
+        bool unicode;
+        using (var stream = new System.IO.FileStream(iniFileName, System.IO.FileMode.Open, System.IO.FileAccess.Read, System.IO.FileShare.ReadWrite))
+          unicode = stream.ReadByte() == 0xff && stream.ReadByte() == 0xfe;
+        if (!unicode) throw new System.IO.IOException("The existing ANSI settings file cannot preserve Unicode characters in " + section + "/" + key + ". Save the INI as UTF-16 LE with BOM before retrying: " + iniFileName);
+      }
     }
 
     /// <summary>

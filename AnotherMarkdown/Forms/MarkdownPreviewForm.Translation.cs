@@ -87,13 +87,13 @@ namespace AnotherMarkdown.Forms
     {
       await renderGate.WaitAsync();
       try {
-        if (_disposed || _webView == null || sourcePath == null) return;
+        if (_disposed || _renderContent == null || sourcePath == null) return;
         var text = IsTranslationPreview ? translatedText : sourceText;
         if (!forceRender && renderedText == text && renderedPath == sourcePath && renderedTranslation == IsTranslationPreview) return;
         var path = sourcePath;
         var translated = IsTranslationPreview;
         forceRender = false;
-        await _webView.SetContentAsync(text, path, translated);
+        await _renderContent(text, path, translated);
         renderedText = text;
         renderedPath = path;
         renderedTranslation = translated;
@@ -111,7 +111,7 @@ namespace AnotherMarkdown.Forms
       var cancellation = new CancellationTokenSource();
       translationCancellation = cancellation;
       UpdateTranslationButtons();
-      var modelLabel = options.UseApi ? options.ActiveApiConnection?.Model ?? "модель API" : options.UseDefaultModel ? "модель CLI" : options.Model;
+      var modelLabel = CliModel.CleanDisplayName(options.UseApi ? options.ActiveApiConnection?.Model ?? "модель API" : options.UseDefaultModel ? "модель CLI" : options.Model);
       translationStatus.Text = "Перевод… " + modelLabel;
       try {
         var cached = translationCache.TryGet(key, out var result);
@@ -125,7 +125,7 @@ namespace AnotherMarkdown.Forms
         translationStatus.Text = cached ? "Русский · из кэша" : "Русский · " + modelLabel;
         await RenderPreviewAsync();
       }
-      catch (OperationCanceledException) { }
+      catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
       catch (Exception error) {
         if (!_disposed && !cancellation.IsCancellationRequested) {
           translationStatus.Text = "Ошибка перевода";

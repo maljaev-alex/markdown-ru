@@ -19,6 +19,12 @@ internal static class TranslationTests
     Console.OutputEncoding = new UTF8Encoding(false);
     executable = System.Reflection.Assembly.GetExecutingAssembly().Location;
     if (args.Length > 0 && args[0] == "fake") return Fake(args);
+    if (args.Length > 0 && args[0] == "--input-format") {
+      var message = JObject.Parse(Console.In.ReadToEnd());
+      if ((string)message["event"] != "user" || message["message"]?["content"]?.Type != JTokenType.String) return 68;
+      Console.Write(new JObject { ["event"] = "result", ["result"] = new JObject { ["status"] = "SUCCESS", ["response"] = message["message"]["content"] } }.ToString(Newtonsoft.Json.Formatting.None));
+      return 0;
+    }
     if (args.Length > 0 && args[0] == "app-server") return FakeServer();
     if (args.Length > 0 && args[0] == "models") { Console.Write("\u001b[32mauto - Auto (default)\u001b[0m\ngrok-4.7-xhigh - Grok 4.7 Extra High\n"); return 0; }
     if (args.Length > 0 && args[0] == "models-real") {
@@ -154,6 +160,8 @@ internal static class TranslationTests
       "claude-4.6-opus-max - Claude Opus 4.6 1M Max",
       "claude-4.6-opus-high-thinking - Claude Opus 4.6 1M Thinking",
       "claude-4.6-opus-max-thinking - Claude Opus 4.6 1M Max Thinking",
+      "claude-4.5-opus-high - Claude Opus 4.5",
+      "claude-4.5-opus-high-thinking - Claude Opus 4.5 Thinking",
       "gpt-5.6-sol-high - GPT-5.6 Sol 1M High",
       "gpt-5.6-sol-medium - GPT-5.6 Sol 1M",
       "gpt-5.6-sol-max - GPT-5.6 Sol 1M Max",
@@ -174,6 +182,8 @@ internal static class TranslationTests
       "claude-haiku-5-5-thinking-high - Claude Haiku 5.5  High",
       "claude-fable-5-high - Claude Fable 5 1M (NO ZDR)",
       "claude-fable-5-max - Claude Fable 5 1M Max (NO ZDR)",
+      "claude-fable-5-thinking-high - Claude Fable 5 1M Thinking (NO ZDR)",
+      "claude-fable-5-thinking-max - Claude Fable 5 1M Max Thinking (NO ZDR)",
       "claude-4.5-sonnet - Claude Sonnet 4.5",
       "claude-4.5-sonnet-thinking - Claude Sonnet 4.5 Thinking"
     }), CancellationToken.None);
@@ -182,14 +192,25 @@ internal static class TranslationTests
     Check(find("grok-code-fast-1").BaseModelId == null, "Cursor retains genuine model families containing Fast inside their names");
     Check(find("claude-opus-5-5-medium").BaseModelId == "claude-opus-5-5" && find("claude-opus-5-high").BaseModelId == "claude-opus-5" && find("claude-opus-4-8-high").BaseModelId == "claude-opus-4-8", "Cursor groups Claude effort aliases even when display names omit the effort");
     Check(find("claude-opus-5-5-medium").ReasoningEfforts.Select(e => e.Id).SequenceEqual(new[] { "low", "medium", "high", "xhigh", "max" }) && find("claude-opus-5-5-high").BaseModelName == "Claude Opus 5.5 1M", "Cursor exposes ordered real Claude efforts with one shared context-preserving name");
-    Check(find("claude-4.6-opus-high-thinking").BaseModelId == "claude-4.6-opus-thinking" && find("claude-4.6-opus-high-thinking").ReasoningEfforts.Select(e => e.ModelId).SequenceEqual(new[] { "claude-4.6-opus-high-thinking", "claude-4.6-opus-max-thinking" }), "Cursor recognizes legacy effort-before-thinking aliases without changing exact IDs");
-    Check(find("claude-opus-5-high").BaseModelId != find("claude-opus-5-thinking-high").BaseModelId && find("claude-haiku-5-5-low").BaseModelId != find("claude-haiku-5-5-thinking-low").BaseModelId && find("claude-haiku-5-5-thinking-low").BaseModelName.EndsWith(" Thinking"), "Cursor preserves Thinking as a separate model variant even when its display label omits Thinking");
+    Check(find("claude-4.6-opus-high-thinking").BaseModelId == "claude-4.6-opus" && find("claude-4.6-opus-high-thinking").ReasoningEfforts.Where(e => e.Id != "none").Select(e => e.ModelId).SequenceEqual(new[] { "claude-4.6-opus-high-thinking", "claude-4.6-opus-max-thinking" }), "Cursor folds legacy effort-before-thinking aliases into one base model with unchanged real level IDs");
+    Check(find("claude-opus-5-high").BaseModelId == find("claude-opus-5-thinking-high").BaseModelId && find("claude-haiku-5-5-low").BaseModelId == find("claude-haiku-5-5-thinking-low").BaseModelId && find("claude-haiku-5-5-thinking-low").BaseModelName == "Claude Haiku 5.5", "Cursor presents ordinary and Thinking aliases as one clean base-model family");
     Check(find("gpt-5.6-sol-medium").BaseModelId == "gpt-5.6-sol" && find("gemini-3.7-flash-high").BaseModelId == "gemini-3.7-flash" && find("muse-spark-1.3-high").BaseModelId == "muse-spark-1.3", "Cursor groups GPT Gemini and Muse effort aliases without requiring display labels");
     var native = find("gpt-5.3-codex");
     Check(native.BaseModelId == "gpt-5.3-codex" && native.DefaultReasoningEffort == "" && native.ReasoningEfforts.Select(e => e.Id).SequenceEqual(new[] { "", "low", "high" }) && native.ReasoningEfforts[0].ModelId == native.Id && !string.IsNullOrWhiteSpace(native.ReasoningEfforts[0].ToString()), "Cursor unsuffixed native alias joins its family with an explicit default choice and no invented medium effort");
     Check(find("gpt-5.5-extra-high").DefaultReasoningEffort == "xhigh" && find("gpt-5.5-extra-high").ReasoningEfforts.Single(e => e.Id == "xhigh").ModelId == "gpt-5.5-extra-high", "Cursor extra-high spelling normalizes effort only and preserves the actual model ID");
-    Check(variants.Models.SelectMany(m => m.ReasoningEfforts).All(e => variants.Models.Any(m => m.Id == e.ModelId)), "every Cursor effort launches an exact non-Fast alias from the returned catalog");
-    Check(find("claude-fable-5-high").BaseModelName == "Claude Fable 5 1M (NO ZDR)" && find("claude-4.5-sonnet-thinking").BaseModelId == null, "Cursor retains data-retention labels and does not invent effort for ordinary Thinking aliases");
+    Check(variants.Models.SelectMany(m => m.ReasoningEfforts).All(e => variants.Models.Any(m => m.Id == e.ModelId) && e.ModelIds.Contains(e.ModelId) && e.ModelIds.All(id => variants.Models.Any(m => m.Id == id))), "every Cursor canonical and hidden effort alias is an exact non-Fast ID from the returned catalog");
+    Check(find("claude-fable-5-high").BaseModelName == "Claude Fable 5 1M" && find("claude-fable-5-high").BaseModelId == find("claude-fable-5-thinking-high").BaseModelId && find("claude-4.5-sonnet-thinking").BaseModelId == "claude-4.5-sonnet", "Cursor removes retention and mode labels and groups Thinking aliases without an explicit effort suffix");
+    var haikuEfforts = find("claude-haiku-5-5-low").ReasoningEfforts;
+    Check(haikuEfforts.Single(e => e.Id == "low").ModelId == "claude-haiku-5-5-thinking-low" && haikuEfforts.Single(e => e.Id == "low").ModelIds.Contains("claude-haiku-5-5-low") && find("claude-haiku-5-5-low").DefaultReasoningEffort == "low", "Cursor prefers the real reasoning alias for a level but retains its saved ordinary counterpart exactly");
+    Check(haikuEfforts.Single(e => e.Id == "none").ModelId == "claude-haiku-5-5-low" && haikuEfforts.Single(e => e.Id == "none").ModelIds.Contains("claude-haiku-5-5-high") && !find("claude-opus-5-5-medium").ReasoningEfforts.Any(e => e.Id == "none") && !find("claude-opus-5-high").ReasoningEfforts.Any(e => e.Id == "none"), "Cursor none maps only explicit No Thinking or real none aliases and is never inferred from an omitted Thinking label");
+    var sonnetEfforts = find("claude-4.5-sonnet").ReasoningEfforts;
+    Check(sonnetEfforts.Single().Id == "" && sonnetEfforts.Single().ModelId == "claude-4.5-sonnet" && sonnetEfforts.Single().ModelIds.Contains("claude-4.5-sonnet-thinking") && find("claude-4.5-sonnet").DefaultReasoningEffort == "", "Cursor uses the native default and hidden exact alternatives for older mode pairs without inventing none low high or a reasoning budget");
+    Check(find("claude-4.5-opus-high").BaseModelId == find("claude-4.5-opus-high-thinking").BaseModelId && find("claude-4.5-opus-high").ReasoningEfforts.Single(e => e.Id == "high").ModelIds.Contains("claude-4.5-opus-high"), "older Opus mode duplicates merge while the saved ordinary high alias remains available");
+    Check(variants.Models.All(m => !System.Text.RegularExpressions.Regex.IsMatch(m.BaseModelName ?? m.ToString(), @"\b(thinking|zdr)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)), "Cursor model display names contain no Thinking No Thinking or ZDR markers");
+    var apiDisplay = new CliModel { Id = "api/real-thinking-zdr-id", Name = "API Beta Thinking (NO ZDR)" };
+    Check(apiDisplay.ToString() == "API Beta" && apiDisplay.Id == "api/real-thinking-zdr-id" && CliModel.CleanDisplayName("Alpha ZDR [No Thinking] (no zdr)") == "Alpha", "shared display cleanup is case insensitive and leaves actual API model IDs untouched");
+    var nativePair = CliModelDiscovery.ParseCommandOutput("cursor", "native - Native (default)\nnative-thinking - Native Thinking\n", CancellationToken.None);
+    Check(nativePair.DefaultModelId == "native" && nativePair.Models.Single(m => m.Id == "native").IsDefault && nativePair.Models[0].ReasoningEfforts.Single(e => e.Id == "").ModelId == "native" && nativePair.Models[0].ReasoningEfforts.Single(e => e.Id == "").ModelIds.Contains("native-thinking"), "Cursor configured native default remains exact after mode aliases are folded into one family");
     var contexts = CliModelDiscovery.ParseCommandOutput("cursor", "example-low - Example 200K Low\nexample-high - Example 1M High\nexample-medium-1m - Example 1M Medium\nexample-max-1m - Example 1M Max\n", CancellationToken.None);
     Check(contexts.Models[0].BaseModelId != contexts.Models[1].BaseModelId && contexts.Models[2].BaseModelId == contexts.Models[3].BaseModelId && contexts.Models[0].BaseModelName.Contains("200K") && contexts.Models[1].BaseModelName.Contains("1M"), "Cursor keeps explicitly different context variants separate and retains their labels");
     var fastDefault = CliModelDiscovery.ParseCommandOutput("cursor", "example-high-fast - Example High Fast (default)\nexample-high - Example High\n", CancellationToken.None);
@@ -215,9 +236,11 @@ internal static class TranslationTests
     await Throws<ArgumentException>(() => Task.FromResult(CliProfiles.ArgumentsFor(effortOptions)), "effort", "invalid effort cannot inject arguments");
     var hostEncoding = Console.InputEncoding;
     try {
-      Console.InputEncoding = new UTF8Encoding(true);
-      var bomCatalog = await new CliModelDiscovery().LoadAsync("codex", executable, CancellationToken.None);
-      Check(bomCatalog.Models.Count == 2 && Console.InputEncoding.GetPreamble().Length == 3, "NDJSON discovery works under UTF-8 BOM host without changing host encoding");
+      foreach (var encoding in new Encoding[] { new UTF8Encoding(true), Encoding.Unicode }) {
+        Console.InputEncoding = encoding;
+        var bomCatalog = await new CliModelDiscovery().LoadAsync("codex", executable, CancellationToken.None);
+        Check(bomCatalog.Models.Count == 2 && Console.InputEncoding.CodePage == encoding.CodePage && Console.InputEncoding.GetPreamble().SequenceEqual(encoding.GetPreamble()), "NDJSON discovery works independently of the host input encoding " + encoding.WebName);
+      }
     }
     finally { Console.InputEncoding = hostEncoding; }
     var cursorCatalog = await new CliModelDiscovery().LoadAsync("cursor", executable, CancellationToken.None);
@@ -233,6 +256,28 @@ internal static class TranslationTests
     Check(CliTranslator.DecodeOutput("{\"role\":\"assistant\",\"content\":\"thinking\",\"tool_calls\":[{}]}\n{\"role\":\"tool\",\"content\":\"tool output\"}\n{\"role\":\"assistant\",\"content\":\"final translation\"}\n{\"role\":\"meta\"}", "kimi-json") == "final translation", "Kimi takes final assistant content only");
     var agyCatalog = CliModelDiscovery.ParseCommandOutput("agy", "gemini-3.8-flash-high     Gemini 3.8 Flash (High)\ngemini-3.1-pro-high       Gemini 3.1 Pro (High)\n", CancellationToken.None);
     Check(agyCatalog.Models.Count == 2 && agyCatalog.Models[0].Id == "gemini-3.8-flash-high", "AGY native model table parser");
+    var transportDirectory = Path.Combine(Path.GetDirectoryName(executable), "provider-transport-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(transportDirectory);
+    try {
+      var kimiBatch = Path.Combine(transportDirectory, "kimi.cmd");
+      File.WriteAllText(kimiBatch, "@echo off\r\n", new UTF8Encoding(false));
+      Check(!CliProfiles.DiscoverInstalled(new[] { transportDirectory }).Any(model => model.ProviderId == "kimi"), "automatic discovery excludes Kimi batch launchers unsupported by its documented prompt transport");
+      var kimiOptions = CliProfiles.Defaults("kimi", kimiBatch);
+      await Throws<ArgumentException>(() => Translate(kimiOptions), ".exe", "Kimi batch profile is rejected before launching a multiline prompt");
+      File.WriteAllText(Path.Combine(transportDirectory, "kimi.exe"), "fixture");
+      Check(CliProfiles.DiscoverInstalled(new[] { transportDirectory }).Single(model => model.ProviderId == "kimi").Executable.EndsWith("kimi.exe", StringComparison.OrdinalIgnoreCase), "native Kimi remains discoverable beside an unsupported batch launcher");
+      var agyOptions = CliProfiles.Defaults("agy", executable);
+      var longMarkdown = "# Hello\nПривет\n\n\"quoted\" % ! ^ & | < >\n" + new string('x', 14000);
+      var nativeAgy = await new CliTranslator().TranslateAsync(longMarkdown, agyOptions, CancellationToken.None);
+      Check(nativeAgy.Contains(longMarkdown), "AGY native profile sends one complete UTF-8 JSON user event over stdin");
+      var agyBatch = Path.Combine(transportDirectory, "agy.cmd");
+      File.WriteAllText(agyBatch, "@echo off\r\n" + CliTranslator.QuoteArgument(executable) + " %*\r\n", new UTF8Encoding(false));
+      agyOptions.Executable = agyBatch;
+      Check((await new CliTranslator().TranslateAsync(longMarkdown, agyOptions, CancellationToken.None)).Contains(longMarkdown), "AGY official-style batch launcher receives multiline long prompts via documented JSON stdin");
+    }
+    finally {
+      if (Path.GetFullPath(transportDirectory).StartsWith(Path.GetFullPath(Path.GetDirectoryName(executable)) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) Directory.Delete(transportDirectory, true);
+    }
     var kimiCatalog = CliModelDiscovery.ParseCommandOutput("kimi", "{\"providers\":{\"demo\":{\"api_key\":\"NEVER_RETAIN\"}},\"models\":{\"alias_demo\":{\"provider\":\"demo\",\"model\":\"model_demo\"}}}", CancellationToken.None);
     Check(kimiCatalog.Models.Count == 1 && kimiCatalog.Models[0].Id == "alias_demo" && !JObject.FromObject(kimiCatalog).ToString().Contains("NEVER_RETAIN"), "Kimi model aliases exclude provider credentials");
     var standard = await Translate(Options("fake stdout"));
@@ -290,5 +335,28 @@ internal static class TranslationTests
     for (var i = 0; i < 8; i++) cache.Add("key-" + i, "translation");
     Check(!cache.TryGet(key, out _), "cache bound evicts oldest entry");
     Check(TranslationCache.Key("a", Options("bc")) != TranslationCache.Key("ab", Options("c")), "cache key is unambiguous");
+    var proxyOptions = new TranslationOptions { ConnectionMode = "api", ApiConnections = {
+      new ApiConnection { ProxyMode = "custom", ProxyAddress = "http://127.0.0.1:8080",
+        ProxyUsername = "SYNTHETIC_CACHE_PROXY_USER", ProxyPassword = "SYNTHETIC_CACHE_PROXY_PASSWORD" }
+    } };
+    var proxyKey = TranslationCache.Key("source", proxyOptions);
+    var proxyChanges = new Action<ApiConnection>[] {
+      value => value.ProxyMode = "direct", value => value.ProxyAddress = "http://127.0.0.1:8081",
+      value => value.ProxyUsername = "SYNTHETIC_CHANGED_PROXY_USER", value => value.ProxyPassword = "SYNTHETIC_CHANGED_PROXY_PASSWORD",
+      value => value.ProxyUseDefaultCredentials = true
+    };
+    foreach (var change in proxyChanges) {
+      var changed = proxyOptions.Copy(); change(changed.ActiveApiConnection);
+      Check(TranslationCache.Key("source", changed) != proxyKey, "proxy route or authentication changes invalidate the API translation cache");
+    }
+    Check(TranslationCache.Key("source", proxyOptions.Copy()) == proxyKey && !proxyKey.Contains(proxyOptions.ActiveApiConnection.ProxyUsername)
+      && !proxyKey.Contains(proxyOptions.ActiveApiConnection.ProxyPassword), "proxy cache identity is stable across draft copies and contains no plaintext credentials");
+    var unavailableProxy = proxyOptions.Copy();
+    unavailableProxy.ActiveApiConnection.RestoreCredentials("", false, "{}", false, usernameUnavailable: true, passwordUnavailable: true);
+    unavailableProxy.ActiveApiConnection.EncryptedProxyUsername = "opaque-user-A";
+    unavailableProxy.ActiveApiConnection.EncryptedProxyPassword = "opaque-password-A";
+    var unavailableKey = TranslationCache.Key("source", unavailableProxy);
+    unavailableProxy.ActiveApiConnection.EncryptedProxyPassword = "opaque-password-B";
+    Check(TranslationCache.Key("source", unavailableProxy) != unavailableKey, "unavailable preserved proxy ciphertext also participates in cache identity");
   }
 }

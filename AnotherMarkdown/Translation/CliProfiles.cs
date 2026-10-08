@@ -11,6 +11,7 @@ namespace AnotherMarkdown.Translation
     public string Name { get; }
     public string OutputFormat { get; }
     public bool RequiresModel => Id == "ollama";
+    public bool SupportsBatchLauncher => Id != "kimi";
     public bool SupportsModelOverride => Id != "dsh";
     public CliProfile(string id, string name, string outputFormat) { Id = id; Name = name; OutputFormat = outputFormat; }
     public override string ToString() => Name;
@@ -84,7 +85,7 @@ namespace AnotherMarkdown.Translation
         var names = profile.Id == "cursor" ? new[] { "agent", "cursor-agent" } : new[] { profile.Id };
         CliInstallation selected = null;
         // A native executable wins across all locations; PATH order breaks ties.
-        foreach (var extension in new[] { ".exe", ".cmd", ".bat" }) {
+        foreach (var extension in new[] { ".exe", ".cmd", ".bat" }.Where(extension => profile.SupportsBatchLauncher || extension == ".exe")) {
           foreach (var directory in locations) {
             foreach (var name in names) {
               string path;
@@ -125,10 +126,10 @@ namespace AnotherMarkdown.Translation
         case "gemini": return "--output-format json --approval-mode plan --admin-policy {policy}" + modelArgument;
         case "opencode": return "--pure run --format json --agent plan" + modelArgument;
         case "ollama": return "run --nowordwrap {model}";
-        case "dsh": return "--profile headless {prompt}";
+        case "dsh": return "--profile headless";
         case "qwen": return "--safe-mode --approval-mode plan --input-format text --output-format json" + modelArgument;
         case "kimi": return "-p {prompt} --output-format stream-json --agent-file {agent}" + modelArgument;
-        case "agy": return "--print {prompt} --output-format json" + modelArgument;
+        case "agy": return "--input-format stream-json --output-format stream-json" + modelArgument;
         case "copilot": return "--silent --no-ask-user --deny-tool \"shell,write,read,url,memory\"" + modelArgument;
         default: return options.Arguments ?? "";
       }

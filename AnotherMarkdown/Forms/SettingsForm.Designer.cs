@@ -18,7 +18,7 @@
       AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
       Font = new System.Drawing.Font("Segoe UI", 9F);
       ClientSize = new System.Drawing.Size(840, 720);
-      MinimumSize = new System.Drawing.Size(800, 720);
+      MinimumSize = new System.Drawing.Size(640, 480);
       StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
       Name = "SettingsForm";
       Text = "Настройки — " + PluginBranding.Name;
@@ -43,12 +43,12 @@
       });
       root.Controls.Add(heading, 0, 0);
       settingsTabs = new System.Windows.Forms.TabControl { Name = "settingsTabs", Dock = System.Windows.Forms.DockStyle.Fill, TabIndex = 0 };
-      previewPage = new System.Windows.Forms.TabPage("Просмотр") { Name = "previewPage", Padding = new System.Windows.Forms.Padding(8) };
+      previewPage = new System.Windows.Forms.TabPage("Просмотр") { Name = "previewPage", Padding = new System.Windows.Forms.Padding(8), AutoScroll = true };
       translationPage = new System.Windows.Forms.TabPage("Перевод") { Name = "translationPage", Padding = new System.Windows.Forms.Padding(8) };
       settingsTabs.TabPages.AddRange(new[] { previewPage, translationPage });
       root.Controls.Add(settingsTabs, 0, 1);
       var general = new System.Windows.Forms.TableLayoutPanel {
-        Name = "previewLayout", Dock = System.Windows.Forms.DockStyle.Fill, ColumnCount = 4, RowCount = 7
+        Name = "previewLayout", Dock = System.Windows.Forms.DockStyle.Fill, ColumnCount = 4, RowCount = 7, AutoScroll = true
       };
       general.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 150));
       general.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100));

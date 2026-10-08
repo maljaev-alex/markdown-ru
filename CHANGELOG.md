@@ -1,5 +1,30 @@
 ## Version History
 
+### Markdown RU 0.1.12-ru.8
+
+* Add per-API system/direct/custom HTTP proxy settings, explicit Windows or username/password authentication, and DPAPI-protected proxy credentials.
+* Invalidate cached API translations when the output-token parameter changes.
+* Report failed INI writes and apply accepted settings to the active preview even when persistence fails.
+* Reload maximum-length text fields without an INI buffer-boundary exception.
+* Use Unicode Windows profile APIs for settings paths and add native Unicode and maximum-length save/read checks.
+* Send DeepSeek Harness documents over stdin so official Windows batch launchers accept multiline Markdown and long prompts.
+* Add regression checks for API cache invalidation and native INI write failures.
+* Handle JSON null fields in standard Responses/Gemini replies and token-budget diagnostics.
+* Keep startup working when API settings are damaged or locked; preserve unreadable originals separately from rolling backups.
+* Save unrelated preview/CLI options when API persistence fails, and remove rolling credential backups after clearing or deleting secrets.
+* Reject credentials embedded in endpoint URLs before storage or requests, and use Anthropic's temperature range.
+* Preserve CLI argument quotes across INI save/reload and reject templates exceeding the native storage boundary before writing.
+* Refresh unchanged preview content after synchronization changes; ignore stale scroll events when synchronization is disabled.
+* Save preview settings before a translator is configured, expand resource-path variables, and fit the settings window to the available screen area.
+* Create new INI files in Unicode; preserve existing ANSI encoding and report unsupported characters instead of silently replacing them.
+* Pin build dependencies to verified upstream digests and validate cached archives and extracted files before reuse.
+* Show simple model names, merge Cursor reasoning variants behind effort, and retain exact advertised aliases when restoring saved choices.
+* Preserve the selected API endpoint when preview-only settings are saved after a transient API catalog load failure.
+* Translate all Markdown extension descriptions into Russian while retaining their original identifiers.
+* Start CLI processes suspended and assign their entire process trees before execution; use independent BOM-free UTF-8 pipes.
+* Apply provider environment policies using the selected CLI profile even for renamed executables.
+* Send AGY prompts over documented JSON stdin and exclude unsupported Kimi batch launchers from automatic profiles.
+
 ### Markdown RU 0.1.12-ru.7
 
 * Rename the plugin UI to AnotherMarkdown + Translate-RU; show the fork URL and retain upstream credits.

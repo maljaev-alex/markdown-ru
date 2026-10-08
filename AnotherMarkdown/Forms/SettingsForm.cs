@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -71,6 +72,24 @@ namespace AnotherMarkdown.Forms
       }
     }
 
+    protected override void OnLoad(EventArgs e)
+    {
+      base.OnLoad(e);
+      ClampToWorkingArea(Screen.FromControl(this).WorkingArea);
+    }
+
+    internal void ClampToWorkingArea(Rectangle workingArea)
+    {
+      if (workingArea.Width <= 0 || workingArea.Height <= 0) return;
+      MinimumSize = new Size(Math.Min(MinimumSize.Width, workingArea.Width), Math.Min(MinimumSize.Height, workingArea.Height));
+      var width = Math.Min(Width, workingArea.Width);
+      var height = Math.Min(Height, workingArea.Height);
+      var left = Math.Max(workingArea.Left, Math.Min(Left, workingArea.Right - width));
+      var top = Math.Max(workingArea.Top, Math.Min(Top, workingArea.Bottom - height));
+      Bounds = new Rectangle(left, top, width, height);
+      PerformLayout();
+    }
+
     private void trackBar1_ValueChanged(object sender, EventArgs e)
     {
       ZoomLevel = trackBar1.Value;
@@ -89,8 +108,8 @@ namespace AnotherMarkdown.Forms
 
     private void btnSave_Click(object sender, EventArgs e)
     {
-      var assetsPath = tbAssetsPath.Text.Trim();
-      if (assetsPath.Length != 0 && !Directory.Exists(Environment.ExpandEnvironmentVariables(assetsPath))) {
+      var assetsPath = Environment.ExpandEnvironmentVariables(tbAssetsPath.Text.Trim());
+      if (assetsPath.Length != 0 && !Directory.Exists(assetsPath)) {
         settingsTabs.SelectedTab = previewPage;
         sblInvalidHtmlPath.Text = "Каталог ресурсов не найден.";
         tbAssetsPath.Focus();

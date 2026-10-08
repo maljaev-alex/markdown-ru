@@ -95,6 +95,7 @@
     <Compile Include="Forms\SettingsForm.Api.cs" />
     <Compile Include="Translation\CliProfiles.cs" />
     <Compile Include="Translation\CliCommand.cs" />
+    <Compile Include="Translation\CliProcess.cs" />
     <Compile Include="Translation\CliModelDiscovery.cs" />
     <Compile Include="Translation\CliTranslator.cs" />
     <Compile Include="Translation\ProcessJob.cs" />

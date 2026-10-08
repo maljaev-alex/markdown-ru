@@ -19,6 +19,7 @@ namespace AnotherMarkdown.Translation
     public string Id { get; set; }
     public string Description { get; set; }
     public string ModelId { get; set; }
+    public List<string> ModelIds { get; set; } = new List<string>();
     public override string ToString() => string.IsNullOrEmpty(Id) ? Description ?? "CLI default" : Id == "xhigh" ? "Extra High (xhigh)" : Id;
   }
 
@@ -32,13 +33,15 @@ namespace AnotherMarkdown.Translation
     public string DefaultReasoningEffort { get; set; }
     public List<CliReasoningEffort> ReasoningEfforts { get; set; } = new List<CliReasoningEffort>();
 
-    public override string ToString()
+    public static string CleanDisplayName(string value)
     {
-      var label = string.IsNullOrWhiteSpace(Name) ? Id : Name;
-      if (!string.IsNullOrWhiteSpace(Id) && !string.Equals(label, Id, StringComparison.OrdinalIgnoreCase))
-        label += " (" + Id + ")";
-      return label + (IsDefault ? " [по умолчанию]" : "");
+      var label = Regex.Replace(value ?? "", @"\b(?:no[\s_-]+)?(?:thinking|zdr)\b", "", RegexOptions.IgnoreCase);
+      label = Regex.Replace(label, @"\([\s,;/|_-]*\)|\[[\s,;/|_-]*\]", "");
+      label = Regex.Replace(label, @"([_-])(?:\s*[_-])+", "$1");
+      return Regex.Replace(label, @"\s{2,}", " ").Trim(' ', '-', '_');
     }
+
+    public override string ToString() => CleanDisplayName(string.IsNullOrWhiteSpace(Name) ? Id : Name);
   }
 
   public sealed class CliModelCatalog
@@ -53,6 +56,12 @@ namespace AnotherMarkdown.Translation
 
   public sealed class CliModelDiscovery
   {
+    private sealed class CursorVariant
+    {
+      public CliModel Model;
+      public string BaseId, Name, Effort, Context;
+      public bool Thinking, NoThinking;
+    }
     private const int TimeoutSeconds = 25;
     private const int MaximumLineCharacters = 2000000;
     private const int MaximumOutputCharacters = 8000000;
@@ -76,7 +85,7 @@ namespace AnotherMarkdown.Translation
 
       var arguments = provider == "ollama" ? "list" : provider == "kimi" ? "provider list --json" : "models";
       var result = await CliCommand.RunAsync(executable, arguments, null,
-        TimeoutSeconds, cancellation).ConfigureAwait(false);
+        TimeoutSeconds, cancellation, providerId: provider).ConfigureAwait(false);
       cancellation.ThrowIfCancellationRequested();
       if (result.ExitCode != 0) {
         var detail = provider == "kimi" ? "" : CleanText(string.IsNullOrWhiteSpace(result.StandardError) ? result.StandardOutput : result.StandardError).Trim();
@@ -87,9 +96,10 @@ namespace AnotherMarkdown.Translation
       }
 
       var catalog = ParseCommandOutput(provider, result.StandardOutput, cancellation);
+      var modelCount = catalog.Models.Select(model => model.BaseModelId ?? model.Id).Distinct(StringComparer.Ordinal).Count();
       catalog.Note = catalog.Models.Count == 0
         ? (provider == "ollama" ? "В Ollama нет установленных моделей." : "CLI не вернул распознаваемый список моделей.")
-        : "Моделей получено от CLI: " + catalog.Models.Count;
+        : "Моделей получено от CLI: " + modelCount;
       return catalog;
     }
 
@@ -150,48 +160,62 @@ namespace AnotherMarkdown.Translation
 
     private static void ReadCursorReasoning(CliModelCatalog catalog)
     {
-      // Cursor's account catalog advertises exact aliases. Display names can omit
-      // an effort label, and older Claude aliases put effort before thinking.
-      // Never construct an executable alias by adding one of these suffixes.
+      // These aliases come from the account catalog. Metadata groups the model
+      // picker; commands always use an advertised, unchanged alias.
       catalog.Models.RemoveAll(model => model.Id.EndsWith("-fast", StringComparison.OrdinalIgnoreCase));
       var suffix = new Regex(@"^(?<base>.+?)-(?<effort>extra-high|xhigh|minimal|none|low|medium|high|max)(?<variant>(?:-(?:thinking|context|[0-9]+(?:\.[0-9]+)?[km]))*)$", RegexOptions.IgnoreCase);
       var labelEffort = new Regex(@"\b(extra\s+high|minimal|none|low|medium|high|max)\b", RegexOptions.IgnoreCase);
       var context = new Regex(@"\b[0-9]+(?:\.[0-9]+)?[km]\b", RegexOptions.IgnoreCase);
       var effortOrder = new[] { "", "none", "minimal", "low", "medium", "high", "xhigh", "max" };
+      var variants = new List<CursorVariant>();
       foreach (var model in catalog.Models) {
         var match = suffix.Match(model.Id);
-        if (!match.Success) continue;
-        var effort = match.Groups["effort"].Value.ToLowerInvariant().Replace("extra-high", "xhigh");
-        model.BaseModelId = match.Groups["base"].Value + match.Groups["variant"].Value;
-        model.BaseModelName = Regex.Replace(labelEffort.Replace(model.Name, ""), @"\(\s*\)|\s{2,}", " ").Trim();
-        if (Regex.IsMatch(model.BaseModelId, @"(?:^|-)thinking(?:-|$)", RegexOptions.IgnoreCase) && !Regex.IsMatch(model.BaseModelName, @"\bthinking\b", RegexOptions.IgnoreCase))
-          model.BaseModelName += " Thinking";
-        model.DefaultReasoningEffort = effort;
-        model.ReasoningEfforts.Add(new CliReasoningEffort { Id = effort, ModelId = model.Id });
+        var baseId = match.Success ? match.Groups["base"].Value + match.Groups["variant"].Value : model.Id;
+        var noThinking = Regex.IsMatch(model.Name, @"\bno[\s_-]+thinking\b", RegexOptions.IgnoreCase);
+        variants.Add(new CursorVariant {
+          Model = model,
+          BaseId = Regex.Replace(baseId, @"(?:^|-)(?:no-)?thinking(?=-|$)", "", RegexOptions.IgnoreCase).Trim('-'),
+          Name = CliModel.CleanDisplayName(match.Success ? labelEffort.Replace(model.Name, "") : model.Name),
+          Effort = match.Success ? match.Groups["effort"].Value.ToLowerInvariant().Replace("extra-high", "xhigh") : "",
+          Context = context.Match(model.Name).Value.ToLowerInvariant(), NoThinking = noThinking,
+          Thinking = !noThinking && (Regex.IsMatch(model.Id, @"(?:^|-)thinking(?:-|$)", RegexOptions.IgnoreCase) || Regex.IsMatch(model.Name, @"\bthinking\b", RegexOptions.IgnoreCase))
+        });
+        model.Name = CliModel.CleanDisplayName(model.Name);
       }
-
-      // Unsuffixed aliases also belong to their advertised family, but their
-      // effective effort is unknown. Preserve that exact native default alias.
-      foreach (var model in catalog.Models.Where(m => m.BaseModelId == null)) {
-        var variant = catalog.Models.FirstOrDefault(m => m.BaseModelId == model.Id &&
-          string.Equals(context.Match(m.Name).Value, context.Match(model.Name).Value, StringComparison.OrdinalIgnoreCase));
-        if (variant == null) continue;
-        model.BaseModelId = variant.BaseModelId; model.BaseModelName = model.Name;
-        model.DefaultReasoningEffort = "";
-        model.ReasoningEfforts.Add(new CliReasoningEffort { Id = "", ModelId = model.Id, Description = "CLI default" });
-      }
-
-      foreach (var family in catalog.Models.Where(m => m.BaseModelId != null).GroupBy(m => m.BaseModelId).ToList()) {
-        // Keep different explicitly advertised context sizes separate. The
-        // grouping key is metadata only; commands always use a real ModelId.
-        var groups = family.GroupBy(m => context.Match(m.Name).Value.ToLowerInvariant()).ToList();
+      foreach (var family in variants.GroupBy(v => v.BaseId)) {
+        // Context stays explicit. Thinking is a hidden alias choice rather than
+        // a duplicate model row. No unknown numeric effort is inferred.
+        var groups = family.GroupBy(v => v.Context).ToList();
         foreach (var group in groups) {
-          var name = group.FirstOrDefault(m => m.DefaultReasoningEffort == "")?.BaseModelName ?? group.First().BaseModelName;
-          var efforts = group.SelectMany(m => m.ReasoningEfforts).GroupBy(e => e.Id)
-            .Select(g => g.First()).OrderBy(e => Array.IndexOf(effortOrder, e.Id)).ToList();
-          foreach (var model in group) {
-            if (groups.Count > 1) model.BaseModelId = family.Key + "[context=" + (group.Key.Length == 0 ? "default" : group.Key) + "]";
-            model.BaseModelName = name; model.ReasoningEfforts = efforts;
+          if (group.Count() == 1 && group.All(v => v.Effort.Length == 0)) continue;
+          var name = (group.FirstOrDefault(v => v.Effort.Length == 0 && !v.Thinking) ?? group.First()).Name;
+          var efforts = new List<CliReasoningEffort>();
+          foreach (var level in group.GroupBy(v => v.Effort)) {
+            // Prefer the reasoning alias for a level and the native alias for
+            // unknown/default effort. ModelIds preserves saved aliases exactly.
+            var aliases = level.OrderByDescending(v => v.Model.IsDefault).ThenByDescending(v => level.Key.Length == 0 ? !v.Thinking : v.Thinking).ToList();
+            efforts.Add(new CliReasoningEffort {
+              Id = level.Key, Description = level.Key.Length == 0 ? "CLI default" : null,
+              ModelId = aliases[0].Model.Id, ModelIds = aliases.Select(v => v.Model.Id).ToList()
+            });
+          }
+          {
+            // Absence of a Thinking label does not establish effort=none.
+            // Only an explicit No Thinking or a real -none alias permits it.
+            var aliases = group.Where(v => v.NoThinking || v.Effort == "none").OrderByDescending(v => v.Model.IsDefault).ThenByDescending(v => v.Effort.Length == 0).ToList();
+            if (aliases.Count > 0) {
+              var none = efforts.FirstOrDefault(e => e.Id == "none");
+              if (none == null) { none = new CliReasoningEffort { Id = "none", ModelId = aliases[0].Model.Id }; efforts.Add(none); }
+              none.ModelIds = none.ModelIds.Concat(aliases.Select(v => v.Model.Id)).Distinct(StringComparer.Ordinal).ToList();
+            }
+          }
+          efforts = efforts.OrderBy(e => Array.IndexOf(effortOrder, e.Id)).ToList();
+          foreach (var variant in group) {
+            var model = variant.Model;
+            model.BaseModelId = family.Key + (groups.Count > 1 ? "[context=" + (group.Key.Length == 0 ? "default" : group.Key) + "]" : "");
+            model.BaseModelName = name;
+            model.DefaultReasoningEffort = variant.NoThinking && variant.Effort.Length == 0 ? "none" : variant.Effort;
+            model.ReasoningEfforts = efforts;
           }
         }
       }
@@ -227,26 +251,19 @@ namespace AnotherMarkdown.Translation
 
     private static async Task<CliModelCatalog> LoadCodexAsync(string executable, CancellationToken cancellation)
     {
+      cancellation.ThrowIfCancellationRequested();
       using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation))
-      using (var job = new ProcessJob())
-      using (var process = new Process { StartInfo = CliCommand.StartInfo(executable, "app-server", Path.GetTempPath()) }) {
+      using (var job = new ProcessJob()) {
         timeout.CancelAfter(TimeSpan.FromSeconds(TimeoutSeconds));
+        CliProcess process = null;
         Task<string> stderr = null;
         var stage = "startup";
-        var started = false;
         try {
           cancellation.ThrowIfCancellationRequested();
-          if (!process.Start()) throw new InvalidOperationException("Codex app-server could not be started.");
-          started = true;
-          job.Add(process);
+          process = CliProcess.Start(CliCommand.StartInfo(executable, "app-server", Path.GetTempPath(), "codex"), job);
           stderr = DrainErrorAsync(process.StandardError);
           using (timeout.Token.Register(() => StopOwnedProcess(process, job))) {
             var reader = new RpcLineReader(process.StandardOutput);
-            // .NET Framework eagerly writes Console.InputEncoding's BOM on Process.Start.
-            // Isolate that optional prefix before the first NDJSON frame. Codex skips
-            // empty/malformed input lines; the host's global console encoding stays intact.
-            if (process.StandardInput.Encoding.GetPreamble().Length != 0)
-              await WithCancellationAsync(process.StandardInput.BaseStream.WriteAsync(new byte[] { 10 }, 0, 1), timeout.Token).ConfigureAwait(false);
             stage = "initialize";
             await SendAsync(process, new JObject {
               ["method"] = "initialize", ["id"] = 1,
@@ -329,7 +346,8 @@ namespace AnotherMarkdown.Translation
           throw new TimeoutException("Codex не ответил на " + stage + " за 25 секунд." + (detail.Length == 0 ? "" : " " + detail));
         }
         finally {
-          if (started) StopOwnedProcess(process, job);
+          if (process != null) StopOwnedProcess(process, job);
+          process?.Dispose();
           if (stderr != null) Observe(stderr);
         }
       }
@@ -372,7 +390,7 @@ namespace AnotherMarkdown.Translation
       }
     }
 
-    private static async Task SendAsync(Process process, JObject message, CancellationToken cancellation)
+    private static async Task SendAsync(CliProcess process, JObject message, CancellationToken cancellation)
     {
       var bytes = Utf8.GetBytes(message.ToString(Formatting.None) + "\n");
       await WithCancellationAsync(process.StandardInput.BaseStream.WriteAsync(bytes, 0, bytes.Length), cancellation).ConfigureAwait(false);
@@ -389,9 +407,10 @@ namespace AnotherMarkdown.Translation
       return retained.ToString();
     }
 
-    private static void StopOwnedProcess(Process process, ProcessJob job)
+    private static void StopOwnedProcess(CliProcess process, ProcessJob job)
     {
       job.Dispose();
+      if (process == null) return;
       try { if (!process.HasExited) process.Kill(); }
       catch (InvalidOperationException) { }
       catch (Win32Exception) { }

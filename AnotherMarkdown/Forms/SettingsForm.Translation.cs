@@ -87,7 +87,7 @@ namespace AnotherMarkdown.Forms
       translationProfile.Items.AddRange(CliProfiles.All);
       translationTimeout = new NumericUpDown { Name = "translationTimeout", AccessibleName = "Тайм-аут, сек.", Minimum = 10, Maximum = 3600, Width = 120, TabIndex = 1 };
       translationCustomArguments = new CheckBox { Text = "Изменить параметры запуска", AutoSize = true, TabIndex = 2 };
-      translationArguments = new TextBox { Name = "translationArguments", AccessibleName = "Аргументы запуска", Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, ReadOnly = true, TabIndex = 3 };
+      translationArguments = new TextBox { Name = "translationArguments", AccessibleName = "Аргументы запуска", Multiline = true, AcceptsReturn = true, MaxLength = TranslationOptions.MaximumStoredArgumentCharacters, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, ReadOnly = true, TabIndex = 3 };
       translationOutput = new ComboBox { Name = "translationOutput", AccessibleName = "Формат ответа CLI", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, TabIndex = 4 };
       translationOutput.Items.AddRange(new object[] { "text", "json-result", "json-response", "opencode-json", "agy-json", "kimi-json" });
       translationUseManualModel = new CheckBox { Text = "Другая модель", AutoSize = true, TabIndex = 5 };
@@ -300,17 +300,17 @@ namespace AnotherMarkdown.Forms
       }).ToList();
       var desired = !useDefaultModel ? choices.FirstOrDefault(m => m.Id == savedModel || m.ModelIds.Contains(savedModel)) : fallback;
       if (desired == null && !string.IsNullOrWhiteSpace(savedModel)) {
-        desired = new ModelChoice { Id = savedModel, Title = "Сохранённая модель · " + savedModel }; choices.Add(desired);
+        desired = new ModelChoice { Id = savedModel, Title = "Сохранённая модель · " + CliModel.CleanDisplayName(savedModel) }; choices.Add(desired);
       }
       translationModel.Items.Add(fallback);
       translationModel.Items.AddRange(choices.OrderBy(m => m.Title, StringComparer.OrdinalIgnoreCase).ThenBy(m => m.Id, StringComparer.OrdinalIgnoreCase).ToArray());
       translationModel.SelectedItem = desired ?? fallback;
       if (preference.ProviderId == "cursor" && !useDefaultModel && string.IsNullOrEmpty(savedEffort))
         savedEffort = catalog.Models.FirstOrDefault(m => m.Id == savedModel && m.BaseModelId != null)?.DefaultReasoningEffort;
-      FillEfforts(savedEffort);
+      FillEfforts(savedEffort, useDefaultModel ? null : savedModel);
     }
 
-    private void FillEfforts(string preferred)
+    private void FillEfforts(string preferred, string preferredModelId = null)
     {
       var wasUpdating = updatingTranslation;
       updatingTranslation = true;
@@ -321,7 +321,7 @@ namespace AnotherMarkdown.Forms
       if (!cursorVariants) translationEffort.Items.Add(automatic);
       if (!translationUseManualModel.Checked && model != null)
         foreach (var effort in model.Efforts.Where(e => cursorVariants || !string.IsNullOrEmpty(e.Id)))
-          translationEffort.Items.Add(new EffortChoice { Id = effort.Id, Title = string.IsNullOrEmpty(effort.Id) ? "По умолчанию в CLI" : effort.ToString(), ModelId = effort.ModelId });
+          translationEffort.Items.Add(new EffortChoice { Id = effort.Id, Title = string.IsNullOrEmpty(effort.Id) ? "По умолчанию в CLI" : effort.ToString(), ModelId = preferredModelId != null && effort.ModelIds.Contains(preferredModelId) ? preferredModelId : effort.ModelId });
       var desired = translationEffort.Items.Cast<EffortChoice>().FirstOrDefault(e => e.Id == preferred);
       if (desired == null && !hasModelCatalog && !string.IsNullOrEmpty(preferred)) {
         desired = new EffortChoice { Id = preferred, Title = "Сохранено · " + preferred }; translationEffort.Items.Add(desired);
@@ -331,7 +331,7 @@ namespace AnotherMarkdown.Forms
       updatingTranslation = wasUpdating;
     }
 
-    private bool CanEditEffort => modelCancellation == null && hasModelCatalog && !translationCustomArguments.Checked && !translationUseManualModel.Checked && ((translationModel.SelectedItem as ModelChoice)?.Efforts.Count ?? 0) > 0;
+    private bool CanEditEffort => modelCancellation == null && hasModelCatalog && !translationCustomArguments.Checked && !translationUseManualModel.Checked && translationEffort.Items.Count > 1 && ((translationModel.SelectedItem as ModelChoice)?.Efforts.Count ?? 0) > 0;
 
     private void UpdateEffortState()
     {
@@ -393,7 +393,12 @@ namespace AnotherMarkdown.Forms
     {
       try {
         var options = ReadTranslationDraft();
-        if (options.ShowButtons) { options.Validate(); if (!options.UseApi) CliTranslator.ResolveExecutable(options.Executable); }
+        options.ValidateArgumentStorage();
+        foreach (var connection in options.ApiConnections) {
+          ApiTranslator.ValidateEndpointCredentials(connection.Endpoint);
+          ApiTranslator.ValidateProxyDraft(connection);
+        }
+        if (options.ShowButtons) options.Validate(requireReady: false);
         TranslationOptions = options;
         return true;
       }

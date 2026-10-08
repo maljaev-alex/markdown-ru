@@ -9,7 +9,9 @@ namespace AnotherMarkdown.Translation
     private const string UnavailableCredentials = "Some saved API credentials could not be decrypted for this Windows user. Re-enter or explicitly clear them.";
     private string apiKey = "";
     private string additionalHeadersJson = "{}";
+    private string proxyUsername = "", proxyPassword = "";
     private bool apiKeyChanged, headersChanged, apiKeyUnavailable, headersUnavailable;
+    private bool proxyUsernameChanged, proxyPasswordChanged, proxyUsernameUnavailable, proxyPasswordUnavailable;
 
     [JsonProperty]
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -23,6 +25,12 @@ namespace AnotherMarkdown.Translation
     public string Model { get; set; } = "";
     [JsonProperty]
     public string ReasoningEffort { get; set; } = "";
+    [JsonProperty]
+    public string ProxyMode { get; set; } = "system";
+    [JsonProperty]
+    public string ProxyAddress { get; set; } = "";
+    [JsonProperty]
+    public bool ProxyUseDefaultCredentials { get; set; }
 
     [JsonIgnore]
     public string ApiKey {
@@ -46,6 +54,28 @@ namespace AnotherMarkdown.Translation
       }
     }
 
+    [JsonIgnore]
+    public string ProxyUsername {
+      get { return proxyUsername; }
+      set {
+        value = value ?? "";
+        if (proxyUsername == value) return;
+        proxyUsername = value; proxyUsernameChanged = true; proxyUsernameUnavailable = false;
+        UpdateCredentialError();
+      }
+    }
+
+    [JsonIgnore]
+    public string ProxyPassword {
+      get { return proxyPassword; }
+      set {
+        value = value ?? "";
+        if (proxyPassword == value) return;
+        proxyPassword = value; proxyPasswordChanged = true; proxyPasswordUnavailable = false;
+        UpdateCredentialError();
+      }
+    }
+
     [JsonProperty]
     public string AdditionalParametersJson { get; set; } = "{}";
     [JsonProperty]
@@ -63,19 +93,29 @@ namespace AnotherMarkdown.Translation
     public string EncryptedApiKey { get; set; } = "";
     [JsonProperty]
     public string EncryptedHeaders { get; set; } = "";
+    [JsonProperty]
+    public string EncryptedProxyUsername { get; set; } = "";
+    [JsonProperty]
+    public string EncryptedProxyPassword { get; set; } = "";
     [JsonIgnore]
     public string CredentialError { get; internal set; }
 
     public ApiConnection Copy() => (ApiConnection)MemberwiseClone();
     public override string ToString() => Name;
 
-    public void ClearCredentials()
+    public void ClearCredentials(bool includeProxy = true)
     {
       apiKey = ""; additionalHeadersJson = "{}";
       EncryptedApiKey = EncryptedHeaders = "";
       apiKeyChanged = headersChanged = true;
       apiKeyUnavailable = headersUnavailable = false;
-      CredentialError = null;
+      if (includeProxy) {
+        proxyUsername = proxyPassword = "";
+        EncryptedProxyUsername = EncryptedProxyPassword = "";
+        proxyUsernameChanged = proxyPasswordChanged = true;
+        proxyUsernameUnavailable = proxyPasswordUnavailable = false;
+      }
+      UpdateCredentialError();
     }
 
     // Untouched unavailable ciphertext must survive an ordinary UI copy/save.
@@ -83,18 +123,26 @@ namespace AnotherMarkdown.Translation
       && (apiKeyUnavailable || apiKey.Length == 0);
     internal bool PreserveEncryptedHeaders => !headersChanged && !string.IsNullOrEmpty(EncryptedHeaders)
       && (headersUnavailable || string.IsNullOrWhiteSpace(additionalHeadersJson) || additionalHeadersJson.Trim() == "{}");
+    internal bool PreserveEncryptedProxyUsername => !proxyUsernameChanged && !string.IsNullOrEmpty(EncryptedProxyUsername)
+      && (proxyUsernameUnavailable || proxyUsername.Length == 0);
+    internal bool PreserveEncryptedProxyPassword => !proxyPasswordChanged && !string.IsNullOrEmpty(EncryptedProxyPassword)
+      && (proxyPasswordUnavailable || proxyPassword.Length == 0);
 
-    internal void RestoreCredentials(string key, bool keyUnavailable, string headers, bool headerUnavailable)
+    internal void RestoreCredentials(string key, bool keyUnavailable, string headers, bool headerUnavailable,
+      string username = "", bool usernameUnavailable = false, string password = "", bool passwordUnavailable = false)
     {
       apiKey = key ?? ""; additionalHeadersJson = headers ?? "{}";
       apiKeyChanged = headersChanged = false;
       apiKeyUnavailable = keyUnavailable; headersUnavailable = headerUnavailable;
+      proxyUsername = username ?? ""; proxyPassword = password ?? "";
+      proxyUsernameChanged = proxyPasswordChanged = false;
+      proxyUsernameUnavailable = usernameUnavailable; proxyPasswordUnavailable = passwordUnavailable;
       UpdateCredentialError();
     }
 
     private void UpdateCredentialError()
     {
-      CredentialError = apiKeyUnavailable || headersUnavailable ? UnavailableCredentials : null;
+      CredentialError = apiKeyUnavailable || headersUnavailable || proxyUsernameUnavailable || proxyPasswordUnavailable ? UnavailableCredentials : null;
     }
   }
 }

@@ -43,8 +43,6 @@ namespace AnotherMarkdown
         return _previewForm;
       }
     }
-    private bool SyncViewEnabled => (_settings.SyncViewWithCaretPosition || _settings.SyncViewWithFirstVisibleLine);
-
     public MarkdownPanelController()
     {
       AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
@@ -101,10 +99,7 @@ namespace AnotherMarkdown
       settings.Translation.ShowButtons = Win32.ReadIniValue("Translation", "ShowButtons", _iniFilePath, "True").Equals("True", StringComparison.OrdinalIgnoreCase);
       settings.Translation.ConnectionMode = Win32.ReadIniValue("Translation", "ConnectionMode", _iniFilePath, "cli");
       settings.Translation.SelectedApiConnectionId = Win32.ReadIniValue("Translation", "ApiConnectionId", _iniFilePath, "");
-      try { settings.Translation.ApiConnections = ApiConnectionStore.Load(_iniFilePath + ".api.json"); }
-      catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is ArgumentException) {
-        settings.Translation.ApiConfigurationError = "Не удалось прочитать сохранённые подключения API. Исходный файл настроек сохранён.";
-      }
+      settings.Translation.LoadApiConnections(_iniFilePath + ".api.json");
       return settings;
     }
 
@@ -230,7 +225,7 @@ namespace AnotherMarkdown
         _settings.Translation = settingsForm.TranslationOptions;
 
         _settings.IsDarkModeEnabled = IsDarkModeEnabled();
-        if (!SaveSettings(true)) return;
+        SaveSettings(true);
         //Update Preview
         if (_isPanelVisible) {
           PreviewForm.UpdateSettings(_settings);
@@ -306,7 +301,7 @@ namespace AnotherMarkdown
 
     private void FirstLineChanged(FirstLineChangedEvent args)
     {
-      if (_previewForm?.IsTranslationPreview == true) return;
+      if (!_settings.SyncViewWithFirstVisibleLine || _previewForm?.IsTranslationPreview == true) return;
       var scintillaGateway = scintillaGatewayFactory();
       var visibleLine = scintillaGateway.GetFirstVisibleLine();
       var docLine = scintillaGateway.DocLineFromVisible(visibleLine);
@@ -393,20 +388,14 @@ namespace AnotherMarkdown
 
     private void SyncViewWithCaretClicked()
     {
-      var wasSyncView = SyncViewEnabled;
       SetSyncViewWithCaretPosition(!_settings.SyncViewWithCaretPosition);
-      if (SyncViewEnabled != wasSyncView) {
-        RenderMarkdown(force: true);
-      }
+      RenderMarkdown(force: true);
     }
 
     private void SyncViewWithFirstVisibleLineClicked()
     {
-      var wasSyncView = SyncViewEnabled;
       SetSyncViewWithFirstVisibleLine(!_settings.SyncViewWithFirstVisibleLine);
-      if (SyncViewEnabled != wasSyncView) {
-        RenderMarkdown(force: true);
-      }
+      RenderMarkdown(force: true);
     }
 
     private void SetSyncViewWithCaretPosition(bool enabled)
@@ -442,7 +431,7 @@ namespace AnotherMarkdown
       if (_toolbarIcon == null) {
         _toolbarIcon = PluginIcon.Create(size);
         _toolbarDarkIcon = PluginIcon.Create(size, true);
-        using (var image = PluginIcon.Render(size)) _toolbarBitmap = image.GetHbitmap();
+        using (var image = PluginIcon.Render(PluginIcon.ScaleForWindow(16, PluginBase.nppData._nppHandle))) _toolbarBitmap = image.GetHbitmap();
       }
       var icons = new toolbarIcons { hToolbarBmp = _toolbarBitmap, hToolbarIcon = _toolbarIcon.Handle, hToolbarIconDarkMode = _toolbarDarkIcon.Handle };
       var pointer = Marshal.AllocHGlobal(Marshal.SizeOf(icons));
@@ -459,19 +448,34 @@ namespace AnotherMarkdown
       SaveSettings();
     }
 
-    private bool SaveSettings(bool reportApiErrors = false)
+    private bool SaveSettings(bool reportErrors = false)
     {
-      var apiPath = _iniFilePath + ".api.json";
-      if (_settings.Translation.ApiConnections.Count > 0 || (_settings.Translation.ApiConfigurationError == null && File.Exists(apiPath))) {
-        try { ApiConnectionStore.Save(apiPath, _settings.Translation.ApiConnections); _settings.Translation.ApiConfigurationError = null; }
-        catch (IOException) {
-          if (reportApiErrors) MessageBox.Show(new PluginWindowOwner(PluginBase.nppData._nppHandle), "Не удалось сохранить подключения API. Проверьте доступ к каталогу настроек Notepad++. Предыдущий файл сохранён; новые значения пока действуют только до закрытия редактора.", "Настройки перевода", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-          return false;
-        }
+      try { SaveSettingsCore(reportErrors); return true; }
+      catch (IOException error) {
+        if (reportErrors) MessageBox.Show(new PluginWindowOwner(PluginBase.nppData._nppHandle), "Не удалось полностью сохранить настройки.\r\n\r\n" + error.Message + "\r\n\r\nПроверьте права на файл и каталог, а также атрибут «Только чтение». Новые значения применены в памяти; для сохранения после перезапуска повторите запись, когда доступ будет восстановлен.", "Настройки", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        return false;
       }
-      Win32.WritePrivateProfileString("Options", "SyncViewWithCaretPosition", _settings.SyncViewWithCaretPosition ? "1" : "0", _iniFilePath);
-      Win32.WritePrivateProfileString("Options", "SyncWithFirstVisibleLine", _settings.SyncViewWithFirstVisibleLine ? "1" : "0", _iniFilePath);
-      Win32.WritePrivateProfileString("Options", "EnabledMarkdownPlugins", string.Join(";", _settings.EnabledMarkdownPlugins), _iniFilePath);
+    }
+
+    private void SaveSettingsCore(bool reportRecovery)
+    {
+      try { _settings.Translation.ValidateArgumentStorage(); }
+      catch (ArgumentException error) { throw new IOException(error.Message); }
+      var apiPath = _iniFilePath + ".api.json";
+      IOException apiError = null;
+      if (_settings.Translation.ApiConnections.Count > 0 || (_settings.Translation.ApiConfigurationError == null && File.Exists(apiPath))) {
+        try {
+          string backupWarning;
+          var recovery = ApiConnectionStore.Save(apiPath, _settings.Translation.ApiConnections, _settings.Translation.ApiConfigurationError != null, out backupWarning);
+          _settings.Translation.ApiConfigurationError = null;
+          if (reportRecovery && recovery != null) MessageBox.Show(new PluginWindowOwner(PluginBase.nppData._nppHandle), "Предыдущий файл подключений сохранён для восстановления:\r\n" + recovery, "Настройки API", MessageBoxButtons.OK, MessageBoxIcon.Information);
+          if (reportRecovery && backupWarning != null) MessageBox.Show(new PluginWindowOwner(PluginBase.nppData._nppHandle), backupWarning, "Настройки API", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        catch (IOException) { apiError = new IOException("Не удалось сохранить подключения API в файл: " + apiPath + "."); }
+      }
+      Win32.WriteIniValue("Options", "SyncViewWithCaretPosition", _settings.SyncViewWithCaretPosition ? "1" : "0", _iniFilePath);
+      Win32.WriteIniValue("Options", "SyncWithFirstVisibleLine", _settings.SyncViewWithFirstVisibleLine ? "1" : "0", _iniFilePath);
+      Win32.WriteIniValue("Options", "EnabledMarkdownPlugins", string.Join(";", _settings.EnabledMarkdownPlugins), _iniFilePath);
 
       Win32.WriteIniValue("Options", "AssetsPath", _settings.AssetsPath, _iniFilePath);
       Win32.WriteIniValue("Options", "CssFileName", _settings.CssFileName, _iniFilePath);
@@ -482,16 +486,22 @@ namespace AnotherMarkdown
       Win32.WriteIniValue("Translation", "Executable", _settings.Translation.Executable, _iniFilePath);
       Win32.WriteIniValue("Translation", "Model", _settings.Translation.Model, _iniFilePath);
       Win32.WriteIniValue("Translation", "ReasoningEffort", _settings.Translation.ReasoningEffort ?? "", _iniFilePath);
-      Win32.WriteIniValue("Translation", "Arguments", _settings.Translation.Arguments, _iniFilePath);
+      // Profile APIs remove one surrounding quote pair. Supply that pair ourselves
+      // so independent quotes belonging to the command line survive a save/reload.
+      Win32.WriteIniValue("Translation", "Arguments", "\"" + (_settings.Translation.Arguments ?? "") + "\"", _iniFilePath);
       Win32.WriteIniValue("Translation", "ProviderId", _settings.Translation.ProviderId, _iniFilePath);
       Win32.WriteIniValue("Translation", "UseDefaultModel", _settings.Translation.UseDefaultModel.ToString(), _iniFilePath);
       Win32.WriteIniValue("Translation", "UseCustomArguments", _settings.Translation.UseCustomArguments.ToString(), _iniFilePath);
       Win32.WriteIniValue("Translation", "OutputFormat", _settings.Translation.OutputFormat, _iniFilePath);
       Win32.WriteIniValue("Translation", "TimeoutSeconds", _settings.Translation.TimeoutSeconds.ToString(), _iniFilePath);
       Win32.WriteIniValue("Translation", "ShowButtons", _settings.Translation.ShowButtons.ToString(), _iniFilePath);
-      Win32.WriteIniValue("Translation", "ConnectionMode", _settings.Translation.ConnectionMode, _iniFilePath);
-      Win32.WriteIniValue("Translation", "ApiConnectionId", _settings.Translation.SelectedApiConnectionId ?? "", _iniFilePath);
-      return true;
+      if (apiError == null && _settings.Translation.ApiConfigurationError == null) {
+        Win32.WriteIniValue("Translation", "ConnectionMode", _settings.Translation.ConnectionMode, _iniFilePath);
+        Win32.WriteIniValue("Translation", "ApiConnectionId", _settings.Translation.SelectedApiConnectionId ?? "", _iniFilePath);
+      }
+      else if (!_settings.Translation.UseApi)
+        Win32.WriteIniValue("Translation", "ConnectionMode", "cli", _iniFilePath);
+      if (apiError != null) throw apiError;
     }
 
     private void ShowAboutDialog()
@@ -534,6 +544,7 @@ namespace AnotherMarkdown
     {
       lock (_renderMarkdownLock) {
         if (force) {
+          _forceRenderRequested = true;
           _renderMarkdownAt = DateTime.UtcNow;
         }
         else {
@@ -555,10 +566,13 @@ namespace AnotherMarkdown
           if (_disposedValue) {
             break;
           }
-          if (_renderMarkdownAt > DateTime.UtcNow) {
-            continue;
+          bool force;
+          lock (_renderMarkdownLock) {
+            if (_renderMarkdownAt > DateTime.UtcNow) continue;
+            _renderMarkdownAt = DateTime.MinValue;
+            force = _forceRenderRequested;
+            _forceRenderRequested = false;
           }
-          _renderMarkdownAt = DateTime.MinValue;
 
           var scintillaGateway = scintillaGatewayFactory();
           var currentText = scintillaGateway.GetText(scintillaGateway.GetLength() + 1);
@@ -566,7 +580,7 @@ namespace AnotherMarkdown
           var currentFile = _nppGateway.GetCurrentFilePath();
           _currentFile = currentFile;
 
-          await PreviewForm.RenderMarkdown(currentText, currentFile);
+          await PreviewForm.RenderMarkdown(currentText, currentFile, force);
         }
       }
       catch (Exception err) {
@@ -642,6 +656,7 @@ namespace AnotherMarkdown
     private DateTime _renderMarkdownAt = DateTime.MinValue;
     private object _renderMarkdownLock = new object();
     private Task _renderMarkdownTask;
+    private bool _forceRenderRequested;
 
     private static readonly TimeSpan InputUpdateThreshold = TimeSpan.FromMilliseconds(200);
   }

@@ -19,13 +19,20 @@ namespace AnotherMarkdown.Forms
       return new MarkdownPreviewForm(settings);
     }
 
-    private MarkdownPreviewForm(Settings settings)
+    private MarkdownPreviewForm(Settings settings) : this(settings, null) { }
+
+    internal MarkdownPreviewForm(Settings settings, Func<string, string, bool, Task> renderContent)
     {
       OnEvent = new EventDispatcher();
       InitializeComponent();
       Text = PluginBranding.Name;
       Icon = PluginIcon.ApplicationIcon();
       InitializeTranslation(settings);
+
+      if (renderContent != null) {
+        _renderContent = renderContent;
+        return;
+      }
 
       var webView = new Webview2WebbrowserControl();
       webView.Initialize(new ProxySettings(settings, () => IsTranslationPreview), OnEvent);
@@ -38,6 +45,7 @@ namespace AnotherMarkdown.Forms
         toolStripStatusLabel1.Text = status;
       };
       _webView = webView;
+      _renderContent = webView.SetContentAsync;
     }
 
     public void UpdateSettings(Settings settings)
@@ -60,8 +68,9 @@ namespace AnotherMarkdown.Forms
       statusStrip2.Visible = settings.ShowStatusbar;
     }
 
-    public async Task RenderMarkdown(string currentText, string filepath)
+    public async Task RenderMarkdown(string currentText, string filepath, bool force = false)
     {
+      if (force) forceRender = true;
       await UpdateSourceAsync(currentText, filepath);
     }
 
@@ -146,6 +155,7 @@ namespace AnotherMarkdown.Forms
       base.Dispose(disposing);
     }
     private Webview2WebbrowserControl _webView;
+    private readonly Func<string, string, bool, Task> _renderContent;
     private bool _disposed;
   }
 }

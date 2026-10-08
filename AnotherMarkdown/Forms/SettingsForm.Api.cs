@@ -24,6 +24,11 @@ namespace AnotherMarkdown.Forms
     private CancellationTokenSource apiCancellation;
     private int apiGeneration;
     private string apiConfigurationError;
+    private ComboBox apiProxyMode;
+    private TextBox apiProxyAddress, apiProxyUsername, apiProxyPassword;
+    private CheckBox apiProxyUseDefaultCredentials;
+    private TableLayoutPanel apiProxyLayout;
+    private bool apiProxyUsernameEdited, apiProxyPasswordEdited;
     private bool IsApiMode => connectionMode?.SelectedIndex == 1;
 
     private sealed class ApiChoice
@@ -46,9 +51,9 @@ namespace AnotherMarkdown.Forms
       modeRow.Controls.Add(MakeSettingsLabel("Подключение"), 0, 0); modeRow.Controls.Add(connectionMode, 1, 0);
       translationPage.Controls.Remove(cliLayout);
       root.Controls.Add(modeRow, 0, 0); root.Controls.Add(cliLayout, 0, 1);
-      apiLayout = new TableLayoutPanel { Name = "apiLayout", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 3, RowCount = 13, Padding = new Padding(8) };
+      apiLayout = new TableLayoutPanel { Name = "apiLayout", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 3, RowCount = 15, Padding = new Padding(8) };
       apiLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120)); apiLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); apiLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
-      for (var i = 0; i < 13; i++) apiLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+      for (var i = 0; i < 15; i++) apiLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       root.Controls.Add(apiLayout, 0, 2); translationPage.Controls.Add(root);
 
       apiConnections = new ComboBox { Name = "apiConnections", AccessibleName = "Сохранённое подключение API", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
@@ -88,19 +93,20 @@ namespace AnotherMarkdown.Forms
       apiModel = new ComboBox { Name = "apiModel", AccessibleName = "Модель API", DropDownStyle = ComboBoxStyle.DropDown, Dock = DockStyle.Fill };
       apiRefresh = new Button { Name = "apiRefreshModels", Text = "Модели", AutoSize = true, Dock = DockStyle.Top };
       AddTranslationRow(apiLayout, 6, "Модель", apiModel, apiRefresh);
-      var actions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false };
+      InitializeApiProxySettings();
+      var actions = new FlowLayoutPanel { Name = "apiActions", AutoSize = true, Dock = DockStyle.Fill, WrapContents = true };
       apiTest = new Button { Name = "apiTest", Text = "Проверить подключение", AutoSize = true };
       var advancedToggle = new CheckBox { Name = "apiAdvanced", Text = "Дополнительные параметры", AutoSize = true, Margin = new Padding(12, 8, 3, 3) };
       var clearSecrets = new Button { Name = "apiClearCredentials", Text = "Очистить секреты", AutoSize = true };
       actions.Controls.Add(apiTest); actions.Controls.Add(advancedToggle);
       actions.Controls.Add(clearSecrets);
-      apiLayout.Controls.Add(actions, 0, 7); apiLayout.SetColumnSpan(actions, 3);
+      apiLayout.Controls.Add(actions, 0, 9); apiLayout.SetColumnSpan(actions, 3);
       apiStatus = new Label { Name = "apiStatus", AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 6, 3, 8) };
-      apiLayout.Controls.Add(apiStatus, 0, 8); apiLayout.SetColumnSpan(apiStatus, 3);
+      apiLayout.Controls.Add(apiStatus, 0, 10); apiLayout.SetColumnSpan(apiStatus, 3);
 
       var advanced = new TableLayoutPanel { Name = "apiAdvancedLayout", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 2, Visible = false };
       advanced.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 145)); advanced.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-      apiLayout.Controls.Add(advanced, 0, 9); apiLayout.SetColumnSpan(advanced, 3);
+      apiLayout.Controls.Add(advanced, 0, 11); apiLayout.SetColumnSpan(advanced, 3);
       apiEffort = new ComboBox { Name = "apiEffort", AccessibleName = "Effort API (если поддерживается моделью)", DropDownStyle = ComboBoxStyle.DropDown, Dock = DockStyle.Fill };
       apiEffort.Items.AddRange(new object[] { "", "none", "minimal", "low", "medium", "high", "xhigh", "max" });
       apiMaxTokens = new NumericUpDown { Name = "apiMaxTokens", AccessibleName = "Лимит ответа: 0 — по умолчанию сервиса", Minimum = 0, Maximum = 2000000, Value = 0, Width = 150 };
@@ -122,11 +128,11 @@ namespace AnotherMarkdown.Forms
       var advancedHelp = new Label { AutoSize = true, Dock = DockStyle.Fill, Text = "Лимит ответа 0 — по умолчанию сервиса; Anthropic требует явный лимит. Пустой effort, выключенная temperature и пустой заголовок ключа сохраняют настройки протокола. Поддержка параметров зависит от модели. Дополнительные заголовки шифруются вместе с ключом." };
       advanced.Controls.Add(advancedHelp, 0, 8); advanced.SetColumnSpan(advancedHelp, 2);
       apiTimeout = new NumericUpDown { Name = "apiTimeout", Minimum = 10, Maximum = 3600, Value = translationDraft.TimeoutSeconds, Width = 130 };
-      AddTranslationRow(apiLayout, 10, "Тайм-аут, сек.", apiTimeout, new Label());
+      AddTranslationRow(apiLayout, 12, "Тайм-аут, сек.", apiTimeout, new Label());
       apiShowButtons = new CheckBox { Name = "apiShowButtons", Text = "Показывать кнопки перевода в панели", Checked = translationDraft.ShowButtons, AutoSize = true };
-      apiLayout.Controls.Add(apiShowButtons, 0, 11); apiLayout.SetColumnSpan(apiShowButtons, 3);
+      apiLayout.Controls.Add(apiShowButtons, 0, 13); apiLayout.SetColumnSpan(apiShowButtons, 3);
       var help = new Label { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 8, 3, 8), Text = "Можно указать базовый URL API или полный адрес операции. Ключ необязателен для локального сервера. «Модели» получает список; ID модели можно ввести вручную. «Проверить» отправляет короткий тестовый запрос. Ключи защищены Windows для текущего пользователя. Перевод отображается только в предпросмотре." };
-      apiLayout.Controls.Add(help, 0, 12); apiLayout.SetColumnSpan(help, 3);
+      apiLayout.Controls.Add(help, 0, 14); apiLayout.SetColumnSpan(help, 3);
       apiLayout.SizeChanged += (_, __) => { var width = Math.Max(200, apiLayout.ClientSize.Width - 24); help.MaximumSize = apiStatus.MaximumSize = advancedHelp.MaximumSize = new Size(width, 0); };
 
       apiConnections.SelectedIndexChanged += (_, __) => {
@@ -139,7 +145,7 @@ namespace AnotherMarkdown.Forms
       apiName.Leave += (_, __) => { if (activeApiDraft != null) { CaptureApiControls(activeApiDraft); RefillApiProfiles(activeApiDraft.Id); } };
       apiPreset.SelectedIndexChanged += (_, __) => ApplyApiPreset();
       apiEndpoint.TextChanged += (_, __) => ApiAddressChanged();
-      apiProtocol.SelectedIndexChanged += (_, __) => ApiAddressChanged();
+      apiProtocol.SelectedIndexChanged += (_, __) => { UpdateApiTemperatureLimit(); ApiAddressChanged(); };
       apiKey.TextChanged += (_, __) => { if (!updatingApi) { apiKeyEdited = true; ApiAddressChanged(); } };
       apiHeaders.TextChanged += (_, __) => { if (!updatingApi) { apiHeadersEdited = true; ApiAddressChanged(); } };
       foreach (var text in new TextBox[] { apiAuthHeader, apiAuthPrefix, apiParameters }) text.TextChanged += (_, __) => ApiAddressChanged();
@@ -153,7 +159,9 @@ namespace AnotherMarkdown.Forms
         if (activeApiDraft == null) return;
         CancelApiDiscovery(); activeApiDraft.ClearCredentials(); updatingApi = true;
         apiKey.Text = ""; apiHeaders.Text = "{}"; apiKeyEdited = apiHeadersEdited = false;
-        updatingApi = false; apiStatus.Text = "Ключ и дополнительные заголовки очищены. Изменение вступит в силу после сохранения.";
+        apiProxyUsername.Text = apiProxyPassword.Text = "";
+        apiProxyUsernameEdited = apiProxyPasswordEdited = false;
+        updatingApi = false; apiStatus.Text = "Ключ, дополнительные заголовки и данные входа прокси очищены. Изменение вступит в силу после сохранения.";
       };
       apiRefresh.Click += async (_, __) => await QueryApiAsync(false);
       apiTest.Click += async (_, __) => await QueryApiAsync(true);
@@ -175,6 +183,58 @@ namespace AnotherMarkdown.Forms
       RefillApiProfiles(translationDraft.SelectedApiConnectionId);
     }
 
+    private void InitializeApiProxySettings()
+    {
+      apiProxyMode = new ComboBox { Name = "apiProxyMode", AccessibleName = "Режим прокси API", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+      apiProxyMode.Items.AddRange(new object[] {
+        new ApiChoice { Id = "system", Title = "Системный прокси Windows" },
+        new ApiChoice { Id = "direct", Title = "Без прокси — прямое соединение" },
+        new ApiChoice { Id = "custom", Title = "Свой HTTP-прокси" }
+      });
+      AddTranslationRow(apiLayout, 7, "Прокси", apiProxyMode, new Label());
+      apiProxyLayout = new TableLayoutPanel { Name = "apiProxyLayout", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 2 };
+      apiProxyLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+      apiProxyLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+      apiLayout.Controls.Add(apiProxyLayout, 0, 8); apiLayout.SetColumnSpan(apiProxyLayout, 3);
+      apiProxyAddress = MakeSettingsTextBox("apiProxyAddress", "Адрес HTTP-прокси", 0);
+      apiProxyUsername = MakeSettingsTextBox("apiProxyUsername", "Логин прокси", 1);
+      apiProxyPassword = MakeSettingsTextBox("apiProxyPassword", "Пароль прокси", 2);
+      apiProxyPassword.UseSystemPasswordChar = true;
+      var controls = new Control[] { apiProxyAddress, apiProxyUsername, apiProxyPassword };
+      var captions = new[] { "Адрес прокси", "Логин прокси", "Пароль прокси" };
+      for (var i = 0; i < controls.Length; i++) {
+        apiProxyLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        apiProxyLayout.Controls.Add(MakeSettingsLabel(captions[i]), 0, i);
+        apiProxyLayout.Controls.Add(controls[i], 1, i);
+        controls[i].Margin = new Padding(3, 4, 3, 6);
+      }
+      apiProxyUseDefaultCredentials = new CheckBox { Name = "apiProxyUseDefaultCredentials", Text = "Вход в прокси с учётной записью Windows", AutoSize = true };
+      apiProxyLayout.Controls.Add(apiProxyUseDefaultCredentials, 0, 3); apiProxyLayout.SetColumnSpan(apiProxyUseDefaultCredentials, 2);
+      var help = new Label { Name = "apiProxyHelp", AutoSize = true, Dock = DockStyle.Fill,
+        Text = "Адрес: http://сервер:порт. Подходит и для HTTPS API. Для localhost / 127.0.0.1 выберите прямое соединение. SOCKS не поддерживается. Логин и пароль сохраняются защищёнными Windows отдельно для каждого подключения." };
+      apiProxyLayout.Controls.Add(help, 0, 4); apiProxyLayout.SetColumnSpan(help, 2);
+      apiProxyLayout.SizeChanged += (_, __) => help.MaximumSize = new Size(Math.Max(200, apiProxyLayout.ClientSize.Width - 12), 0);
+      apiProxyMode.SelectedIndexChanged += (_, __) => { UpdateApiProxyControls(); ApiAddressChanged(); };
+      apiProxyUseDefaultCredentials.CheckedChanged += (_, __) => { UpdateApiProxyControls(); ApiAddressChanged(); };
+      apiProxyAddress.TextChanged += (_, __) => ApiAddressChanged();
+      apiProxyUsername.TextChanged += (_, __) => { if (!updatingApi) { apiProxyUsernameEdited = true; ApiAddressChanged(); } };
+      apiProxyPassword.TextChanged += (_, __) => { if (!updatingApi) { apiProxyPasswordEdited = true; ApiAddressChanged(); } };
+    }
+
+    private void UpdateApiProxyControls()
+    {
+      var mode = (apiProxyMode.SelectedItem as ApiChoice)?.Id ?? "system";
+      var custom = mode == "custom";
+      foreach (Control control in apiProxyLayout.Controls) {
+        var row = apiProxyLayout.GetRow(control);
+        if (row < 3 || row == 4) control.Visible = custom;
+      }
+      apiProxyLayout.Visible = mode != "direct";
+      apiProxyUseDefaultCredentials.Enabled = activeApiDraft != null && mode != "direct";
+      apiProxyAddress.Enabled = activeApiDraft != null && custom;
+      apiProxyUsername.Enabled = apiProxyPassword.Enabled = activeApiDraft != null && custom && !apiProxyUseDefaultCredentials.Checked;
+    }
+
     private void RefillApiProfiles(string id)
     {
       updatingApi = true;
@@ -190,18 +250,29 @@ namespace AnotherMarkdown.Forms
       var value = activeApiDraft ?? new ApiConnection();
       apiName.Text = value.Name; apiEndpoint.Text = value.Endpoint; apiKey.Text = value.ApiKey;
       apiProtocol.SelectedItem = apiProtocol.Items.Cast<ApiChoice>().FirstOrDefault(p => p.Id == value.Protocol);
+      UpdateApiTemperatureLimit();
       apiPreset.SelectedIndex = 0; apiModel.Items.Clear(); apiModel.Text = value.Model; apiEffort.Text = value.ReasoningEffort;
       apiMaxTokens.Value = Math.Max(0, Math.Min(2000000, value.MaxOutputTokens));
       apiTokenParameter.SelectedItem = value.TokenLimitParameter;
       apiUseTemperature.Checked = value.Temperature.HasValue;
       var temperature = value.Temperature ?? 0;
       if (double.IsNaN(temperature) || double.IsInfinity(temperature)) { temperature = 0; apiUseTemperature.Checked = false; }
-      apiTemperature.Value = (decimal)Math.Max(0, Math.Min(2, temperature));
+      apiTemperature.Value = (decimal)Math.Max(0, Math.Min((double)apiTemperature.Maximum, temperature));
       apiAuthHeader.Text = value.AuthHeader; apiAuthPrefix.Text = value.AuthPrefix;
       apiParameters.Text = value.AdditionalParametersJson; apiHeaders.Text = value.AdditionalHeadersJson;
+      apiProxyMode.SelectedItem = apiProxyMode.Items.Cast<ApiChoice>().FirstOrDefault(p => p.Id == (value.ProxyMode ?? "system"));
+      // Keep an unknown persisted mode visible and reject it on save rather than silently changing the route.
+      if (apiProxyMode.SelectedItem == null) {
+        var unknown = new ApiChoice { Id = value.ProxyMode, Title = value.ProxyMode };
+        apiProxyMode.Items.Add(unknown); apiProxyMode.SelectedItem = unknown;
+      }
+      apiProxyAddress.Text = value.ProxyAddress; apiProxyUsername.Text = value.ProxyUsername; apiProxyPassword.Text = value.ProxyPassword;
+      apiProxyUseDefaultCredentials.Checked = value.ProxyUseDefaultCredentials;
+      apiProxyUsernameEdited = apiProxyPasswordEdited = false;
       apiKeyEdited = apiHeadersEdited = false;
       apiRemove.Enabled = activeApiDraft != null;
       foreach (var control in new Control[] { apiName, apiEndpoint, apiKey, apiProtocol, apiPreset, apiModel, apiRefresh, apiTest }) control.Enabled = activeApiDraft != null;
+      apiProxyMode.Enabled = activeApiDraft != null; UpdateApiProxyControls();
       apiStatus.Text = apiConfigurationError ?? value.CredentialError ?? "Укажите адрес и модель. Затем запросите модели или проверьте подключение.";
       updatingApi = false;
     }
@@ -219,6 +290,11 @@ namespace AnotherMarkdown.Forms
       value.AdditionalParametersJson = apiParameters.Text.Trim();
       if (apiKeyEdited) value.ApiKey = apiKey.Text.Trim();
       if (apiHeadersEdited) value.AdditionalHeadersJson = apiHeaders.Text.Trim();
+      value.ProxyMode = (apiProxyMode.SelectedItem as ApiChoice)?.Id ?? "system";
+      value.ProxyAddress = apiProxyAddress.Text.Trim();
+      value.ProxyUseDefaultCredentials = apiProxyUseDefaultCredentials.Checked;
+      if (apiProxyUsernameEdited) value.ProxyUsername = apiProxyUsername.Text;
+      if (apiProxyPasswordEdited) value.ProxyPassword = apiProxyPassword.Text;
     }
 
     private void ReadApiSettings(TranslationOptions options)
@@ -227,7 +303,8 @@ namespace AnotherMarkdown.Forms
       options.ConnectionMode = IsApiMode ? "api" : "cli";
       options.ApiConfigurationError = apiConfigurationError;
       options.ApiConnections = apiDrafts.Select(c => c.Copy()).ToList();
-      options.SelectedApiConnectionId = activeApiDraft?.Id ?? "";
+      if (activeApiDraft != null || apiConfigurationError == null)
+        options.SelectedApiConnectionId = activeApiDraft?.Id ?? "";
       CaptureApiControls(options.ApiConnections.FirstOrDefault(c => c.Id == options.SelectedApiConnectionId));
       if (IsApiMode) { options.TimeoutSeconds = (int)apiTimeout.Value; options.ShowButtons = apiShowButtons.Checked; }
     }
@@ -236,7 +313,7 @@ namespace AnotherMarkdown.Forms
     {
       if (updatingApi || !(apiPreset.SelectedItem is ApiChoice preset) || preset.Id == "custom") return;
       CancelApiDiscovery(); updatingApi = true;
-      activeApiDraft?.ClearCredentials();
+      activeApiDraft?.ClearCredentials(false);
       apiName.Text = preset.Title; apiEndpoint.Text = preset.Endpoint;
       apiProtocol.SelectedItem = apiProtocol.Items.Cast<ApiChoice>().First(p => p.Id == preset.Protocol);
       apiTokenParameter.SelectedItem = preset.TokenParameter ?? "max_tokens";
@@ -251,6 +328,11 @@ namespace AnotherMarkdown.Forms
     {
       if (updatingApi) return;
       CancelApiDiscovery(); apiStatus.Text = "Настройки подключения изменены. Повторите запрос моделей или проверку.";
+    }
+
+    private void UpdateApiTemperatureLimit()
+    {
+      apiTemperature.Maximum = (apiProtocol.SelectedItem as ApiChoice)?.Id == "anthropic" ? 1 : 2;
     }
 
     private async Task QueryApiAsync(bool translate)
@@ -290,7 +372,7 @@ namespace AnotherMarkdown.Forms
       updatingApi = true;
       try {
         apiModel.Items.Clear();
-        apiModel.Items.AddRange(catalog.Models.OrderBy(m => string.IsNullOrWhiteSpace(m.Name) ? m.Id : m.Name, StringComparer.OrdinalIgnoreCase)
+        apiModel.Items.AddRange(catalog.Models.OrderBy(m => CliModel.CleanDisplayName(string.IsNullOrWhiteSpace(m.Name) ? m.Id : m.Name), StringComparer.OrdinalIgnoreCase)
           .ThenBy(m => m.Id, StringComparer.OrdinalIgnoreCase).ToArray());
         apiModel.SelectedItem = catalog.Models.FirstOrDefault(m => m.Id == selectedModel);
         if (apiModel.SelectedItem == null) apiModel.Text = selectedModel;

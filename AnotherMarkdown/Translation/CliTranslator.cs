@@ -50,7 +50,10 @@ namespace AnotherMarkdown.Translation
             arguments += " -c " + QuoteArgument("mcp_servers." + name + ".enabled=false");
           }
         }
-        var command = await CliCommand.RunAsync(options.Executable, arguments, template.Contains("{prompt}") ? "" : prompt, options.TimeoutSeconds, token, directory).ConfigureAwait(false);
+        var input = template.Contains("{prompt}") ? "" : prompt;
+        if (options.ProviderId == "agy" && !options.UseCustomArguments)
+          input = new JObject { ["event"] = "user", ["message"] = new JObject { ["content"] = prompt } }.ToString(Formatting.None) + "\n";
+        var command = await CliCommand.RunAsync(options.Executable, arguments, input, options.TimeoutSeconds, token, directory, options.ProviderId).ConfigureAwait(false);
         if (command.ExitCode != 0) {
           var detail = command.StandardError.Trim();
           if (detail.Length > 3000) detail = detail.Substring(detail.Length - 3000);

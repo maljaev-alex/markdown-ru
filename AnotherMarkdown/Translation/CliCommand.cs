@@ -20,7 +20,7 @@ namespace AnotherMarkdown.Translation
   {
     private static readonly Encoding Utf8 = new UTF8Encoding(false, true);
 
-    public static ProcessStartInfo StartInfo(string executable, string arguments, string workingDirectory)
+    public static ProcessStartInfo StartInfo(string executable, string arguments, string workingDirectory, string providerId = null)
     {
       executable = CliTranslator.ResolveExecutable(executable);
       var info = new ProcessStartInfo(executable, arguments) {
@@ -32,17 +32,18 @@ namespace AnotherMarkdown.Translation
       info.EnvironmentVariables.Remove("CODEX_INTERNAL_ORIGINATOR_OVERRIDE");
       info.EnvironmentVariables["NO_COLOR"] = "1";
       info.EnvironmentVariables["TERM"] = "dumb";
-      if (CliProfiles.Identify(executable) == "opencode") {
+      var selectedProvider = providerId == null ? CliProfiles.Identify(executable) : providerId.Trim().ToLowerInvariant();
+      if (selectedProvider == "opencode") {
         info.EnvironmentVariables["OPENCODE_PERMISSION"] = "{\"*\":\"deny\"}";
         info.EnvironmentVariables["OPENCODE_DISABLE_AUTOUPDATE"] = "true";
         info.EnvironmentVariables["OPENCODE_DISABLE_LSP_DOWNLOAD"] = "true";
         info.EnvironmentVariables["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "true";
       }
-      if (CliProfiles.Identify(executable) == "kimi") {
+      if (selectedProvider == "kimi") {
         info.EnvironmentVariables["KIMI_CODE_NO_AUTO_UPDATE"] = "1";
         info.EnvironmentVariables["KIMI_DISABLE_TELEMETRY"] = "1";
       }
-      if (CliProfiles.Identify(executable) == "copilot") info.EnvironmentVariables["COPILOT_AUTO_UPDATE"] = "false";
+      if (selectedProvider == "copilot") info.EnvironmentVariables["COPILOT_AUTO_UPDATE"] = "false";
       if (CliProfiles.IsBatchPath(executable)) {
         // Batch wrappers reparse %* and may enable delayed expansion themselves.
         // Requote each native argument, and fail before launch for values whose
@@ -93,45 +94,43 @@ namespace AnotherMarkdown.Translation
     private static extern IntPtr LocalFree(IntPtr memory);
 
     public static Task<CliCommandResult> RunAsync(string executable, string arguments, string input,
-      int timeoutSeconds, CancellationToken cancellation, string workingDirectory = null) =>
-      Task.Run(() => RunCoreAsync(executable, arguments, input, timeoutSeconds, cancellation, workingDirectory), cancellation);
+      int timeoutSeconds, CancellationToken cancellation, string workingDirectory = null, string providerId = null) =>
+      Task.Run(() => RunCoreAsync(executable, arguments, input, timeoutSeconds, cancellation, workingDirectory, providerId), cancellation);
 
     private static async Task<CliCommandResult> RunCoreAsync(string executable, string arguments, string input,
-      int timeoutSeconds, CancellationToken cancellation, string workingDirectory = null)
+      int timeoutSeconds, CancellationToken cancellation, string workingDirectory, string providerId)
     {
       var ownsDirectory = workingDirectory == null;
       var directory = workingDirectory ?? Path.Combine(Path.GetTempPath(), "AnotherMarkdown", "probe-" + Guid.NewGuid().ToString("N"));
       Directory.CreateDirectory(directory);
       try {
         using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation))
-        using (var job = new ProcessJob())
-        using (var process = new Process { StartInfo = StartInfo(executable, arguments, directory) }) {
+        using (var job = new ProcessJob()) {
           timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
-          try {
-            cancellation.ThrowIfCancellationRequested();
-            process.Start(); job.Add(process);
-            using (timeout.Token.Register(() => {
-              job.Dispose();
-              try { if (!process.HasExited) process.Kill(); } catch (InvalidOperationException) { } catch (Win32Exception) { }
-            })) {
-              var stdout = ReadAsync(process.StandardOutput);
-              var stderr = ReadAsync(process.StandardError);
-              Exception inputError = null;
-              try {
-                var bytes = Utf8.GetBytes(input ?? "");
-                await process.StandardInput.BaseStream.WriteAsync(bytes, 0, bytes.Length).ConfigureAwait(false);
-                process.StandardInput.Close();
+          cancellation.ThrowIfCancellationRequested();
+          using (var process = CliProcess.Start(StartInfo(executable, arguments, directory, providerId), job)) {
+            try {
+              using (timeout.Token.Register(() => StopOwnedProcess(process, job))) {
+                var stdout = ReadAsync(process.StandardOutput, timeout.Token, () => StopOwnedProcess(process, job));
+                var stderr = ReadAsync(process.StandardError, timeout.Token, () => StopOwnedProcess(process, job));
+                Exception inputError = null;
+                try {
+                  var bytes = Utf8.GetBytes(input ?? "");
+                  await WithCancellationAsync(process.StandardInput.BaseStream.WriteAsync(bytes, 0, bytes.Length), timeout.Token).ConfigureAwait(false);
+                  process.StandardInput.Close();
+                }
+                catch (IOException error) { inputError = error; }
+                await WithCancellationAsync(Task.WhenAll(stdout, stderr, Task.Run(() => process.WaitForExit())), timeout.Token).ConfigureAwait(false);
+                timeout.Token.ThrowIfCancellationRequested();
+                if (process.ExitCode == 0 && inputError != null) throw new IOException("CLI закрыл stdin до получения документа.", inputError);
+                return new CliCommandResult { ExitCode = process.ExitCode, StandardOutput = await stdout.ConfigureAwait(false), StandardError = await stderr.ConfigureAwait(false) };
               }
-              catch (IOException error) { inputError = error; }
-              await Task.WhenAll(stdout, stderr, Task.Run(() => process.WaitForExit())).ConfigureAwait(false);
-              timeout.Token.ThrowIfCancellationRequested();
-              if (process.ExitCode == 0 && inputError != null) throw new IOException("CLI закрыл stdin до получения документа.", inputError);
-              return new CliCommandResult { ExitCode = process.ExitCode, StandardOutput = await stdout.ConfigureAwait(false), StandardError = await stderr.ConfigureAwait(false) };
             }
-          }
-          catch (Exception) when (timeout.IsCancellationRequested) {
-            cancellation.ThrowIfCancellationRequested();
-            throw new TimeoutException("CLI не ответил за " + timeoutSeconds + " секунд.");
+            catch (Exception) when (timeout.IsCancellationRequested) {
+              cancellation.ThrowIfCancellationRequested();
+              throw new TimeoutException("CLI не ответил за " + timeoutSeconds + " секунд.");
+            }
+            finally { StopOwnedProcess(process, job); }
           }
         }
       }
@@ -142,15 +141,43 @@ namespace AnotherMarkdown.Translation
       }
     }
 
-    private static async Task<string> ReadAsync(StreamReader reader)
+    private static void StopOwnedProcess(CliProcess process, ProcessJob job)
     {
-      var result = new StringBuilder(); var buffer = new char[4096]; var overflow = false; int count;
-      while ((count = await reader.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) != 0) {
-        if (result.Length + count > 8000000) overflow = true;
-        if (result.Length < 8000000) result.Append(buffer, 0, Math.Min(count, 8000000 - result.Length));
+      job.Dispose();
+      try { if (!process.HasExited) process.Kill(); }
+      catch (InvalidOperationException) { } catch (Win32Exception) { }
+    }
+
+    private static async Task<string> ReadAsync(StreamReader reader, CancellationToken cancellation, Action abort)
+    {
+      try {
+        var result = new StringBuilder(); var buffer = new char[4096]; int count;
+        while ((count = await WithCancellationAsync(reader.ReadAsync(buffer, 0, buffer.Length), cancellation).ConfigureAwait(false)) != 0) {
+          if (result.Length + count > 8000000) throw new InvalidOperationException("Ответ CLI превысил ограничение 8 млн символов.");
+          result.Append(buffer, 0, count);
+        }
+        return result.ToString();
       }
-      if (overflow) throw new InvalidOperationException("Ответ CLI превысил ограничение 8 млн символов.");
-      return result.ToString();
+      catch { abort(); throw; }
+    }
+
+    private static async Task WithCancellationAsync(Task task, CancellationToken cancellation)
+    {
+      _ = task.ContinueWith(faulted => { var ignored = faulted.Exception; }, CancellationToken.None,
+        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+      cancellation.ThrowIfCancellationRequested();
+      var canceled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+      using (cancellation.Register(() => canceled.TrySetResult(true))) {
+        if (await Task.WhenAny(task, canceled.Task).ConfigureAwait(false) != task) cancellation.ThrowIfCancellationRequested();
+        await task.ConfigureAwait(false);
+        cancellation.ThrowIfCancellationRequested();
+      }
+    }
+
+    private static async Task<T> WithCancellationAsync<T>(Task<T> task, CancellationToken cancellation)
+    {
+      await WithCancellationAsync((Task)task, cancellation).ConfigureAwait(false);
+      return await task.ConfigureAwait(false);
     }
   }
 }

@@ -26,13 +26,19 @@ namespace AnotherMarkdown.Translation
 
     public void Add(Process process)
     {
-      if (!AssignProcessToJobObject(handle, process.Handle)) {
-        var error = Marshal.GetLastWin32Error();
-        // A very short-lived CLI may have exited before assignment.
-        if (process.HasExited) return;
-        try { process.Kill(); } catch (InvalidOperationException) { }
-        throw new Win32Exception(error);
-      }
+      Add(process.Handle);
+    }
+
+    public void Add(IntPtr process)
+    {
+      if (!AssignProcessToJobObject(handle, process)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    }
+
+    internal bool Contains(Process process)
+    {
+      bool assigned;
+      if (!IsProcessInJob(process.Handle, handle, out assigned)) throw new Win32Exception(Marshal.GetLastWin32Error());
+      return assigned;
     }
 
     public void Dispose() => handle.Dispose();
@@ -70,5 +76,7 @@ namespace AnotherMarkdown.Translation
       ref ExtendedLimitInformation info, uint length);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AssignProcessToJobObject(SafeFileHandle job, IntPtr process);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool IsProcessInJob(IntPtr process, SafeFileHandle job, out bool assigned);
   }
 }
