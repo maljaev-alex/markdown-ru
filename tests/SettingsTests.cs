@@ -30,6 +30,7 @@ internal static class SettingsTests
       ModelSortingSettings();
       ApiSettings();
       ApiProxySettings();
+      SocksProxySettings();
       DraftSettings();
       GeometrySettings();
       settings.Translation.ShowButtons = false;
@@ -533,6 +534,37 @@ internal static class SettingsTests
       Save(form);
       Check(form.DialogResult != DialogResult.OK && !Find<Label>(form, "apiStatus").Text.Contains("SYNTHETIC_PROXY_SECRET"),
         "proxy credentials inside the URL are rejected on save without exposing them");
+    }
+  }
+
+  private static void SocksProxySettings()
+  {
+    var settings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
+    var connection = new ApiConnection { Endpoint = "https://example.test/v1", Model = "test-model", ProxyMode = "custom" };
+    settings.Translation = new TranslationOptions { ConnectionMode = "api", ApiConnections = { connection }, SelectedApiConnectionId = connection.Id };
+    using (var form = new SettingsForm(settings)) {
+      var type = Find<ComboBox>(form, "apiProxyProtocol"); var address = Find<TextBox>(form, "apiProxyAddress");
+      var windows = Find<CheckBox>(form, "apiProxyUseDefaultCredentials");
+      type.SelectedIndex = 1; address.Text = "127.0.0.1:8090";
+      Check(ReadDraft(form).ActiveApiConnection.ProxyAddress == "socks5h://127.0.0.1:8090" && !windows.Enabled && !windows.Checked,
+        "SOCKS5 choice builds the proxy URL and disables Windows authentication");
+      Find<TextBox>(form, "apiProxyPassword").Text = "fake-socks-password";
+      type.SelectedIndex = 0;
+      Check(ReadDraft(form).ActiveApiConnection.ProxyAddress == "http://127.0.0.1:8090" && windows.Enabled,
+        "switching proxy type changes the saved scheme while retaining the address");
+      windows.Checked = true;
+      address.Text = "socks5://127.0.0.1:8090";
+      Check(type.SelectedIndex == 2 && !windows.Checked && !windows.Enabled && Find<TextBox>(form, "apiProxyPassword").Enabled,
+        "pasting a SOCKS5 URL selects the matching DNS mode and restores manual authentication");
+      Check(ReadDraft(form).ActiveApiConnection.ProxyPassword == "fake-socks-password", "proxy type changes preserve the draft password");
+      Save(form);
+      Check(form.DialogResult == DialogResult.OK && form.TranslationOptions.ActiveApiConnection.ProxyAddress == "socks5://127.0.0.1:8090",
+        "SOCKS5 settings save with their explicit DNS mode");
+    }
+    connection.ProxyAddress = "socks5h://127.0.0.1:8090";
+    using (var form = new SettingsForm(settings)) {
+      Check(Find<ComboBox>(form, "apiProxyProtocol").SelectedIndex == 1 && !Find<CheckBox>(form, "apiProxyUseDefaultCredentials").Enabled,
+        "saved SOCKS5 endpoint restores the proxy type and supported authentication controls");
     }
   }
 

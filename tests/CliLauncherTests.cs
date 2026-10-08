@@ -28,6 +28,14 @@ internal static class CliLauncherTests
       }
       return 0;
     }
+    if (args.Length > 0 && args[0] == "localized-stderr") {
+      Console.Write("{\"ok\":true}");
+      using (var error = Console.OpenStandardError()) {
+        var localizedBytes = new byte[] { 0xD2, 0xE5, 0xF1, 0xF2 };
+        error.Write(localizedBytes, 0, localizedBytes.Length);
+      }
+      return 35;
+    }
     if (args.Length > 0 && args[0] == "environment") {
       Console.Write(new JObject {
         ["opencode"] = Environment.GetEnvironmentVariable("OPENCODE_PERMISSION"),
@@ -187,6 +195,23 @@ internal static class CliLauncherTests
     }
     finally { Console.InputEncoding = hostEncoding; }
 
+    var curlInfo = CliCommand.StartInfo(executable, "localized-stderr", directory, "curl-api");
+    Check(curlInfo.StandardOutputEncoding.DecoderFallback is DecoderExceptionFallback
+      && curlInfo.StandardErrorEncoding.DecoderFallback is DecoderReplacementFallback,
+      "curl keeps strict UTF-8 response decoding and tolerates discarded localized diagnostics");
+    var localizedResult = await CliCommand.RunAsync(executable, "localized-stderr", "", 5, CancellationToken.None,
+      directory, "curl-api", detectOutputEncoding: false);
+    Check(localizedResult.ExitCode == 35 && (bool)JObject.Parse(localizedResult.StandardOutput)["ok"] && localizedResult.StandardError.Length > 0,
+      "localized cp1251 curl stderr preserves valid UTF-8 stdout and native TLS failure code without displaying diagnostics");
+    var ordinaryInfo = CliCommand.StartInfo(executable, "localized-stderr", directory, "custom");
+    Check(ordinaryInfo.StandardOutputEncoding.DecoderFallback is DecoderExceptionFallback
+      && ordinaryInfo.StandardErrorEncoding.DecoderFallback is DecoderExceptionFallback,
+      "ordinary CLI providers retain strict UTF-8 stdout and stderr defaults");
+    Exception localizedFailure = null;
+    try { await CliCommand.RunAsync(executable, "localized-stderr", "", 5, CancellationToken.None, directory, "custom"); }
+    catch (Exception error) { localizedFailure = error; }
+    Check(localizedFailure is DecoderFallbackException, "ordinary CLI providers still reject malformed UTF-8 stderr");
+
     var renamed = Path.Combine(nativeDirectory, "oc.exe");
     File.Copy(executable, renamed);
     File.Copy(typeof(JObject).Assembly.Location, Path.Combine(nativeDirectory, "Newtonsoft.Json.dll"));
@@ -248,7 +273,8 @@ internal static class CliLauncherTests
 
   private static async Task WaitForDead(int pid)
   {
-    for (var attempt = 0; attempt < 100 && Alive(pid); attempt++) await Task.Delay(10);
+    var timer = Stopwatch.StartNew();
+    while (Alive(pid) && timer.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(10);
   }
 
   private static async Task LegacyRaceWitness(string directory)

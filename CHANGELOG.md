@@ -2,7 +2,7 @@
 
 ### Markdown RU 0.1.12-ru.8
 
-* Add per-API system/direct/custom HTTP proxy settings, explicit Windows or username/password authentication, and DPAPI-protected proxy credentials.
+* Add per-API system/direct/custom HTTP and SOCKS5 proxy settings, explicit authentication, remote/local SOCKS DNS and DPAPI-protected proxy credentials.
 * Invalidate cached API translations when the output-token parameter changes.
 * Report failed INI writes and apply accepted settings to the active preview even when persistence fails.
 * Reload maximum-length text fields without an INI buffer-boundary exception.

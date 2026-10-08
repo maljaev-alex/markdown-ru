@@ -22,7 +22,25 @@ def inside(root, path):
     try:
         parts = original.relative_to(root).parts
     except ValueError:
-        raise ValueError("Build cache path is outside CacheRoot: " + str(original))
+        parts = None
+        if os.name == "nt":
+            # TEMP can use an 8.3 parent while resolve() returns its long name.
+            # Match the existing root by identity, without resolving the whole
+            # candidate and losing links or '..' in its remaining components.
+            prefix = Path(original.anchor)
+            for index, part in enumerate(original.parts[1:], 1):
+                prefix = prefix / part
+                try:
+                    # Check each prefix before samefile() can follow a link.
+                    if reparse(prefix):
+                        raise ValueError("Build cache path contains a link: " + str(prefix))
+                    if os.path.samefile(prefix, root):
+                        parts = original.parts[index + 1:]
+                        break
+                except FileNotFoundError:
+                    break
+        if parts is None:
+            raise ValueError("Build cache path is outside CacheRoot: " + str(original))
     # Inspect the original spelling before resolve() can erase a junction or
     # symlink. Walk parents in order, including components preceding '..'.
     current = root

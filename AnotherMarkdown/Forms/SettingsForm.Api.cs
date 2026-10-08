@@ -24,7 +24,7 @@ namespace AnotherMarkdown.Forms
     private CancellationTokenSource apiCancellation;
     private int apiGeneration;
     private string apiConfigurationError;
-    private ComboBox apiProxyMode;
+    private ComboBox apiProxyMode, apiProxyProtocol;
     private TextBox apiProxyAddress, apiProxyUsername, apiProxyPassword;
     private CheckBox apiProxyUseDefaultCredentials;
     private TableLayoutPanel apiProxyLayout;
@@ -189,19 +189,26 @@ namespace AnotherMarkdown.Forms
       apiProxyMode.Items.AddRange(new object[] {
         new ApiChoice { Id = "system", Title = "Системный прокси Windows" },
         new ApiChoice { Id = "direct", Title = "Без прокси — прямое соединение" },
-        new ApiChoice { Id = "custom", Title = "Свой HTTP-прокси" }
+        new ApiChoice { Id = "custom", Title = "Свой прокси" }
       });
       AddTranslationRow(apiLayout, 7, "Прокси", apiProxyMode, new Label());
       apiProxyLayout = new TableLayoutPanel { Name = "apiProxyLayout", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 2 };
       apiProxyLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
       apiProxyLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
       apiLayout.Controls.Add(apiProxyLayout, 0, 8); apiLayout.SetColumnSpan(apiProxyLayout, 3);
-      apiProxyAddress = MakeSettingsTextBox("apiProxyAddress", "Адрес HTTP-прокси", 0);
+      apiProxyProtocol = new ComboBox { Name = "apiProxyProtocol", AccessibleName = "Тип прокси", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+      apiProxyProtocol.Items.AddRange(new object[] {
+        new ApiChoice { Id = "http", Title = "HTTP" },
+        new ApiChoice { Id = "socks5h", Title = "SOCKS5 — DNS через прокси" },
+        new ApiChoice { Id = "socks5", Title = "SOCKS5 — локальный DNS" }
+      });
+      apiProxyProtocol.SelectedIndex = 0;
+      apiProxyAddress = MakeSettingsTextBox("apiProxyAddress", "Адрес прокси", 0);
       apiProxyUsername = MakeSettingsTextBox("apiProxyUsername", "Логин прокси", 1);
       apiProxyPassword = MakeSettingsTextBox("apiProxyPassword", "Пароль прокси", 2);
       apiProxyPassword.UseSystemPasswordChar = true;
-      var controls = new Control[] { apiProxyAddress, apiProxyUsername, apiProxyPassword };
-      var captions = new[] { "Адрес прокси", "Логин прокси", "Пароль прокси" };
+      var controls = new Control[] { apiProxyProtocol, apiProxyAddress, apiProxyUsername, apiProxyPassword };
+      var captions = new[] { "Тип прокси", "Адрес прокси", "Логин прокси", "Пароль прокси" };
       for (var i = 0; i < controls.Length; i++) {
         apiProxyLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         apiProxyLayout.Controls.Add(MakeSettingsLabel(captions[i]), 0, i);
@@ -209,14 +216,27 @@ namespace AnotherMarkdown.Forms
         controls[i].Margin = new Padding(3, 4, 3, 6);
       }
       apiProxyUseDefaultCredentials = new CheckBox { Name = "apiProxyUseDefaultCredentials", Text = "Вход в прокси с учётной записью Windows", AutoSize = true };
-      apiProxyLayout.Controls.Add(apiProxyUseDefaultCredentials, 0, 3); apiProxyLayout.SetColumnSpan(apiProxyUseDefaultCredentials, 2);
+      apiProxyLayout.Controls.Add(apiProxyUseDefaultCredentials, 0, 4); apiProxyLayout.SetColumnSpan(apiProxyUseDefaultCredentials, 2);
       var help = new Label { Name = "apiProxyHelp", AutoSize = true, Dock = DockStyle.Fill,
-        Text = "Адрес: http://сервер:порт. Подходит и для HTTPS API. Для localhost / 127.0.0.1 выберите прямое соединение. SOCKS не поддерживается. Логин и пароль сохраняются защищёнными Windows отдельно для каждого подключения." };
-      apiProxyLayout.Controls.Add(help, 0, 4); apiProxyLayout.SetColumnSpan(help, 2);
+        Text = "Адрес: сервер:порт или полный URL прокси. SOCKS5 использует системный curl.exe; DNS можно передать прокси. Вход Windows доступен для HTTP. HTTP-прокси для API на localhost не поддерживается — выберите прямое соединение или SOCKS5. Логин и пароль защищены Windows." };
+      apiProxyLayout.Controls.Add(help, 0, 5); apiProxyLayout.SetColumnSpan(help, 2);
       apiProxyLayout.SizeChanged += (_, __) => help.MaximumSize = new Size(Math.Max(200, apiProxyLayout.ClientSize.Width - 12), 0);
       apiProxyMode.SelectedIndexChanged += (_, __) => { UpdateApiProxyControls(); ApiAddressChanged(); };
       apiProxyUseDefaultCredentials.CheckedChanged += (_, __) => { UpdateApiProxyControls(); ApiAddressChanged(); };
-      apiProxyAddress.TextChanged += (_, __) => ApiAddressChanged();
+      apiProxyAddress.TextChanged += (_, __) => {
+        if (!updatingApi) {
+          var scheme = ProxyAddressScheme();
+          var choice = apiProxyProtocol.Items.Cast<ApiChoice>().FirstOrDefault(p => p.Id == scheme);
+          if (choice != null) { updatingApi = true; apiProxyProtocol.SelectedItem = choice; updatingApi = false; }
+          UpdateApiProxyControls(); ApiAddressChanged();
+        }
+      };
+      apiProxyProtocol.SelectedIndexChanged += (_, __) => {
+        if (updatingApi) return;
+        var text = apiProxyAddress.Text.Trim(); var separator = text.IndexOf("://", StringComparison.Ordinal);
+        if (separator >= 0) apiProxyAddress.Text = (apiProxyProtocol.SelectedItem as ApiChoice)?.Id + text.Substring(separator);
+        UpdateApiProxyControls(); ApiAddressChanged();
+      };
       apiProxyUsername.TextChanged += (_, __) => { if (!updatingApi) { apiProxyUsernameEdited = true; ApiAddressChanged(); } };
       apiProxyPassword.TextChanged += (_, __) => { if (!updatingApi) { apiProxyPasswordEdited = true; ApiAddressChanged(); } };
     }
@@ -227,12 +247,21 @@ namespace AnotherMarkdown.Forms
       var custom = mode == "custom";
       foreach (Control control in apiProxyLayout.Controls) {
         var row = apiProxyLayout.GetRow(control);
-        if (row < 3 || row == 4) control.Visible = custom;
+        if (row < 4 || row == 5) control.Visible = custom;
       }
       apiProxyLayout.Visible = mode != "direct";
-      apiProxyUseDefaultCredentials.Enabled = activeApiDraft != null && mode != "direct";
+      var socks = custom && ((apiProxyProtocol.SelectedItem as ApiChoice)?.Id ?? "http").StartsWith("socks5", StringComparison.Ordinal);
+      if (socks) apiProxyUseDefaultCredentials.Checked = false;
+      apiProxyUseDefaultCredentials.Enabled = activeApiDraft != null && mode != "direct" && !socks;
+      apiProxyProtocol.Enabled = activeApiDraft != null && custom;
       apiProxyAddress.Enabled = activeApiDraft != null && custom;
       apiProxyUsername.Enabled = apiProxyPassword.Enabled = activeApiDraft != null && custom && !apiProxyUseDefaultCredentials.Checked;
+    }
+
+    private string ProxyAddressScheme()
+    {
+      var address = apiProxyAddress.Text.Trim(); var separator = address.IndexOf("://", StringComparison.Ordinal);
+      return separator < 0 ? null : address.Substring(0, separator).ToLowerInvariant();
     }
 
     private void RefillApiProfiles(string id)
@@ -267,6 +296,7 @@ namespace AnotherMarkdown.Forms
         apiProxyMode.Items.Add(unknown); apiProxyMode.SelectedItem = unknown;
       }
       apiProxyAddress.Text = value.ProxyAddress; apiProxyUsername.Text = value.ProxyUsername; apiProxyPassword.Text = value.ProxyPassword;
+      apiProxyProtocol.SelectedItem = apiProxyProtocol.Items.Cast<ApiChoice>().FirstOrDefault(p => p.Id == ProxyAddressScheme()) ?? apiProxyProtocol.Items[0];
       apiProxyUseDefaultCredentials.Checked = value.ProxyUseDefaultCredentials;
       apiProxyUsernameEdited = apiProxyPasswordEdited = false;
       apiKeyEdited = apiHeadersEdited = false;
@@ -292,6 +322,8 @@ namespace AnotherMarkdown.Forms
       if (apiHeadersEdited) value.AdditionalHeadersJson = apiHeaders.Text.Trim();
       value.ProxyMode = (apiProxyMode.SelectedItem as ApiChoice)?.Id ?? "system";
       value.ProxyAddress = apiProxyAddress.Text.Trim();
+      if (value.ProxyAddress.Length != 0 && value.ProxyAddress.IndexOf("://", StringComparison.Ordinal) < 0)
+        value.ProxyAddress = ((apiProxyProtocol.SelectedItem as ApiChoice)?.Id ?? "http") + "://" + value.ProxyAddress;
       value.ProxyUseDefaultCredentials = apiProxyUseDefaultCredentials.Checked;
       if (apiProxyUsernameEdited) value.ProxyUsername = apiProxyUsername.Text;
       if (apiProxyPasswordEdited) value.ProxyPassword = apiProxyPassword.Text;

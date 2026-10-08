@@ -68,7 +68,7 @@ if (-not $SkipTests) {
     if ($LASTEXITCODE -ne 0) { throw 'Launcher test compilation failed.' }
     & $launcherTests
     if ($LASTEXITCODE -ne 0) { throw 'Launcher tests failed.' }
-    foreach ($apiTestName in @('ApiTests', 'ApiConnectionStoreTests', 'ApiLiveTests')) {
+    foreach ($apiTestName in @('ApiTests', 'ApiConnectionStoreTests', 'SocksApiTests', 'ApiLiveTests')) {
         $apiTests = Join-Path $CacheRoot ($apiTestName + '.exe')
         $apiSources = @($sources | Where-Object { $_ -notlike '*TranslationTests.cs' })
         $apiSources += Join-Path $projectRoot ('tests\' + $apiTestName + '.cs')

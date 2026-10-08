@@ -18,6 +18,7 @@ internal static class ApiConnectionStoreTests
       Directory.CreateDirectory(directory);
       Run(directory);
       ProxySettings(directory);
+      RequiredProxyCredentialSettings(directory);
       Console.WriteLine("PASS API store: " + passed + " assertions");
       return 0;
     }
@@ -79,6 +80,7 @@ internal static class ApiConnectionStoreTests
     File.WriteAllText(path, damaged.ToString(), Utf8);
     loaded = ApiConnectionStore.Load(path)[0];
     Check(loaded.ApiKey == "" && loaded.AdditionalHeadersJson == headers && loaded.CredentialError != null, "bad key ciphertext does not lose valid headers");
+    Check(loaded.RequiredCredentialError != null, "unavailable API keys block requests independently of proxy mode");
     Check(!loaded.CredentialError.Contains("not-base64"), "credential error contains no input");
     ApiConnectionStore.Save(path, new[] { loaded.Copy() });
     Check((string)JArray.Parse(File.ReadAllText(path, Utf8))[0]["EncryptedApiKey"] == "not-base64", "ordinary copy/save preserves unreadable key ciphertext");
@@ -92,6 +94,7 @@ internal static class ApiConnectionStoreTests
     File.WriteAllText(path, damaged.ToString(), Utf8);
     loaded = ApiConnectionStore.Load(path)[0];
     Check(loaded.ApiKey.Length > 0 && loaded.AdditionalHeadersJson == "{}" && loaded.CredentialError != null, "bad headers ciphertext does not lose valid key");
+    Check(loaded.RequiredCredentialError != null, "unavailable API headers block requests independently of proxy mode");
     loaded.AdditionalHeadersJson = "{}";
     ApiConnectionStore.Save(path, new[] { loaded.Copy() });
     Check((string)JArray.Parse(File.ReadAllText(path, Utf8))[0]["EncryptedHeaders"] == "AQIDBA==", "unchanged empty UI field preserves unreadable headers");
@@ -241,6 +244,58 @@ internal static class ApiConnectionStoreTests
     try { ApiConnectionStore.Save(path, new[] { invalid }); throw new Exception("Proxy URL credentials were saved."); }
     catch (IOException error) { Check(error.InnerException == null && !error.ToString().Contains(username) && !error.ToString().Contains(password)
       && File.ReadAllText(path, Utf8) == before, "proxy URL credentials are rejected before serialization without leaking or replacing settings"); }
+  }
+
+  private static void RequiredProxyCredentialSettings(string directory)
+  {
+    var path = Path.Combine(directory, "proxy-credential-gates.json");
+    var connection = new ApiConnection { ProxyMode = "custom", ProxyAddress = "http://127.0.0.1:8080",
+      ProxyUsername = "SYNTHETIC_REQUIRED_PROXY_USER", ProxyPassword = "SYNTHETIC_REQUIRED_PROXY_PASSWORD" };
+    ApiConnectionStore.Save(path, new[] { connection });
+    var original = File.ReadAllText(path, Utf8);
+    var damaged = JArray.Parse(original);
+    damaged[0]["EncryptedProxyUsername"] = "unavailable-gate-username";
+    damaged[0]["EncryptedProxyPassword"] = "unavailable-gate-password";
+    File.WriteAllText(path, damaged.ToString(), Utf8);
+    var loaded = ApiConnectionStore.Load(path)[0];
+    Check(loaded.CredentialError != null && loaded.RequiredCredentialError != null, "custom manual proxy authentication blocks unknown username and password");
+    loaded.ProxyMode = " CUSTOM ";
+    Check(loaded.RequiredCredentialError != null, "required credential gate normalizes custom proxy mode case and whitespace");
+    foreach (var mode in new[] { "direct", "system", "custom" }) {
+      var ignored = loaded.Copy(); ignored.ProxyMode = mode; ignored.ProxyUseDefaultCredentials = mode == "custom";
+      ignored.ClearCredentials(false);
+      Check(ignored.RequiredCredentialError == null && ignored.CredentialError != null,
+        "unused manual proxy failures remain warnings in " + mode + (mode == "custom" ? " Windows-auth mode" : " mode"));
+      var copyPath = Path.Combine(directory, "proxy-gate-" + mode + ".json");
+      ApiConnectionStore.Save(copyPath, new[] { ignored });
+      var restored = ApiConnectionStore.Load(copyPath)[0];
+      Check(restored.RequiredCredentialError == null && restored.CredentialError != null
+        && restored.EncryptedProxyUsername == "unavailable-gate-username" && restored.EncryptedProxyPassword == "unavailable-gate-password",
+        "copy preset clear and save preserve ignored proxy ciphertext in " + mode + " mode");
+      restored.ProxyMode = "custom"; restored.ProxyUseDefaultCredentials = false;
+      Check(restored.RequiredCredentialError != null, "returning from " + mode + " to manual proxy authentication restores its credential gate");
+    }
+    damaged = JArray.Parse(original);
+    damaged[0]["EncryptedProxyPassword"] = "unavailable-gate-password";
+    File.WriteAllText(path, damaged.ToString(), Utf8);
+    loaded = ApiConnectionStore.Load(path)[0];
+    Check(loaded.ProxyUsername.Length > 0 && loaded.RequiredCredentialError != null, "unreadable password blocks manual proxy authentication with a known username");
+    loaded.ProxyUsername = "";
+    Check(loaded.RequiredCredentialError == null && loaded.CredentialError != null, "known empty username leaves an unreadable unused password as a warning for anonymous proxy access");
+    ApiConnectionStore.Save(path, new[] { loaded.Copy() });
+    loaded = ApiConnectionStore.Load(path)[0];
+    Check(loaded.RequiredCredentialError == null && loaded.EncryptedProxyPassword == "unavailable-gate-password",
+      "anonymous proxy copy save preserves unused unreadable password ciphertext");
+    loaded.ProxyUsername = "SYNTHETIC_REENTERED_PROXY_USER";
+    Check(loaded.RequiredCredentialError != null, "entering a manual proxy username activates the preserved unreadable password gate");
+    loaded.ClearCredentials();
+    Check(loaded.RequiredCredentialError == null && loaded.CredentialError == null && loaded.EncryptedProxyPassword == "",
+      "explicit clear removes required and combined proxy credential errors");
+    foreach (var mode in new[] { "direct", "system", "custom" }) {
+      loaded.ProxyMode = mode; loaded.ProxyUseDefaultCredentials = true;
+      loaded.RestoreCredentials("", true, "{}", false);
+      Check(loaded.RequiredCredentialError != null, "API credential failure still blocks " + mode + " even with Windows proxy authentication");
+    }
   }
 
   private static void Check(bool condition, string label)

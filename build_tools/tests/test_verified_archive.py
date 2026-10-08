@@ -12,7 +12,7 @@ from unittest import mock
 import zipfile
 
 sys.dont_write_bytecode = True
-from verified_archive import prepare_archive, reparse
+from verified_archive import inside, prepare_archive, reparse
 
 
 class VerifiedArchiveTests(unittest.TestCase):
@@ -141,6 +141,63 @@ class VerifiedArchiveTests(unittest.TestCase):
     def test_destination_outside_cache_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "outside CacheRoot"):
             prepare_archive(self.root, self.archive, self.root.parent / "outside", self.hash, "https://fixture.invalid")
+
+    def test_parent_component_cannot_escape_cache(self):
+        with self.assertRaisesRegex(ValueError, "outside CacheRoot"):
+            prepare_archive(self.root, self.archive, self.root / ".." / "outside", self.hash, "https://fixture.invalid")
+
+    @unittest.skipUnless(os.name == "nt", "Windows short paths are a native Windows feature.")
+    def test_windows_short_root_prefix_and_case_are_accepted(self):
+        import ctypes
+        from ctypes import wintypes
+        get_short_path = ctypes.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+        get_short_path.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD)
+        get_short_path.restype = wintypes.DWORD
+        # Fixture volumes may disable 8.3 names. Program Files normally retains
+        # its real installed alias; this fallback only checks paths, never writes.
+        roots = [self.root, Path(os.environ.get("ProgramFiles", r"C:\Program Files"))]
+        for root in roots:
+            canonical = root.resolve()
+            buffer = ctypes.create_unicode_buffer(32768)
+            size = get_short_path(str(canonical), buffer, len(buffer))
+            if not size:
+                raise ctypes.WinError(ctypes.get_last_error())
+            self.assertLess(size, len(buffer))
+            alias = Path(buffer.value)
+            if alias == canonical:
+                continue
+            relative = Path("markdown-ru-alias-probe-" + self.root.name) / "not-created"
+            expected = canonical / relative
+            self.assertEqual(expected, inside(canonical, alias / relative))
+            self.assertEqual(expected, inside(alias, canonical / relative))
+            self.assertEqual(expected, inside(str(canonical).swapcase(), str(alias / relative).swapcase()))
+            with self.assertRaisesRegex(ValueError, "outside CacheRoot"):
+                inside(canonical, alias / ".." / "outside")
+            return
+        self.skipTest("Neither fixture volume nor Program Files has an actual 8.3 alias.")
+
+    @unittest.skipUnless(os.name == "nt", "Windows paths are case insensitive.")
+    def test_windows_case_variants_preserve_cache_containment(self):
+        self.assertEqual(self.archive.resolve(), inside(str(self.root).swapcase(), str(self.archive).swapcase()))
+
+    @unittest.skipUnless(os.name == "nt", "The identity fallback handles native Windows aliases.")
+    def test_windows_identity_fallback_keeps_junction_and_parent_checks(self):
+        sibling = self.root / "sibling"
+        sibling.mkdir()
+        sentinel = sibling / "sentinel.txt"
+        sentinel.write_bytes(b"identity fallback sentinel")
+        link = self.junction("parent-link", sibling)
+        # Exercise the alias fallback with real junctions even when the fixture
+        # volume disables 8.3 names. The test above independently uses a real alias.
+        for destination in [link / "new-extraction", link / ".." / "new-extraction"]:
+            with self.subTest(destination=destination):
+                with mock.patch.object(Path, "relative_to", side_effect=ValueError("Different alias spelling")):
+                    with self.assertRaisesRegex(ValueError, "contains a link"):
+                        prepare_archive(self.root, self.archive, destination, self.hash, "https://fixture.invalid")
+                self.assertTrue(reparse(link))
+                self.assertEqual([sentinel], list(sibling.iterdir()))
+                self.assertEqual(b"identity fallback sentinel", sentinel.read_bytes())
+                self.assertFalse((self.root / "new-extraction").exists())
 
     def test_destination_junction_preserves_link_and_sibling_sentinel(self):
         sibling = self.root / "sibling"

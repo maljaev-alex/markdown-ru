@@ -100,6 +100,14 @@ namespace AnotherMarkdown.Translation
     [JsonIgnore]
     public string CredentialError { get; internal set; }
 
+    internal string RequiredCredentialError {
+      get {
+        if (apiKeyUnavailable || headersUnavailable) return UnavailableCredentials;
+        if (!string.Equals((ProxyMode ?? "system").Trim(), "custom", StringComparison.OrdinalIgnoreCase) || ProxyUseDefaultCredentials) return null;
+        return proxyUsernameUnavailable || proxyPasswordUnavailable && proxyUsername.Length != 0 ? UnavailableCredentials : null;
+      }
+    }
+
     public ApiConnection Copy() => (ApiConnection)MemberwiseClone();
     public override string ToString() => Name;
 

@@ -95,6 +95,7 @@ internal static class ApiTests
     await EndpointCredentials();
     await TemperatureRanges();
     await ProxySettings();
+    await ProxyCredentialRequirements();
   }
 
   private static async Task SuccessfulTranslation(string protocol)
@@ -444,9 +445,13 @@ internal static class ApiTests
     var expectedProxyAuth = "Basic " + Convert.ToBase64String(Encoding.ASCII.GetBytes(proxyUsername + ":" + proxyPassword));
     var systemProxy = WebRequest.DefaultWebProxy;
     var systemCredentials = systemProxy?.Credentials;
+    IWebProxy previousPrivateProxy = null;
     foreach (var windowsCredentials in new[] { false, true }) {
       using (var handler = ApiTranslator.CreateHttpHandler(new ApiConnection { ProxyMode = "system", ProxyUseDefaultCredentials = windowsCredentials })) {
         Check(handler.UseProxy && handler.Proxy != null && ReferenceEquals(handler.Proxy.Credentials, windowsCredentials ? CredentialCache.DefaultCredentials : null), "system proxy uses per-connection optional Windows credentials");
+        Check(!ReferenceEquals(handler.Proxy, systemProxy) && !ReferenceEquals(handler.Proxy, previousPrivateProxy), "each system connection owns a private native proxy instead of the global resolver");
+        Check(handler.Proxy.GetType().GetInterfaces().Any(type => type.FullName == "System.Net.IAutoWebProxy"), "system proxy preserves native PAC proxy-chain and DIRECT-fallback support");
+        previousPrivateProxy = handler.Proxy;
         Check(!handler.UseDefaultCredentials && handler.Credentials == null && handler.DefaultProxyCredentials == null, "proxy factory never assigns origin credentials or mutating default-proxy credentials");
       }
     }
@@ -518,6 +523,22 @@ internal static class ApiTests
       await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "proxy redirect is not followed");
       Check(proxy.RequestCount == 1 && !origin.HasConnections, "proxy redirect cannot move origin credentials to another request");
     }
+    proxyRequests.Clear();
+    using (var origin = new LoopbackServer(_ => Response.Json(Success("chat-completions"))))
+    using (var proxy = new LoopbackServer(request => {
+      lock (proxyRequests) proxyRequests.Add(request);
+      return new Response { Status = 407, Headers = new Dictionary<string, string> { ["Proxy-Authenticate"] = "Basic realm=\"fixture-connect\"" }, Body = "rejected " + proxyPassword + " " + FixtureKey };
+    })) {
+      var connection = ProxiedConnection(origin, proxy);
+      connection.Endpoint = new UriBuilder(connection.Endpoint) { Scheme = "https" }.Uri.AbsoluteUri;
+      connection.ProxyUsername = proxyUsername; connection.ProxyPassword = proxyPassword;
+      var translation = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "HTTPS translation rejects a denied native CONNECT tunnel before TLS");
+      var discovery = await Failure(() => new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None), "HTTPS model discovery rejects a denied native CONNECT tunnel before TLS");
+      Check(proxyRequests.Count >= 2 && proxyRequests.All(request => request.Method == "CONNECT" && request.Target.StartsWith("api-proxy-fixture.invalid:", StringComparison.Ordinal)), "HTTPS proxy transport uses native CONNECT against the synthetic remote API host");
+      Check(proxyRequests.All(request => request.Header("Authorization") == "" && request.Body == "") && !origin.HasConnections, "CONNECT failure sends neither origin authorization nor API request body and never reaches the origin");
+      Check(proxyRequests.Any(request => request.Header("Proxy-Authorization") == expectedProxyAuth), "native CONNECT challenge confines manual credentials to proxy authorization");
+      Check(new[] { translation, discovery }.All(error => error is InvalidOperationException && !error.ToString().Contains(FixtureKey) && !error.ToString().Contains(proxyPassword) && !error.ToString().Contains(expectedProxyAuth)), "CONNECT errors omit echoed origin and proxy secrets without bypassing TLS validation");
+    }
     using (var origin = new LoopbackServer(_ => Response.Json(Success("chat-completions"))))
     using (var proxy = new LoopbackServer(_ => new Response { DelayMilliseconds = 30000 }))
     using (var cancellation = new CancellationTokenSource()) {
@@ -534,7 +555,7 @@ internal static class ApiTests
       Check(error is TimeoutException && proxy.RequestCount == 1 && !origin.HasConnections, "proxy discovery timeout does not fall back to a direct request");
     }
 
-    foreach (var address in new[] { "", "127.0.0.1:8080", "socks5://127.0.0.1:1080", "https://127.0.0.1:8080", "http://[invalid", "http://127.0.0.1:0", "http://127.0.0.1:70000", "http://127.0.0.1:8080/path", "http://127.0.0.1:8080?tenant=x", "http://127.0.0.1:8080#fragment", "http://user:" + proxyPassword + "@127.0.0.1:8080", "127.0.0.1:8080?key=" + proxyPassword }) {
+    foreach (var address in new[] { "", "127.0.0.1:8080", "socks4://127.0.0.1:1080", "https://127.0.0.1:8080", "http://[invalid", "http://127.0.0.1:0", "http://127.0.0.1:70000", "http://127.0.0.1:8080/path", "http://127.0.0.1:8080?tenant=x", "http://127.0.0.1:8080#fragment", "http://user:" + proxyPassword + "@127.0.0.1:8080", "127.0.0.1:8080?key=" + proxyPassword }) {
       using (var server = new LoopbackServer(_ => Response.Json(Success("chat-completions")))) {
         var connection = Connection(server, "chat-completions"); connection.ProxyMode = "custom"; connection.ProxyAddress = address;
         var draft = connection.Copy(); draft.Endpoint = ""; draft.Model = "";
@@ -553,6 +574,58 @@ internal static class ApiTests
     }
     var unknownMode = await Failure(() => { ApiTranslator.ValidateProxyDraft(new ApiConnection { ProxyMode = "unknown-" + proxyPassword }); return Task.FromResult(0); }, "unknown proxy mode is rejected");
     Check(unknownMode is ArgumentException && !unknownMode.ToString().Contains(proxyPassword), "unknown mode diagnostic never echoes its raw value");
+  }
+
+  private static async Task ProxyCredentialRequirements()
+  {
+    const string unreadableUsername = "opaque-unreadable-proxy-user-fixture";
+    const string unreadablePassword = "opaque-unreadable-proxy-password-fixture";
+    foreach (var mode in new[] { "system", "direct", "custom-windows", "custom-anonymous" }) {
+      var requests = new List<Request>();
+      using (var origin = new LoopbackServer(request => {
+        lock (requests) requests.Add(request);
+        return Response.Json(request.Target.EndsWith("/models") ? JObject.Parse("{\"data\":[{\"id\":\"fixture-model\"}]}") : Success("chat-completions"));
+      }))
+      using (var proxy = new LoopbackServer(request => ForwardProxyRequest(request, origin.Address))) {
+        var custom = mode.StartsWith("custom", StringComparison.Ordinal);
+        var connection = custom ? ProxiedConnection(origin, proxy) : Connection(origin, "chat-completions");
+        connection.ProxyMode = custom ? "custom" : mode;
+        connection.ProxyUseDefaultCredentials = mode == "custom-windows";
+        connection.EncryptedProxyUsername = unreadableUsername; connection.EncryptedProxyPassword = unreadablePassword;
+        connection.RestoreCredentials(FixtureKey, false, "{}", false, "", mode != "custom-anonymous", "", true);
+        Check(!string.IsNullOrEmpty(connection.CredentialError), mode + " retains an unreadable proxy warning before transport");
+        Check(await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None) == Answer, mode + " translation ignores unavailable proxy credentials that are not used");
+        var catalog = await new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None);
+        Check(catalog.Models.Any(model => model.Id == "fixture-model") && origin.RequestCount == 2 && proxy.RequestCount == (custom ? 2 : 0), mode + " discovery follows the selected route with unused unreadable proxy credentials");
+        Check(requests.All(request => request.Header("Authorization") == "Bearer " + FixtureKey && request.Header("Proxy-Authorization") == ""), mode + " unused proxy secrets never become origin credentials");
+        Check(connection.EncryptedProxyUsername == unreadableUsername && connection.EncryptedProxyPassword == unreadablePassword && !string.IsNullOrEmpty(connection.CredentialError), mode + " requests preserve unreadable proxy ciphertext and warning for later recovery");
+      }
+    }
+    foreach (var unavailableUsername in new[] { false, true }) {
+      using (var origin = new LoopbackServer(_ => Response.Json(Success("chat-completions"))))
+      using (var proxy = new LoopbackServer(request => ForwardProxyRequest(request, origin.Address))) {
+        var connection = ProxiedConnection(origin, proxy);
+        connection.RestoreCredentials(FixtureKey, false, "{}", false, unavailableUsername ? "" : "fixture-proxy-user", unavailableUsername, "", !unavailableUsername);
+        var translation = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "required unreadable manual proxy credentials block translation");
+        var discovery = await Failure(() => new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None), "required unreadable manual proxy credentials block discovery");
+        Check(new[] { translation, discovery }.All(error => error is InvalidOperationException && !error.ToString().Contains(FixtureKey)) && !origin.HasConnections && !proxy.HasConnections, "required manual proxy credential failure occurs before any network request");
+      }
+    }
+    foreach (var mode in new[] { "system", "direct", "custom-windows", "custom-manual" }) {
+      foreach (var unavailableKey in new[] { false, true }) {
+        using (var origin = new LoopbackServer(_ => Response.Json(Success("chat-completions"))))
+        using (var proxy = new LoopbackServer(request => ForwardProxyRequest(request, origin.Address))) {
+          var custom = mode.StartsWith("custom", StringComparison.Ordinal);
+          var connection = custom ? ProxiedConnection(origin, proxy) : Connection(origin, "chat-completions");
+          connection.ProxyMode = custom ? "custom" : mode;
+          connection.ProxyUseDefaultCredentials = mode == "custom-windows";
+          connection.RestoreCredentials(unavailableKey ? "" : FixtureKey, unavailableKey, "{}", !unavailableKey);
+          var translation = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), mode + " required unavailable API key or headers block translation");
+          var discovery = await Failure(() => new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None), mode + " required unavailable API key or headers block discovery");
+          Check(new[] { translation, discovery }.All(error => error is InvalidOperationException && !error.ToString().Contains(FixtureKey)) && !origin.HasConnections && !proxy.HasConnections, mode + " unavailable API credentials fail before network regardless of proxy mode");
+        }
+      }
+    }
   }
 
   private static ApiConnection ProxiedConnection(LoopbackServer origin, LoopbackServer proxy)

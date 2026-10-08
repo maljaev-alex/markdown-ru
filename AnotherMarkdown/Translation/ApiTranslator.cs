@@ -54,9 +54,8 @@ namespace AnotherMarkdown.Translation
       public bool UseDefaultCredentials;
     }
 
-    // System resolution is delegated, while credentials belong to this
-    // connection, never the global proxy. Framework's unconditional loopback
-    // bypass is rejected during validation for an explicitly selected proxy.
+    // This wrapper is only for a fixed custom route. System proxies must retain
+    // the Framework's internal IAutoWebProxy interface and its PAC failover chain.
     private sealed class ConnectionProxy : IWebProxy
     {
       private readonly IWebProxy resolver;
@@ -90,17 +89,23 @@ namespace AnotherMarkdown.Translation
       if (connection == null) throw new ArgumentException("Выберите подключение API.");
       var mode = (connection.ProxyMode ?? "system").Trim().ToLowerInvariant();
       if (mode != "system" && mode != "direct" && mode != "custom")
-        throw new ArgumentException("Выберите системный прокси, прямое подключение или заданный HTTP-прокси.");
+        throw new ArgumentException("Выберите системный прокси, прямое подключение или заданный прокси.");
       var address = (connection.ProxyAddress ?? "").Trim();
       ValidateEndpointCredentials(address);
       Uri proxy = null;
       if (mode == "custom" && address.Length != 0 && (ContainsControl(address) || !Uri.TryCreate(address, UriKind.Absolute, out proxy)
-          || proxy.Scheme != Uri.UriSchemeHttp || string.IsNullOrEmpty(proxy.Host) || proxy.Port < 1 || proxy.Port > 65535
+          || (proxy.Scheme != Uri.UriSchemeHttp && !IsSocksProxy(proxy)) || string.IsNullOrEmpty(proxy.Host) || proxy.Port < 1 || proxy.Port > 65535
           || proxy.UserInfo.Length != 0 || proxy.AbsolutePath != "/" || address.IndexOfAny(new[] { '?', '#' }) >= 0))
-        throw new ArgumentException("Поддерживается только HTTP-прокси вида http://сервер:порт без логина, пароля, пути, query и fragment. Авторизацию задайте в отдельных полях. SOCKS и HTTPS-прокси не поддерживаются.");
-      if (mode == "custom" && proxy == null) throw new ArgumentException("Укажите адрес заданного HTTP-прокси вида http://сервер:порт.");
+        throw new ArgumentException("Укажите прокси вида http://сервер:порт, socks5://сервер:порт или socks5h://сервер:порт без логина, пароля, пути, query и fragment. Авторизацию задайте в отдельных полях. HTTPS-прокси и SOCKS4 не поддерживаются.");
+      if (mode == "custom" && proxy == null) throw new ArgumentException("Укажите адрес заданного HTTP- или SOCKS5-прокси с портом.");
+      if (mode == "custom" && IsSocksProxy(proxy)) {
+        if (connection.ProxyUseDefaultCredentials) throw new ArgumentException("Для SOCKS5 доступны только отдельные логин и пароль. Отключите авторизацию Windows.");
+        if ((connection.ProxyUsername ?? "").IndexOf(':') >= 0) throw new ArgumentException("Логин SOCKS5 не должен содержать двоеточие.");
+        if ((connection.ProxyUsername ?? "").IndexOf('\0') >= 0 || (connection.ProxyPassword ?? "").IndexOf('\0') >= 0)
+          throw new ArgumentException("Логин и пароль SOCKS5 не должны содержать нулевой символ.");
+      }
       Uri destination;
-      if (mode == "custom" && Uri.TryCreate((connection.Endpoint ?? "").Trim(), UriKind.Absolute, out destination)
+      if (mode == "custom" && proxy.Scheme == Uri.UriSchemeHttp && Uri.TryCreate((connection.Endpoint ?? "").Trim(), UriKind.Absolute, out destination)
           && (destination.Scheme == Uri.UriSchemeHttp || destination.Scheme == Uri.UriSchemeHttps) && destination.IsLoopback)
         throw new ArgumentException(".NET Framework обходит заданный прокси для локальных API (localhost/loopback). Выберите прямое подключение для локального API: запрос через заданный прокси не отправлен.");
       return new PreparedProxy { Mode = mode, Address = proxy, Username = connection.ProxyUsername ?? "", Password = connection.ProxyPassword ?? "",
@@ -109,13 +114,23 @@ namespace AnotherMarkdown.Translation
 
     internal static HttpClientHandler CreateHttpHandler(ApiConnection connection) => CreateHttpHandler(PrepareProxy(connection));
 
+    private static bool IsSocksProxy(Uri proxy) => proxy != null && (proxy.Scheme == "socks5" || proxy.Scheme == "socks5h");
+
+    private static HttpMessageHandler CreateMessageHandler(PreparedProxy proxy, int timeoutSeconds) =>
+      proxy.Mode == "custom" && IsSocksProxy(proxy.Address)
+        ? (HttpMessageHandler)new CurlApiHandler(proxy.Address, proxy.Username, proxy.Password, timeoutSeconds)
+        : CreateHttpHandler(proxy);
+
     private static HttpClientHandler CreateHttpHandler(PreparedProxy proxy)
     {
+      if (proxy.Mode == "custom" && IsSocksProxy(proxy.Address)) throw new ArgumentException("Для SOCKS5 требуется транспорт системного curl.");
       var handler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, SslProtocols = SslProtocols.Tls12,
         AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate, UseProxy = proxy.Mode != "direct",
         UseDefaultCredentials = false, Credentials = null, DefaultProxyCredentials = null };
       if (proxy.Mode == "system") {
-        handler.Proxy = new ConnectionProxy(WebRequest.DefaultWebProxy, null, proxy.UseDefaultCredentials ? CredentialCache.DefaultCredentials : null);
+        var systemProxy = WebRequest.GetSystemWebProxy();
+        systemProxy.Credentials = proxy.UseDefaultCredentials ? CredentialCache.DefaultCredentials : null;
+        handler.Proxy = systemProxy;
       }
       else if (proxy.Mode == "custom") {
         var credentials = proxy.UseDefaultCredentials ? CredentialCache.DefaultCredentials
@@ -287,8 +302,8 @@ namespace AnotherMarkdown.Translation
 
     private static void RequireCredentialsAvailable(ApiConnection connection)
     {
-      if (!string.IsNullOrEmpty(connection?.CredentialError))
-        throw new InvalidOperationException("Не удалось расшифровать сохранённые данные авторизации API. Введите их заново или явно очистите.");
+      if (!string.IsNullOrEmpty(connection?.RequiredCredentialError))
+        throw new InvalidOperationException("Не удалось расшифровать необходимые данные авторизации API или прокси. Введите их заново или явно очистите.");
     }
 
     private static bool ContainsControl(string value) => value != null && value.Any(c => char.IsControl(c));
@@ -405,7 +420,7 @@ namespace AnotherMarkdown.Translation
     private static async Task<JObject> SendAsync(PreparedConnection connection, HttpMethod method, Uri uri, JObject body, int timeoutSeconds, CancellationToken token)
     {
       using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(token))
-      using (var handler = CreateHttpHandler(connection.Proxy))
+      using (var handler = CreateMessageHandler(connection.Proxy, timeoutSeconds))
       using (var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan })
       using (var request = new HttpRequestMessage(method, uri)) {
         timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));

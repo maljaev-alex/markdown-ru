@@ -44,6 +44,12 @@ namespace AnotherMarkdown.Translation
         info.EnvironmentVariables["KIMI_DISABLE_TELEMETRY"] = "1";
       }
       if (selectedProvider == "copilot") info.EnvironmentVariables["COPILOT_AUTO_UPDATE"] = "false";
+      if (selectedProvider == "curl-api") {
+        info.EnvironmentVariables.Remove("SSLKEYLOGFILE");
+        // Windows curl can write localized ANSI diagnostics. They are discarded;
+        // only stdout carries the API response and must remain strict UTF-8.
+        info.StandardErrorEncoding = new UTF8Encoding(false, false);
+      }
       if (CliProfiles.IsBatchPath(executable)) {
         // Batch wrappers reparse %* and may enable delayed expansion themselves.
         // Requote each native argument, and fail before launch for values whose
@@ -94,12 +100,14 @@ namespace AnotherMarkdown.Translation
     private static extern IntPtr LocalFree(IntPtr memory);
 
     public static Task<CliCommandResult> RunAsync(string executable, string arguments, string input,
-      int timeoutSeconds, CancellationToken cancellation, string workingDirectory = null, string providerId = null) =>
-      Task.Run(() => RunCoreAsync(executable, arguments, input, timeoutSeconds, cancellation, workingDirectory, providerId), cancellation);
+      int timeoutSeconds, CancellationToken cancellation, string workingDirectory = null, string providerId = null,
+      int maximumOutputCharacters = 8000000, bool detectOutputEncoding = true) =>
+      Task.Run(() => RunCoreAsync(executable, arguments, input, timeoutSeconds, cancellation, workingDirectory, providerId, maximumOutputCharacters, detectOutputEncoding), cancellation);
 
     private static async Task<CliCommandResult> RunCoreAsync(string executable, string arguments, string input,
-      int timeoutSeconds, CancellationToken cancellation, string workingDirectory, string providerId)
+      int timeoutSeconds, CancellationToken cancellation, string workingDirectory, string providerId, int maximumOutputCharacters, bool detectOutputEncoding)
     {
+      if (maximumOutputCharacters < 1 || maximumOutputCharacters > 32001000) throw new ArgumentOutOfRangeException(nameof(maximumOutputCharacters));
       var ownsDirectory = workingDirectory == null;
       var directory = workingDirectory ?? Path.Combine(Path.GetTempPath(), "AnotherMarkdown", "probe-" + Guid.NewGuid().ToString("N"));
       Directory.CreateDirectory(directory);
@@ -108,11 +116,11 @@ namespace AnotherMarkdown.Translation
         using (var job = new ProcessJob()) {
           timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
           cancellation.ThrowIfCancellationRequested();
-          using (var process = CliProcess.Start(StartInfo(executable, arguments, directory, providerId), job)) {
+          using (var process = CliProcess.Start(StartInfo(executable, arguments, directory, providerId), job, detectOutputEncoding: detectOutputEncoding)) {
             try {
               using (timeout.Token.Register(() => StopOwnedProcess(process, job))) {
-                var stdout = ReadAsync(process.StandardOutput, timeout.Token, () => StopOwnedProcess(process, job));
-                var stderr = ReadAsync(process.StandardError, timeout.Token, () => StopOwnedProcess(process, job));
+                var stdout = ReadAsync(process.StandardOutput, timeout.Token, () => StopOwnedProcess(process, job), maximumOutputCharacters);
+                var stderr = ReadAsync(process.StandardError, timeout.Token, () => StopOwnedProcess(process, job), maximumOutputCharacters);
                 Exception inputError = null;
                 try {
                   var bytes = Utf8.GetBytes(input ?? "");
@@ -148,12 +156,13 @@ namespace AnotherMarkdown.Translation
       catch (InvalidOperationException) { } catch (Win32Exception) { }
     }
 
-    private static async Task<string> ReadAsync(StreamReader reader, CancellationToken cancellation, Action abort)
+    private static async Task<string> ReadAsync(StreamReader reader, CancellationToken cancellation, Action abort, int maximumOutputCharacters)
     {
       try {
         var result = new StringBuilder(); var buffer = new char[4096]; int count;
         while ((count = await WithCancellationAsync(reader.ReadAsync(buffer, 0, buffer.Length), cancellation).ConfigureAwait(false)) != 0) {
-          if (result.Length + count > 8000000) throw new InvalidOperationException("Ответ CLI превысил ограничение 8 млн символов.");
+          if (result.Length + count > maximumOutputCharacters) throw new InvalidOperationException(maximumOutputCharacters == 8000000
+            ? "Ответ CLI превысил ограничение 8 млн символов." : "Ответ CLI превысил допустимый размер.");
           result.Append(buffer, 0, count);
         }
         return result.ToString();

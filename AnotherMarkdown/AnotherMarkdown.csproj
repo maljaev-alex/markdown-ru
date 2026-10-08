@@ -92,6 +92,7 @@
     <Compile Include="Translation\ApiConnection.cs" />
     <Compile Include="Translation\ApiConnectionStore.cs" />
     <Compile Include="Translation\ApiTranslator.cs" />
+    <Compile Include="Translation\CurlApiHandler.cs" />
     <Compile Include="Forms\SettingsForm.Api.cs" />
     <Compile Include="Translation\CliProfiles.cs" />
     <Compile Include="Translation\CliCommand.cs" />

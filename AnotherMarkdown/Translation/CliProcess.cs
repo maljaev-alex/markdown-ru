@@ -43,7 +43,7 @@ namespace AnotherMarkdown.Translation
       }
     }
 
-    public static CliProcess Start(ProcessStartInfo info, ProcessJob job, Action<int> beforeAssignment = null)
+    public static CliProcess Start(ProcessStartInfo info, ProcessJob job, Action<int> beforeAssignment = null, bool detectOutputEncoding = true)
     {
       if (info == null || job == null) throw new ArgumentNullException();
       if (info.UseShellExecute || !info.RedirectStandardInput || !info.RedirectStandardOutput || !info.RedirectStandardError || info.UserName.Length != 0)
@@ -107,9 +107,9 @@ namespace AnotherMarkdown.Translation
         job.Add(process.processHandle.DangerousGetHandle());
         process.StandardInput = new StreamWriter(new FileStream(input, FileAccess.Write, 4096, false), Utf8, 4096);
         input = null;
-        process.StandardOutput = new StreamReader(new FileStream(output, FileAccess.Read, 4096, false), info.StandardOutputEncoding ?? Utf8, true, 4096);
+        process.StandardOutput = new StreamReader(new FileStream(output, FileAccess.Read, 4096, false), info.StandardOutputEncoding ?? Utf8, detectOutputEncoding, 4096);
         output = null;
-        process.StandardError = new StreamReader(new FileStream(error, FileAccess.Read, 4096, false), info.StandardErrorEncoding ?? Utf8, true, 4096);
+        process.StandardError = new StreamReader(new FileStream(error, FileAccess.Read, 4096, false), info.StandardErrorEncoding ?? Utf8, detectOutputEncoding, 4096);
         error = null;
         if (ResumeThread(native.Thread) == uint.MaxValue) throw new Win32Exception(Marshal.GetLastWin32Error());
         return process;

@@ -22,7 +22,10 @@ internal static class ApiLiveTests
 
   private static async Task<int> Run(string[] args)
   {
-    if (args.Length != 1) throw new ArgumentException("Pass the authorized environment file path.");
+    if (args.Length != 1 && args.Length != 3 && args.Length != 4) throw new ArgumentException("Pass the authorized environment file path, optionally --proxy URL and --models-only.");
+    var proxy = args.Length >= 3 && args[1] == "--proxy" ? args[2] : null;
+    var modelsOnly = args.Length == 4 && args[3] == "--models-only";
+    if ((args.Length >= 3 && proxy == null) || (args.Length == 4 && !modelsOnly)) throw new ArgumentException("Invalid live API check options.");
     var values = new Dictionary<string, string>(StringComparer.Ordinal);
     foreach (var raw in File.ReadAllLines(args[0], Encoding.UTF8)) {
       var match = Regex.Match(raw.TrimStart('\uFEFF'), @"^\s*(?:export\s+)?(EMBEDDING_API_BASE|EMBEDDING_API_KEY|CHAT_MODEL)\s*=\s*(.*)$");
@@ -37,6 +40,7 @@ internal static class ApiLiveTests
     foreach (var required in new[] { "EMBEDDING_API_BASE", "EMBEDDING_API_KEY", "CHAT_MODEL" })
       if (!values.ContainsKey(required) || string.IsNullOrWhiteSpace(values[required])) throw new InvalidDataException();
     var connection = new ApiConnection { Endpoint = values["EMBEDDING_API_BASE"], ApiKey = values["EMBEDDING_API_KEY"], Model = values["CHAT_MODEL"], MaxOutputTokens = 1024 };
+    if (proxy != null) { connection.ProxyMode = "custom"; connection.ProxyAddress = proxy; }
     var options = new TranslationOptions { ConnectionMode = "api", ApiConnections = new List<ApiConnection> { connection }, SelectedApiConnectionId = connection.Id, TimeoutSeconds = 90 };
     options.Validate();
     var translator = new ApiTranslator();
@@ -44,7 +48,8 @@ internal static class ApiLiveTests
       var models = await translator.LoadModelsAsync(connection, 30, CancellationToken.None);
       Console.WriteLine("PASS live API model list: " + models.Models.Count + " models; configured model listed: " + models.Models.Any(m => m.Id == connection.Model));
     }
-    catch (InvalidOperationException error) { Console.WriteLine("Model list unavailable; testing the configured model directly. " + error.Message); }
+    catch (InvalidOperationException error) { if (modelsOnly) throw; Console.WriteLine("Model list unavailable; testing the configured model directly. " + error.Message); }
+    if (modelsOnly) { Console.WriteLine("No inference requested; no credentials saved; plugin settings unchanged."); return 0; }
     const string source = "---\nname: translation-test\ndescription: \"A short connection test for technical documentation.\"\nenabled: true\n---\n\n# Quick start\nOpen the settings and choose a model.\n\n`WorkPackage.allowed_to`\n";
     var translated = await new CliTranslator().TranslateAsync(source, options, CancellationToken.None);
     if (!Regex.IsMatch(translated, "[\u0400-\u04ff]") || !translated.Contains("WorkPackage.allowed_to") || !translated.Contains("name: translation-test") || !translated.Contains("enabled: true") || !Regex.IsMatch(translated, @"(?m)^description:.*[\u0400-\u04ff]"))
