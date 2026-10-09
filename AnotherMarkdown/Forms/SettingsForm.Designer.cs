@@ -1,4 +1,4 @@
-﻿namespace AnotherMarkdown.Forms
+namespace AnotherMarkdown.Forms
 {
   partial class SettingsForm
   {
@@ -6,7 +6,7 @@
 
     protected override void Dispose(bool disposing)
     {
-      if (disposing) { cliDiscoveryGeneration++; CancelModelDiscovery(); CancelApiDiscovery(); components?.Dispose(); }
+      if (disposing) { CancelCliDiscovery(); CancelModelDiscovery(); CancelApiDiscovery(); components?.Dispose(); }
       base.Dispose(disposing);
     }
 
@@ -14,6 +14,7 @@
     {
       SuspendLayout();
       components = new System.ComponentModel.Container();
+      settingsToolTips = new System.Windows.Forms.ToolTip(components) { AutoPopDelay = 30000, InitialDelay = 500, ReshowDelay = 100 };
       AutoScaleDimensions = new System.Drawing.SizeF(7F, 15F);
       AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
       Font = new System.Drawing.Font("Segoe UI", 9F);
@@ -25,16 +26,16 @@
       Icon = PluginIcon.ApplicationIcon();
       MinimizeBox = false;
       ShowInTaskbar = false;
-      var root = new System.Windows.Forms.TableLayoutPanel {
+      var root = HoldInitialLayout(new SettingsLayoutPanel {
         Dock = System.Windows.Forms.DockStyle.Fill, ColumnCount = 1, RowCount = 4, Padding = new System.Windows.Forms.Padding(8)
-      };
+      });
       root.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100));
       root.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 48));
       root.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100));
       root.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
       root.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
       Controls.Add(root);
-      var heading = new System.Windows.Forms.FlowLayoutPanel { Dock = System.Windows.Forms.DockStyle.Fill, WrapContents = false };
+      var heading = HoldInitialLayout(new System.Windows.Forms.FlowLayoutPanel { Dock = System.Windows.Forms.DockStyle.Fill, WrapContents = false });
       heading.Controls.Add(new PluginLogo { Size = new System.Drawing.Size(32, 32), Margin = new System.Windows.Forms.Padding(6, 4, 10, 4) });
       heading.Controls.Add(new System.Windows.Forms.Label {
         Text = PluginBranding.Name, AutoSize = true,
@@ -42,14 +43,14 @@
         Margin = new System.Windows.Forms.Padding(0, 10, 8, 8)
       });
       root.Controls.Add(heading, 0, 0);
-      settingsTabs = new System.Windows.Forms.TabControl { Name = "settingsTabs", Dock = System.Windows.Forms.DockStyle.Fill, TabIndex = 0 };
-      previewPage = new System.Windows.Forms.TabPage("Просмотр") { Name = "previewPage", Padding = new System.Windows.Forms.Padding(8), AutoScroll = true };
-      translationPage = new System.Windows.Forms.TabPage("Перевод") { Name = "translationPage", Padding = new System.Windows.Forms.Padding(8) };
+      settingsTabs = HoldInitialLayout(new System.Windows.Forms.TabControl { Name = "settingsTabs", Dock = System.Windows.Forms.DockStyle.Fill, TabIndex = 0 });
+      previewPage = HoldInitialLayout(new System.Windows.Forms.TabPage("Просмотр") { Name = "previewPage", Padding = new System.Windows.Forms.Padding(8), AutoScroll = true });
+      translationPage = HoldInitialLayout(new System.Windows.Forms.TabPage("Перевод") { Name = "translationPage", Padding = new System.Windows.Forms.Padding(8) });
       settingsTabs.TabPages.AddRange(new[] { previewPage, translationPage });
       root.Controls.Add(settingsTabs, 0, 1);
-      var general = new System.Windows.Forms.TableLayoutPanel {
+      var general = HoldInitialLayout(new SettingsLayoutPanel {
         Name = "previewLayout", Dock = System.Windows.Forms.DockStyle.Fill, ColumnCount = 4, RowCount = 7, AutoScroll = true
-      };
+      });
       general.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 150));
       general.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100));
       general.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 42));
@@ -88,10 +89,10 @@
       };
       general.Controls.Add(MakeSettingsLabel("Расширения Markdown"), 0, 6);
       general.Controls.Add(MarkdownPlugins, 1, 6); general.SetColumnSpan(MarkdownPlugins, 3);
-      var footer = new System.Windows.Forms.FlowLayoutPanel {
+      var footer = HoldInitialLayout(new System.Windows.Forms.FlowLayoutPanel {
         Dock = System.Windows.Forms.DockStyle.Fill, AutoSize = true,
         FlowDirection = System.Windows.Forms.FlowDirection.RightToLeft, Padding = new System.Windows.Forms.Padding(0, 8, 0, 0)
-      };
+      });
       btnCancel = new System.Windows.Forms.Button { Name = "btnCancel", Text = "Отмена", AutoSize = true, MinimumSize = new System.Drawing.Size(110, 32), DialogResult = System.Windows.Forms.DialogResult.Cancel, TabIndex = 1 };
       btnSave = new System.Windows.Forms.Button { Name = "btnSave", Text = "Сохранить", AutoSize = true, MinimumSize = new System.Drawing.Size(110, 32), TabIndex = 0 };
       btnSave.Click += btnSave_Click; btnCancel.Click += btnCancel_Click;

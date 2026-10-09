@@ -1,0 +1,34 @@
+Markdown structure parser and .NET Framework compatibility dependencies
+
+Markdig 1.4.0
+Copyright (c) 2016-2026, Alexandre Mutel. All rights reserved.
+License: BSD-2-Clause; see Markdig-LICENSE.txt.
+Package: https://www.nuget.org/packages/Markdig/1.4.0
+Source revision: 56e9c238584a44a169f174c881855c049768634c
+License source:
+https://raw.githubusercontent.com/xoofx/markdig/56e9c238584a44a169f174c881855c049768634c/license.txt
+
+System.Memory 4.6.3
+System.Runtime.CompilerServices.Unsafe 6.1.2
+Copyright (c) Microsoft Corporation. All rights reserved.
+License: MIT; see Microsoft-MIT-LICENSE.txt.
+Package sources:
+https://www.nuget.org/packages/System.Memory/4.6.3
+https://www.nuget.org/packages/System.Runtime.CompilerServices.Unsafe/6.1.2
+Source revision: f62ca0009b038cab4725a720f386623a969d73ad
+
+System.Buffers 4.6.1
+System.Numerics.Vectors 4.6.1
+Copyright (c) Microsoft Corporation. All rights reserved.
+License: MIT; see Microsoft-MIT-LICENSE.txt.
+Package sources:
+https://www.nuget.org/packages/System.Buffers/4.6.1
+https://www.nuget.org/packages/System.Numerics.Vectors/4.6.1
+Source revision: 6b84308c9ad012f53240d72c1d716d7e42546483
+
+The Microsoft source license text is identical in both pinned revisions:
+https://raw.githubusercontent.com/dotnet/maintenance-packages/f62ca0009b038cab4725a720f386623a969d73ad/LICENSE
+https://raw.githubusercontent.com/dotnet/maintenance-packages/6b84308c9ad012f53240d72c1d716d7e42546483/LICENSE
+
+Archive SHA256 and official NuGet catalog SHA512 provenance are pinned in
+build_tools/tests/dependencies.lock.json. Runtime assemblies use net462 assets.

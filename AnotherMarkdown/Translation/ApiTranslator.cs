@@ -145,7 +145,9 @@ namespace AnotherMarkdown.Translation
     {
       if (string.IsNullOrWhiteSpace(markdown)) throw new ArgumentException("Документ пуст.");
       if (markdown.Length > 1000000) throw new ArgumentException("Документ превышает 1 млн символов. Разделите его на части.");
-      return await TranslatePromptAsync(CliTranslator.CreatePrompt(markdown), connection, timeoutSeconds, token).ConfigureAwait(false);
+      var protection = new MarkdownCodeProtection(markdown);
+      var translated = await TranslatePromptAsync(protection.Prompt(CliTranslator.CreatePrompt), connection, timeoutSeconds, token).ConfigureAwait(false);
+      return protection.Restore(translated);
     }
 
     internal async Task<string> TranslatePromptAsync(string prompt, ApiConnection connection, int timeoutSeconds, CancellationToken token)

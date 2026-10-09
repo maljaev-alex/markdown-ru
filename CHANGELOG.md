@@ -1,5 +1,17 @@
 ## Version History
 
+### Markdown RU 0.1.12-ru.15 (2026-10-09)
+
+* Parse Markdown structure with Markdig 1.4.0 before choosing translation boundaries. Keep sections up to 12,000 characters whole; split larger or heading-free documents between independent paragraphs, retaining code, lists, tables, quotes and related explanations together.
+* Remove the former 8,000-character threshold. Add a configurable minimum part size (2,000 characters by default, 0 disables the minimum) and retain the 1–8 simultaneous-request limit. Document structure can reduce the actual number of parts.
+* Protect fenced, indented and inline code and mathematics with unique markers; restore the original fragments exactly and reject missing, duplicate or reordered markers and unexpected wrappers. Continue translating descriptive YAML fields. Incomplete or invalid results are not displayed or cached.
+* Persist model, effort, manual arguments, output format, timeout and parallel settings per CLI provider and launcher path. Reselecting the same CLI or file preserves edits; only the explicit defaults button resets its launch options.
+* Preserve independent timeout, parallel settings and button visibility per API profile. Save commits all edited connection drafts; Cancel discards them. Existing INI settings migrate automatically, and unreadable CLI settings files are preserved.
+* Show saved settings immediately. Discover installed CLIs and model catalogs in the background; cache successful results for five minutes and share in-flight requests. Late responses preserve current edits.
+* Keep settings geometry stable during discovery and errors. Group multithreading controls, place model and effort side by side, align action buttons and reflow controls in small windows or with large fonts.
+* Bundle verified Markdig/System.Memory runtime dependencies and their licenses; the markdown-it preview renderer remains unchanged.
+* Expand regression coverage for Markdown protection, parallel CLI/API requests, per-connection persistence, asynchronous discovery and settings layout. Include an independent CommonMark corpus runner covering all 652 specification examples.
+
 ### Markdown RU 0.1.12-ru.9
 
 * Add persistent 1-8 parallel translation requests for CLI and API, defaulting to one whole-document request.

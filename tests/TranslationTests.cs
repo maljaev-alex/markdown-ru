@@ -113,7 +113,9 @@ internal static class TranslationTests
     if (mode == "error") { Console.Error.Write(new string('x', 180000) + " EXPECTED_ERROR"); return 31; }
     if (mode == "empty") return 0;
     if (!input.Contains("# Hello\nПривет") || !input.Contains("untrusted document data")) return 32;
-    var answer = "# Привет\nМир: `WorkPackage.allowed_to`\n\n| Поле | Значение |\n| --- | --- |\n| test | 1 |";
+    var protectedMarker = System.Text.RegularExpressions.Regex.Match(input, @"AM_KEEP_[a-f0-9]+_[0-9]+_END").Value;
+    if (protectedMarker.Length == 0) return 33;
+    var answer = "# Привет\nМир: " + protectedMarker + "\n\n| Поле | Значение |\n| --- | --- |\n| test | 1 |";
     if (mode == "file") { File.WriteAllText(args[2], answer, new UTF8Encoding(true)); Console.Write("STATUS NOISE"); }
     else Console.Write(answer);
     return 0;
@@ -285,7 +287,7 @@ internal static class TranslationTests
     Check(await Translate(Options("fake file {output}")) == standard, "output file ignores noisy stdout and strips BOM");
     var quoted = Options("fake args {model}");
     quoted.Model = "model with \"quotes\" and trailing slash\\";
-    Check(await Translate(quoted) == quoted.Model, "Windows argument quoting round-trip");
+    Check(await new CliTranslator().TranslateAsync("Argument transport fixture", quoted, CancellationToken.None) == quoted.Model, "Windows argument quoting round-trip");
     await Throws<InvalidOperationException>(() => Translate(Options("fake error")), "EXPECTED_ERROR", "nonzero exit drains stderr and returns diagnostic");
     await Throws<InvalidOperationException>(() => new CliTranslator().TranslateAsync(new string('a', 500000), Options("fake early"), CancellationToken.None), "EARLY_EXIT", "early CLI exit preserves diagnostic when stdin breaks");
     foreach (var extension in new[] { ".ps1", ".js" }) {
@@ -295,7 +297,7 @@ internal static class TranslationTests
     }
     var installations = CliProfiles.DiscoverInstalled();
     Check(installations.All(i => CliProfiles.IsLauncherPath(i.Executable)) && installations.GroupBy(i => i.ProviderId).All(g => g.Count() == 1), "auto-discovery supports official launchers without duplicate CLIs");
-    var promptResult = await Translate(Options("fake prompt {prompt}"));
+    var promptResult = await new CliTranslator().TranslateAsync("# Hello\nПривет", Options("fake prompt {prompt}"), CancellationToken.None);
     Check(promptResult.Contains("untrusted document data") && promptResult.Contains("# Hello\nПривет"), "prompt argument mode preserves the complete document");
     await Throws<ArgumentException>(() => new CliTranslator().TranslateAsync(new string('a', 40000), Options("fake prompt {prompt}"), CancellationToken.None), "Windows", "oversized prompt argument fails before process launch");
     await Throws<InvalidOperationException>(() => Translate(Options("fake empty")), "пустой", "empty output rejected");

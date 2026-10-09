@@ -18,7 +18,7 @@ namespace AnotherMarkdown.Translation
   {
     public static async Task<string> RunAsync(IReadOnlyList<TranslationChunk> chunks, int parallelRequests,
       Func<TranslationChunk, CancellationToken, Task<string>> translate, CancellationToken token,
-      IProgress<TranslationProgress> progress = null)
+      IProgress<TranslationProgress> progress = null, bool preserveTranslatedWhitespace = false)
     {
       if (chunks == null || chunks.Count == 0) throw new ArgumentException("Нет частей для перевода.");
       if (parallelRequests < 1 || parallelRequests > 8) throw new ArgumentOutOfRangeException(nameof(parallelRequests));
@@ -37,8 +37,8 @@ namespace AnotherMarkdown.Translation
               if (index >= chunks.Count) return;
               var result = await translate(chunks[index], cancellation.Token).ConfigureAwait(false);
               cancellation.Token.ThrowIfCancellationRequested();
-              result = result?.TrimStart('\uFEFF', '\r', '\n').TrimEnd('\r', '\n');
-              if (string.IsNullOrWhiteSpace(result)) throw new InvalidOperationException("Модель вернула пустой перевод части " + (index + 1) + ".");
+              if (!preserveTranslatedWhitespace) result = result?.TrimStart('\uFEFF', '\r', '\n').TrimEnd('\r', '\n');
+              if (string.IsNullOrWhiteSpace(result?.TrimStart('\uFEFF'))) throw new InvalidOperationException("Модель вернула пустой перевод части " + (index + 1) + ".");
               if (Interlocked.Add(ref characters, result.Length + chunks[index].PrefixBefore.Length + chunks[index].SeparatorAfter.Length) > 32000000)
                 throw new InvalidOperationException("Итоговый перевод слишком большой (более 32 млн символов).");
               results[index] = result;

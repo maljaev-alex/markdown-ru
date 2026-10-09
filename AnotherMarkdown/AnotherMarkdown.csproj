@@ -76,10 +76,31 @@
     <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
       <HintPath>$(PackagesDirectory)\Newtonsoft.Json.13.0.4\lib\net45\Newtonsoft.Json.dll</HintPath>
     </Reference>
+    <Reference Include="Markdig">
+      <HintPath>$(PackagesDirectory)\Markdig.1.4.0\lib\net462\Markdig.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="System.Memory">
+      <HintPath>$(PackagesDirectory)\System.Memory.4.6.3\lib\net462\System.Memory.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="System.Buffers">
+      <HintPath>$(PackagesDirectory)\System.Buffers.4.6.1\lib\net462\System.Buffers.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="System.Numerics.Vectors">
+      <HintPath>$(PackagesDirectory)\System.Numerics.Vectors.4.6.1\lib\net462\System.Numerics.Vectors.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="System.Runtime.CompilerServices.Unsafe">
+      <HintPath>$(PackagesDirectory)\System.Runtime.CompilerServices.Unsafe.6.1.2\lib\net462\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Data" />
     <Reference Include="System.Drawing" />
     <Reference Include="System.Net.Http" />
+    <Reference Include="System.Numerics" />
     <Reference Include="System.Security" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Xml" />
@@ -89,6 +110,8 @@
     <Compile Include="Entities\ProxySettings.cs" />
     <Compile Include="Entities\Settings.cs" />
     <Compile Include="Translation\TranslationOptions.cs" />
+    <Compile Include="Translation\CliConnectionSettings.cs" />
+    <Compile Include="Translation\CliConnectionStore.cs" />
     <Compile Include="Translation\ApiConnection.cs" />
     <Compile Include="Translation\ApiConnectionStore.cs" />
     <Compile Include="Translation\ApiTranslator.cs" />
@@ -98,10 +121,13 @@
     <Compile Include="Translation\CliCommand.cs" />
     <Compile Include="Translation\CliProcess.cs" />
     <Compile Include="Translation\CliModelDiscovery.cs" />
+    <Compile Include="Translation\SettingsDiscoveryCache.cs" />
     <Compile Include="Translation\CliTranslator.cs" />
     <Compile Include="Translation\ProcessJob.cs" />
     <Compile Include="Translation\TranslationCache.cs" />
     <Compile Include="Translation\MarkdownTranslationPlan.cs" />
+    <Compile Include="Translation\MarkdownStructure.cs" />
+    <Compile Include="Translation\MarkdownCodeProtection.cs" />
     <Compile Include="Translation\TranslationBatch.cs" />
     <Compile Include="Forms\MarkdownPreviewForm.Translation.cs">
       <DependentUpon>MarkdownPreviewForm.cs</DependentUpon>

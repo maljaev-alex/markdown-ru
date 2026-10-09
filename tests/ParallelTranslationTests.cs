@@ -45,9 +45,9 @@ internal static class ParallelTranslationTests
 
   private static async Task Run()
   {
-    Reconstruction(); AtomicBlocks(); Context(); CacheKeys();
+    Reconstruction(); SectionGranularity(); MinimumChunkSize(); AtomicBlocks(); Context(); CacheKeys();
     await Validation(); await OrderedWorkers(); await Cancellation(); await PrimaryFailure(); await EmptyAndPartial();
-    await CliIntegration(false); await CliIntegration(true); await ApiIntegration();
+    await CliIntegration(false); await CliIntegration(true); await ApiIntegration(); await ProtectedCodeIntegration();
   }
 
   private static void Check(bool condition, string label)
@@ -89,6 +89,81 @@ internal static class ParallelTranslationTests
     var source = (atStart ? "" : Paragraphs("before", 16)) + atom + (unclosed ? "" : "\n\n" + Paragraphs("after", 20));
     var plan = MarkdownTranslationPlan.Create(source, 4);
     Check(Reconstruct(plan) == source && plan.Any(c => c.Markdown.Contains(atom)), label + " stays whole across target-sized internal blank lines");
+  }
+
+  private static void SectionGranularity()
+  {
+    var sections = "---\nname: fixture\ndescription: SOURCE_description\n---\n\n# Reviewer\n\nSOURCE_introduction\n\n";
+    for (var i = 0; i < 8; i++) sections += "## Section " + i + "\n\nSOURCE_section " + Fill(540) + "\n\n";
+    Check(sections.Length < 8000, "compact section regression is below the former whole-document threshold");
+    foreach (var workers in new[] { 2, 4, 8 }) {
+      var plan = MarkdownTranslationPlan.Create(sections, workers);
+      Check(plan.Count == workers && Reconstruct(plan) == sections, "compact sections use all requested workers: " + workers);
+      Check(plan.Skip(1).All(c => c.Markdown.StartsWith("## Section ", StringComparison.Ordinal)), "compact sections are grouped at headings rather than cut inside their prose: " + workers);
+      Check(plan[0].Markdown.StartsWith("---", StringComparison.Ordinal) && plan[0].Markdown.Contains("# Reviewer"), "front matter stays with the opening document section: " + workers);
+    }
+    var paragraphs = string.Concat(Enumerable.Range(0, 8).Select(i => "SOURCE_paragraph " + i + " " + Fill(120) + "\n\n"));
+    Check(MarkdownTranslationPlan.Create(paragraphs, 8).Count == 8, "eight independent short paragraphs can use eight requests");
+    Check(MarkdownTranslationPlan.Create("SOURCE_first\n\nSOURCE_second", 8).Count == 2, "fewer independent blocks produce only useful requests without empty padding");
+    Check(MarkdownTranslationPlan.Create("\uFEFF# Title\n\nSOURCE_body\n", 8).Count == 1, "a BOM-prefixed heading remains attached to its single body");
+    var adjacent = string.Concat(Enumerable.Range(0, 8).Select(i => "## Section " + i + "\nSOURCE_body " + Fill(150) + "\n"));
+    var adjacentPlan = MarkdownTranslationPlan.Create(adjacent, 8);
+    Check(adjacentPlan.Count == 8 && Reconstruct(adjacentPlan) == adjacent && adjacentPlan.All(c => c.Markdown.StartsWith("## Section", StringComparison.Ordinal)),
+      "top-level ATX sections split without blank lines between them");
+    var nested = "- SOURCE_item\n  ## Nested heading\n  SOURCE_nested " + Fill(600) + "\n  ## Still nested\n  SOURCE_tail\n";
+    var mixed = nested + "## Root section\nSOURCE_root\n";
+    var nestedPlan = MarkdownTranslationPlan.Create(mixed, 8);
+    Check(nestedPlan.Count == 2 && nestedPlan[0].Markdown.Contains(nested.TrimEnd('\n')) && Reconstruct(nestedPlan) == mixed,
+      "list-contained headings remain atomic while an unindented heading ends the list");
+    var nestedLevels = "- SOURCE_parent\n  - SOURCE_child\n  ## Heading in parent item\n  SOURCE_parent_tail\n";
+    var nestedLevelsPlan = MarkdownTranslationPlan.Create(nestedLevels + "## Outside\nSOURCE_body", 8);
+    Check(nestedLevelsPlan.Count == 2 && nestedLevelsPlan[0].Markdown.Contains(nestedLevels.TrimEnd('\n')),
+      "dedenting from a nested list keeps a heading inside its parent list item");
+    var quotedFence = "> ```markdown\n> # SOURCE_not_a_section\n>\n> ## SOURCE_also_code\n> ```";
+    var protectedSource = "# Intro\n\nSOURCE_intro\n\n" + quotedFence + "\n\n## End\n\nSOURCE_end";
+    var protectedPlan = MarkdownTranslationPlan.Create(protectedSource, 8);
+    Check(protectedPlan.Any(c => c.Markdown.Contains(quotedFence)) && Reconstruct(protectedPlan) == protectedSource,
+      "small-document splitting still protects headings inside a quoted fence");
+  }
+
+  private static void MinimumChunkSize()
+  {
+    Check(new TranslationOptions().MinimumChunkCharacters == 2000, "the user-selected default minimum chunk size is 2000 characters");
+    var document = string.Concat(Enumerable.Range(0, 12).Select(i => "## Section " + i + "\n\n" + Fill(540) + "\n\n"));
+    foreach (var minimum in new[] { 0, 500, 2000, 1000000 }) {
+      var plan = MarkdownTranslationPlan.Create(document, 8, minimum);
+      Check(Reconstruct(plan) == document && (plan.Count == 1 || plan.All(c => c.Markdown.Length >= minimum)), "the configured minimum applies to target text, excluding context and separators: " + minimum);
+      if (minimum == 0 || minimum == 500) Check(plan.Count == 8, "a small or disabled minimum lets a compact document use eight requests: " + minimum);
+      if (minimum == 2000) Check(plan.Count == 3, "a 2000-character minimum limits a roughly 6800-character document to three parts");
+      if (minimum == 1000000) Check(plan.Count == 1, "a source shorter than the minimum is sent whole");
+    }
+    var prefix = string.Concat(Enumerable.Repeat(" \t\r\n", 700));
+    var padded = prefix + string.Join("\r\n\r\n", Enumerable.Repeat(Fill(490), 8)) + "\r\n\r\n";
+    var paddedPlan = MarkdownTranslationPlan.Create(padded, 8, 500);
+    Check(paddedPlan.Count == 4 && paddedPlan.All(c => c.Markdown.Length >= 500) && Reconstruct(paddedPlan) == padded,
+      "a long whitespace prefix and CRLF separators do not satisfy a chunk minimum on their own");
+
+    // Exhaustively enumerate small paragraph partitions independently of the planner.
+    // This catches an early attractive heading/cut consuming space needed by later parts.
+    var random = new Random(481);
+    for (var trial = 0; trial < 70; trial++) {
+      var atoms = Enumerable.Range(0, random.Next(2, 10)).Select(_ => Fill(random.Next(10, 550))).ToArray();
+      var source = string.Join("\n\n", atoms); var minimum = new[] { 0, 50, 200, 500, 2000 }[trial % 5]; var workers = trial % 2 == 0 ? 4 : 8;
+      var maximum = 1;
+      for (var mask = 0; mask < (1 << (atoms.Length - 1)); mask++) {
+        var start = 0; var count = 0; var valid = true;
+        for (var end = 1; end <= atoms.Length; end++) {
+          if (end < atoms.Length && (mask & (1 << (end - 1))) == 0) continue;
+          if (string.Join("\n\n", atoms.Skip(start).Take(end - start)).Length < minimum) { valid = false; break; }
+          count++; start = end;
+        }
+        if (valid) maximum = Math.Max(maximum, count);
+      }
+      var plan = MarkdownTranslationPlan.Create(source, workers, minimum);
+      if (plan.Count != Math.Min(workers, maximum) || Reconstruct(plan) != source || (plan.Count > 1 && plan.Any(c => c.Markdown.Length < minimum)))
+        throw new Exception("Minimum-size partition regression at trial " + trial);
+    }
+    Check(true, "70 varied compact documents reach the feasible worker count while respecting every minimum-sized target");
   }
 
   private static void AtomicBlocks()
@@ -168,10 +243,19 @@ internal static class ParallelTranslationTests
     var options = ApiOptions(api, 1); var key = TranslationCache.Key(source, options); options.ParallelRequests = 3;
     Check(key != TranslationCache.Key(source, options) && !key.Contains(api.ApiKey) && TranslationCache.Key(source, options) == TranslationCache.Key(source, options.Copy()), "API cache includes concurrency without exposing a credential and survives a draft copy");
     Check(new TranslationOptions().ParallelRequests == 1, "fresh translation settings retain a single request by default");
+    var beforeMinimum = TranslationCache.Key(source, cli); cli.MinimumChunkCharacters = 500;
+    Check(beforeMinimum != TranslationCache.Key(source, cli) && cli.Copy().MinimumChunkCharacters == 500, "CLI translation cache and option snapshots include the minimum chunk size");
+    beforeMinimum = TranslationCache.Key(source, options); options.MinimumChunkCharacters = 0;
+    Check(beforeMinimum != TranslationCache.Key(source, options) && options.Copy().MinimumChunkCharacters == 0, "API translation cache and option snapshots include a disabled minimum");
   }
 
   private static async Task Validation()
   {
+    foreach (var minimum in new[] { -1, 1000001 }) {
+      Check(await Failure(() => Task.FromResult(MarkdownTranslationPlan.Create(Source(), 4, minimum))) is ArgumentOutOfRangeException, "plan rejects invalid minimum chunk size");
+      var invalid = CliOptions(4); invalid.MinimumChunkCharacters = minimum;
+      Check(await Failure(() => new CliTranslator().TranslateAsync(Source(), invalid, CancellationToken.None)) is ArgumentException, "public translation rejects an invalid minimum before starting transports");
+    }
     foreach (var number in new[] { 0, 9 }) {
       Check(await Failure(() => Task.FromResult(MarkdownTranslationPlan.Create(Source(), number))) is ArgumentOutOfRangeException, "plan rejects concurrency outside one to eight");
       Check(await Failure(() => TranslationBatch.RunAsync(MarkdownTranslationPlan.Create(Source(), 3), number, (c, t) => Task.FromResult(c.Markdown), CancellationToken.None)) is ArgumentOutOfRangeException, "batch rejects concurrency outside one to eight");
@@ -352,6 +436,33 @@ internal static class ParallelTranslationTests
       Check(server.MaximumActive >= 2 && server.MaximumActive <= 3 && (string)records.OrderBy(r => (long)r["end"]).First()["target"] != plan[0].Markdown
         && progress.Values.Last().Completed == plan.Count, "real loopback API requests honor concurrency and stitch out-of-order results without context seams");
       Check(server.Failure == null, "loopback API fixture completed without hidden transport failures");
+    }
+  }
+
+  private static async Task ProtectedCodeIntegration()
+  {
+    var source = "# Intro\n\nSOURCE_read `SOURCE_literal`.[^n]\n\n## Example\n\nSOURCE_explain.\n\n```markdown\n# SOURCE_example\n```\n\n## Notes\n\n[^n]: SOURCE_note with `SOURCE_footnote`.\n";
+    var expected = source.Replace("SOURCE_read", "RU_read").Replace("SOURCE_explain", "RU_explain").Replace("SOURCE_note", "RU_note");
+    var cli = CliOptions(8); cli.MinimumChunkCharacters = 0;
+    Check(MarkdownTranslationPlan.Create(source, 8, 0).Count == 3, "global reference index cannot merge independent sections into one source container");
+    var actualCli = await Within(new CliTranslator().TranslateAsync(source, cli, CancellationToken.None));
+    Check(actualCli == expected,
+      "native CLI restores fenced inline and cross-chunk footnote code while translating prose");
+    using (var server = new ApiOrigin()) {
+      var connection = new ApiConnection { Endpoint = "http://127.0.0.1:" + server.Port + "/v1", Model = "fixture-model", ProxyMode = "direct" };
+      var api = ApiOptions(connection, 8); api.MinimumChunkCharacters = 0;
+      Check(await Within(new CliTranslator().TranslateAsync(source, api, CancellationToken.None)) == expected,
+        "parallel API shares exact code protection and source-ordered assembly with CLI");
+      var unused = "[^unused]: SOURCE_prose with `SOURCE_code`.";
+      Check(await Within(new ApiTranslator().TranslateAsync(unused, connection, 15, CancellationToken.None)) == unused.Replace("SOURCE_prose", "RU_prose"),
+        "direct API path also protects code inside an unused footnote");
+      var tail = "```text\nSOURCE_literal\n\n\n";
+      api.ParallelRequests = 1;
+      Check(await Within(new CliTranslator().TranslateAsync(tail, api, CancellationToken.None)) == tail,
+        "single API response keeps every trailing code newline after transport normalization");
+      cli.ParallelRequests = 1;
+      Check(await Within(new CliTranslator().TranslateAsync(tail, cli, CancellationToken.None)) == tail,
+        "single native CLI response keeps every trailing code newline after transport normalization");
     }
   }
 

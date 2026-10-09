@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 
 namespace AnotherMarkdown.Translation
 {
@@ -58,7 +59,9 @@ namespace AnotherMarkdown.Translation
       return All.Any(p => p.Id == name) ? name : "custom";
     }
 
-    public static List<CliInstallation> DiscoverInstalled()
+    public static List<CliInstallation> DiscoverInstalled() => DiscoverInstalled(CancellationToken.None);
+
+    public static List<CliInstallation> DiscoverInstalled(CancellationToken cancellation)
     {
       var directories = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';').ToList();
       var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -72,22 +75,24 @@ namespace AnotherMarkdown.Translation
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Google", "antigravity-cli"),
         Path.Combine(roaming, "npm"), Path.Combine(user, ".local", "bin"), Path.Combine(user, ".cargo", "bin")
       });
-      return DiscoverInstalled(directories);
+      return DiscoverInstalled(directories, cancellation);
     }
 
-    internal static List<CliInstallation> DiscoverInstalled(IEnumerable<string> directories)
+    internal static List<CliInstallation> DiscoverInstalled(IEnumerable<string> directories, CancellationToken cancellation = default(CancellationToken))
     {
       var locations = directories.Where(d => !string.IsNullOrWhiteSpace(d))
         .Select(d => Environment.ExpandEnvironmentVariables(d.Trim().Trim('"')))
         .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
       var result = new List<CliInstallation>();
       foreach (var profile in All.Where(p => p.Id != "custom")) {
+        cancellation.ThrowIfCancellationRequested();
         var names = profile.Id == "cursor" ? new[] { "agent", "cursor-agent" } : new[] { profile.Id };
         CliInstallation selected = null;
         // A native executable wins across all locations; PATH order breaks ties.
         foreach (var extension in new[] { ".exe", ".cmd", ".bat" }.Where(extension => profile.SupportsBatchLauncher || extension == ".exe")) {
           foreach (var directory in locations) {
             foreach (var name in names) {
+              cancellation.ThrowIfCancellationRequested();
               string path;
               try { path = Path.GetFullPath(Path.Combine(directory, name + extension)); }
               catch (ArgumentException) { continue; }

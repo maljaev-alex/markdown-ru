@@ -93,14 +93,24 @@ namespace AnotherMarkdown
       settings.Translation.Arguments = Win32.ReadIniValue("Translation", "Arguments", _iniFilePath, settings.Translation.Arguments);
       settings.Translation.ProviderId = Win32.ReadIniValue("Translation", "ProviderId", _iniFilePath, CliProfiles.Identify(settings.Translation.Executable));
       settings.Translation.UseDefaultModel = Win32.ReadIniValue("Translation", "UseDefaultModel", _iniFilePath, string.IsNullOrWhiteSpace(settings.Translation.Model).ToString()).Equals("True", StringComparison.OrdinalIgnoreCase);
+      settings.Translation.UseManualModel = Win32.ReadIniValue("Translation", "UseManualModel", _iniFilePath, "False").Equals("True", StringComparison.OrdinalIgnoreCase);
       settings.Translation.UseCustomArguments = Win32.ReadIniValue("Translation", "UseCustomArguments", _iniFilePath, (settings.Translation.Arguments != TranslationOptions.DefaultArguments).ToString()).Equals("True", StringComparison.OrdinalIgnoreCase);
       settings.Translation.OutputFormat = Win32.ReadIniValue("Translation", "OutputFormat", _iniFilePath, CliProfiles.Get(settings.Translation.ProviderId).OutputFormat);
       settings.Translation.TimeoutSeconds = Math.Max(10, Math.Min(3600, Win32.GetPrivateProfileInt("Translation", "TimeoutSeconds", 300, _iniFilePath)));
       settings.Translation.ParallelRequests = Math.Max(1, Math.Min(8, Win32.GetPrivateProfileInt("Translation", "ParallelRequests", 1, _iniFilePath)));
+      var minimumChunkText = Win32.ReadIniValue("Translation", "MinimumChunkCharacters", _iniFilePath, "2000");
+      settings.Translation.MinimumChunkCharacters = int.TryParse(minimumChunkText, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var minimumChunk)
+        ? Math.Max(0, Math.Min(1000000, minimumChunk)) : 2000;
       settings.Translation.ShowButtons = Win32.ReadIniValue("Translation", "ShowButtons", _iniFilePath, "True").Equals("True", StringComparison.OrdinalIgnoreCase);
       settings.Translation.ConnectionMode = Win32.ReadIniValue("Translation", "ConnectionMode", _iniFilePath, "cli");
       settings.Translation.SelectedApiConnectionId = Win32.ReadIniValue("Translation", "ApiConnectionId", _iniFilePath, "");
       settings.Translation.LoadApiConnections(_iniFilePath + ".api.json");
+      settings.Translation.LoadCliConnections(_iniFilePath + ".cli.json");
+      // CLI-mode INI values remain authoritative for the active legacy selection.
+      // API-mode common controls must not overwrite an already saved CLI draft.
+      if (!settings.Translation.UseApi || !settings.Translation.CliConnections.Any(c => CliConnectionSettings.SameIdentity(
+        c.ProviderId, c.Executable, settings.Translation.ProviderId, settings.Translation.Executable)))
+        CliConnectionSettings.Upsert(settings.Translation.CliConnections, CliConnectionSettings.Capture(settings.Translation));
       return settings;
     }
 
@@ -463,7 +473,9 @@ namespace AnotherMarkdown
       try { _settings.Translation.ValidateArgumentStorage(); }
       catch (ArgumentException error) { throw new IOException(error.Message); }
       var apiPath = _iniFilePath + ".api.json";
+      var cliPath = _iniFilePath + ".cli.json";
       IOException apiError = null;
+      IOException cliError = null;
       if (_settings.Translation.ApiConnections.Count > 0 || (_settings.Translation.ApiConfigurationError == null && File.Exists(apiPath))) {
         try {
           string backupWarning;
@@ -473,6 +485,15 @@ namespace AnotherMarkdown
           if (reportRecovery && backupWarning != null) MessageBox.Show(new PluginWindowOwner(PluginBase.nppData._nppHandle), backupWarning, "Настройки API", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         catch (IOException) { apiError = new IOException("Не удалось сохранить подключения API в файл: " + apiPath + "."); }
+      }
+      if (_settings.Translation.CliConnections == null) _settings.Translation.CliConnections = new System.Collections.Generic.List<CliConnectionSettings>();
+      if (!_settings.Translation.UseApi)
+        CliConnectionSettings.Upsert(_settings.Translation.CliConnections, CliConnectionSettings.Capture(_settings.Translation));
+      if (_settings.Translation.CliConfigurationError != null)
+        cliError = new IOException("Не удалось прочитать прежние настройки CLI. Файл сохранён без изменений: " + cliPath + ".");
+      else if (_settings.Translation.CliConnections.Count > 0 || File.Exists(cliPath)) {
+        try { CliConnectionStore.Save(cliPath, _settings.Translation.CliConnections); }
+        catch (IOException) { cliError = new IOException("Не удалось сохранить настройки CLI в файл: " + cliPath + "."); }
       }
       Win32.WriteIniValue("Options", "SyncViewWithCaretPosition", _settings.SyncViewWithCaretPosition ? "1" : "0", _iniFilePath);
       Win32.WriteIniValue("Options", "SyncWithFirstVisibleLine", _settings.SyncViewWithFirstVisibleLine ? "1" : "0", _iniFilePath);
@@ -484,26 +505,33 @@ namespace AnotherMarkdown
       Win32.WriteIniValue("Options", "ZoomLevel", _settings.ZoomLevel.ToString(), _iniFilePath);
       Win32.WriteIniValue("Options", "ShowToolbar", _settings.ShowToolbar.ToString(), _iniFilePath);
       Win32.WriteIniValue("Options", "ShowStatusbar", _settings.ShowStatusbar.ToString(), _iniFilePath);
-      Win32.WriteIniValue("Translation", "Executable", _settings.Translation.Executable, _iniFilePath);
-      Win32.WriteIniValue("Translation", "Model", _settings.Translation.Model, _iniFilePath);
-      Win32.WriteIniValue("Translation", "ReasoningEffort", _settings.Translation.ReasoningEffort ?? "", _iniFilePath);
-      // Profile APIs remove one surrounding quote pair. Supply that pair ourselves
-      // so independent quotes belonging to the command line survive a save/reload.
-      Win32.WriteIniValue("Translation", "Arguments", "\"" + (_settings.Translation.Arguments ?? "") + "\"", _iniFilePath);
-      Win32.WriteIniValue("Translation", "ProviderId", _settings.Translation.ProviderId, _iniFilePath);
-      Win32.WriteIniValue("Translation", "UseDefaultModel", _settings.Translation.UseDefaultModel.ToString(), _iniFilePath);
-      Win32.WriteIniValue("Translation", "UseCustomArguments", _settings.Translation.UseCustomArguments.ToString(), _iniFilePath);
-      Win32.WriteIniValue("Translation", "OutputFormat", _settings.Translation.OutputFormat, _iniFilePath);
-      Win32.WriteIniValue("Translation", "TimeoutSeconds", _settings.Translation.TimeoutSeconds.ToString(), _iniFilePath);
-      Win32.WriteIniValue("Translation", "ParallelRequests", _settings.Translation.ParallelRequests.ToString(), _iniFilePath);
-      Win32.WriteIniValue("Translation", "ShowButtons", _settings.Translation.ShowButtons.ToString(), _iniFilePath);
-      if (apiError == null && _settings.Translation.ApiConfigurationError == null) {
+      if (cliError == null) {
+        Win32.WriteIniValue("Translation", "Executable", _settings.Translation.Executable, _iniFilePath);
+        Win32.WriteIniValue("Translation", "Model", _settings.Translation.Model, _iniFilePath);
+        Win32.WriteIniValue("Translation", "ReasoningEffort", _settings.Translation.ReasoningEffort ?? "", _iniFilePath);
+        // Profile APIs remove one surrounding quote pair. Supply that pair ourselves
+        // so independent quotes belonging to the command line survive a save/reload.
+        Win32.WriteIniValue("Translation", "Arguments", "\"" + (_settings.Translation.Arguments ?? "") + "\"", _iniFilePath);
+        Win32.WriteIniValue("Translation", "ProviderId", _settings.Translation.ProviderId, _iniFilePath);
+        Win32.WriteIniValue("Translation", "UseDefaultModel", _settings.Translation.UseDefaultModel.ToString(), _iniFilePath);
+        Win32.WriteIniValue("Translation", "UseManualModel", _settings.Translation.UseManualModel.ToString(), _iniFilePath);
+        Win32.WriteIniValue("Translation", "UseCustomArguments", _settings.Translation.UseCustomArguments.ToString(), _iniFilePath);
+        Win32.WriteIniValue("Translation", "OutputFormat", _settings.Translation.OutputFormat, _iniFilePath);
+      }
+      if (cliError == null || _settings.Translation.UseApi) {
+        Win32.WriteIniValue("Translation", "TimeoutSeconds", _settings.Translation.TimeoutSeconds.ToString(), _iniFilePath);
+        Win32.WriteIniValue("Translation", "ParallelRequests", _settings.Translation.ParallelRequests.ToString(), _iniFilePath);
+        Win32.WriteIniValue("Translation", "MinimumChunkCharacters", _settings.Translation.MinimumChunkCharacters.ToString(), _iniFilePath);
+        Win32.WriteIniValue("Translation", "ShowButtons", _settings.Translation.ShowButtons.ToString(), _iniFilePath);
+      }
+      if (apiError == null && _settings.Translation.ApiConfigurationError == null && (_settings.Translation.UseApi || cliError == null)) {
         Win32.WriteIniValue("Translation", "ConnectionMode", _settings.Translation.ConnectionMode, _iniFilePath);
         Win32.WriteIniValue("Translation", "ApiConnectionId", _settings.Translation.SelectedApiConnectionId ?? "", _iniFilePath);
       }
-      else if (!_settings.Translation.UseApi)
+      else if (!_settings.Translation.UseApi && cliError == null)
         Win32.WriteIniValue("Translation", "ConnectionMode", "cli", _iniFilePath);
       if (apiError != null) throw apiError;
+      if (cliError != null) throw cliError;
     }
 
     private void ShowAboutDialog()

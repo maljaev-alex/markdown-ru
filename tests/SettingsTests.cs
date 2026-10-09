@@ -71,45 +71,82 @@ internal static class SettingsTests
     settings.Translation.ParallelRequests = 4; settings.Translation.ShowButtons = false;
     using (var form = new SettingsForm(settings)) {
       var parallel = Find<NumericUpDown>(form, "translationParallelRequests");
+      var minimum = Find<NumericUpDown>(form, "translationMinimumChunk");
       var mode = Find<ComboBox>(form, "translationConnectionMode");
       Check(parallel.Minimum == 1 && parallel.Maximum == 8 && parallel.Value == 4, "parallel request control restores the saved count and enforces 1..8");
-      Check(parallel.Parent.Name == "translationParallelLayout" && parallel.Parent.Parent.Name == "translationConnections"
+      Check(settings.Translation.MinimumChunkCharacters == 2000 && minimum.Value == 2000 && minimum.Minimum == 0 && minimum.Maximum == 1000000,
+        "minimum chunk control defaults to 2000 and allows zero through one million characters");
+      Check(parallel.Parent.Name == "translationParallelLayout" && parallel.Parent.Parent.Name == "translationParallelGroup"
         && form.Controls.Find("translationParallelRequests", true).Length == 1, "one shared parallel request control is outside CLI and API advanced sections");
-      parallel.Value = 6; mode.SelectedIndex = 1;
-      Check(ReadDraft(form).UseApi && ReadDraft(form).ParallelRequests == 6, "switching to API retains the edited shared parallel count");
+      Check(minimum.Parent == parallel.Parent && minimum.Enabled && form.Controls.Find("translationMinimumChunk", true).Length == 1,
+        "one editable minimum chunk control is shared outside CLI and API advanced sections");
+      parallel.Value = 6; minimum.Value = 3500; mode.SelectedIndex = 1;
+      Check(ReadDraft(form).UseApi && ReadDraft(form).ParallelRequests == 6 && ReadDraft(form).MinimumChunkCharacters == 3500,
+        "switching to API retains the edited shared parallel count and chunk minimum");
+      minimum.Value = 0; Find<NumericUpDown>(form, "apiTimeout").Value = 41; Find<CheckBox>(form, "apiShowButtons").Checked = true;
       mode.SelectedIndex = 0;
       WaitForLocalSettings(() => ((Button)typeof(SettingsForm).GetField("translationCliRefresh", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).Enabled
         && Find<Button>(form, "btnSave").Enabled);
-      Check(!ReadDraft(form).UseApi && ReadDraft(form).ParallelRequests == 6, "switching back to CLI retains the API parallel count");
+      Check(!ReadDraft(form).UseApi && ReadDraft(form).ParallelRequests == 6 && ReadDraft(form).MinimumChunkCharacters == 3500
+        && ReadDraft(form).TimeoutSeconds == 300 && !ReadDraft(form).ShowButtons,
+        "switching back to CLI restores its own threading, timeout and visibility");
       var picker = Find<ComboBox>(form, "translationCli");
       var installation = new CliInstallation { Executable = Assembly.GetExecutingAssembly().Location, ProviderId = "custom" };
       picker.Items.Add(installation); picker.SelectedItem = installation;
       WaitForLocalSettings(() => Find<Button>(form, "btnSave").Enabled);
-      Check(parallel.Value == 6 && ReadDraft(form).ParallelRequests == 6, "choosing another CLI preserves the shared parallel count");
-      parallel.Value = 7; Click(Find<Button>(form, "translationDefaults"));
+      Check(parallel.Value == 6 && ReadDraft(form).ParallelRequests == 6 && minimum.Value == 3500 && ReadDraft(form).MinimumChunkCharacters == 3500,
+        "choosing the same CLI does not reset its parallel count or chunk minimum");
+      parallel.Value = 7; minimum.Value = 4700; Click(Find<Button>(form, "translationDefaults"));
       WaitForLocalSettings(() => Find<Button>(form, "btnSave").Enabled);
-      Check(parallel.Value == 7 && ReadDraft(form).ParallelRequests == 7, "CLI defaults do not reset parallel requests");
+      Check(parallel.Value == 7 && ReadDraft(form).ParallelRequests == 7 && minimum.Value == 4700 && ReadDraft(form).MinimumChunkCharacters == 4700,
+        "CLI defaults do not reset parallel requests or the chunk minimum");
       mode.SelectedIndex = 1; Find<ComboBox>(form, "apiPreset").SelectedIndex = 4;
-      Check(ReadDraft(form).ParallelRequests == 7, "API service presets preserve the shared parallel count");
+      Check(ReadDraft(form).ParallelRequests == 6 && ReadDraft(form).MinimumChunkCharacters == 0 && ReadDraft(form).TimeoutSeconds == 41 && ReadDraft(form).ShowButtons,
+        "API mode and service presets restore its own threading, timeout and visibility");
+      var connections = Find<ComboBox>(form, "apiConnections");
+      Click(Find<Button>(form, "apiAdd"));
+      parallel.Value = 3; minimum.Value = 1250; Find<NumericUpDown>(form, "apiTimeout").Value = 59; Find<CheckBox>(form, "apiShowButtons").Checked = false;
+      connections.SelectedIndex = 0;
+      Check(ReadDraft(form).ParallelRequests == 6 && ReadDraft(form).MinimumChunkCharacters == 0 && ReadDraft(form).TimeoutSeconds == 41 && ReadDraft(form).ShowButtons,
+        "switching API profiles restores the first profile's independent common settings");
       Save(form);
-      Check(form.DialogResult == DialogResult.OK && form.TranslationOptions.ParallelRequests == 7 && settings.Translation.ParallelRequests == 4,
-        "Save commits the parallel count while leaving supplied settings unchanged");
+      Check(form.DialogResult == DialogResult.OK && form.TranslationOptions.ParallelRequests == 6 && form.TranslationOptions.MinimumChunkCharacters == 0
+        && settings.Translation.ParallelRequests == 4 && settings.Translation.MinimumChunkCharacters == 2000,
+        "Save commits shared translation values while leaving supplied settings unchanged");
+      var saved = new Settings { EnabledMarkdownPlugins = new[] { "attrs" }, Translation = form.TranslationOptions.Copy() };
+      using (var restored = new SettingsForm(saved)) {
+        Check(ReadDraft(restored).ParallelRequests == 6 && ReadDraft(restored).MinimumChunkCharacters == 0 && ReadDraft(restored).TimeoutSeconds == 41 && ReadDraft(restored).ShowButtons,
+          "reopening API settings restores all common settings of the active saved profile");
+        Find<ComboBox>(restored, "apiConnections").SelectedIndex = 1;
+        Check(ReadDraft(restored).ParallelRequests == 3 && ReadDraft(restored).MinimumChunkCharacters == 1250 && ReadDraft(restored).TimeoutSeconds == 59 && !ReadDraft(restored).ShowButtons,
+          "reopening retains independent threading, timeout and visibility for the inactive API profile");
+        Find<ComboBox>(restored, "translationConnectionMode").SelectedIndex = 0;
+        Check(ReadDraft(restored).ParallelRequests == 7 && ReadDraft(restored).MinimumChunkCharacters == 4700 && ReadDraft(restored).TimeoutSeconds == 300 && !ReadDraft(restored).ShowButtons,
+          "reopening in API mode also restores the hidden CLI common settings on return");
+      }
     }
     foreach (var value in new[] { 0, 9 }) {
       settings.Translation.ParallelRequests = value;
       using (var form = new SettingsForm(settings))
         Check(Find<NumericUpDown>(form, "translationParallelRequests").Value == (value == 0 ? 1 : 8), "invalid stored parallel count is clamped: " + value);
     }
-    settings.Translation = new TranslationOptions { ConnectionMode = "api", ParallelRequests = 3, ShowButtons = false };
+    foreach (var value in new[] { -1, 1000001 }) {
+      settings.Translation.MinimumChunkCharacters = value;
+      using (var form = new SettingsForm(settings))
+        Check(Find<NumericUpDown>(form, "translationMinimumChunk").Value == (value < 0 ? 0 : 1000000), "invalid stored chunk minimum is clamped: " + value);
+    }
+    settings.Translation = new TranslationOptions { ConnectionMode = "api", ParallelRequests = 3, MinimumChunkCharacters = 3300, ShowButtons = false };
     using (var apiCancellation = new System.Threading.CancellationTokenSource())
     using (var modelCancellation = new System.Threading.CancellationTokenSource())
     using (var form = new BackgroundSettings(settings)) {
       form.SelectTranslationTab(); form.Show();
       Find<NumericUpDown>(form, "translationParallelRequests").Value = 8;
+      Find<NumericUpDown>(form, "translationMinimumChunk").Value = 0;
       typeof(SettingsForm).GetField("apiCancellation", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(form, apiCancellation);
       typeof(SettingsForm).GetField("modelCancellation", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(form, modelCancellation);
       Find<Button>(form, "btnCancel").PerformClick(); form.Close();
-      Check(form.DialogResult == DialogResult.Cancel && settings.Translation.ParallelRequests == 3, "Cancel leaves the original parallel count unchanged");
+      Check(form.DialogResult == DialogResult.Cancel && settings.Translation.ParallelRequests == 3 && settings.Translation.MinimumChunkCharacters == 3300,
+        "Cancel leaves the original parallel count and chunk minimum unchanged");
       Check(apiCancellation.IsCancellationRequested && modelCancellation.IsCancellationRequested, "closing the canceled parallel settings dialog cancels pending discovery work");
     }
   }
@@ -196,6 +233,22 @@ internal static class SettingsTests
   }
   private static void GeometrySettings()
   {
+    var compact = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
+    compact.Translation = CliProfiles.Defaults("custom", Assembly.GetExecutingAssembly().Location); compact.Translation.ShowButtons = false;
+    var discovery = new SettingsDiscoveryCache(token => Task.FromResult(new System.Collections.Generic.List<CliInstallation>()),
+      (provider, executable, token) => Task.FromResult(new CliModelCatalog()));
+    using (var form = new BackgroundSettings(compact, discovery)) {
+      form.SelectTranslationTab(); form.Show();
+      WaitForLocalSettings(() => (bool)typeof(SettingsForm).GetField("settingsShown", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form));
+      form.PerformLayout(); Application.DoEvents();
+      var group = Find<GroupBox>(form, "translationParallelGroup");
+      Check(group.Text == "\u041c\u043d\u043e\u0433\u043e\u043f\u043e\u0442\u043e\u0447\u043d\u043e\u0441\u0442\u044c"
+        && SameRow(Find<NumericUpDown>(form, "translationParallelRequests"), Find<NumericUpDown>(form, "translationMinimumChunk")),
+        "thread count and minimum share one horizontal row in the named threading group");
+      Check(SameRow(Find<ComboBox>(form, "translationModel"), Find<ComboBox>(form, "translationEffort")),
+        "CLI model and reasoning effort share one horizontal row at normal width");
+      form.Close();
+    }
     foreach (var workingArea in new[] { new Rectangle(0, 0, 1920, 1032), new Rectangle(-1366, 40, 1366, 728) }) {
       var settings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
       settings.Translation.ShowButtons = false;
@@ -214,6 +267,8 @@ internal static class SettingsTests
     } } };
     using (var form = new BackgroundSettings(apiSettings)) {
       form.SelectTranslationTab(); form.Show();
+      Check(SameRow(Find<ComboBox>(form, "apiModel"), Find<ComboBox>(form, "apiEffort")),
+        "API model and reasoning effort share one horizontal row at normal width");
       form.Font = new Font("Segoe UI", 13.5F);
       form.ClampToWorkingArea(new Rectangle(form.Left, form.Top, 640, 480));
       var parallel = Find<NumericUpDown>(form, "translationParallelRequests");
@@ -222,6 +277,15 @@ internal static class SettingsTests
       Check(parallel.Visible && parallel.Parent.ClientRectangle.Contains(parallel.Bounds)
         && page.ClientRectangle.Contains(page.RectangleToClient(parallel.RectangleToScreen(parallel.ClientRectangle))),
         "shared parallel request control remains visible and reachable at 640x480 with a large font");
+      var minimum = Find<NumericUpDown>(form, "translationMinimumChunk");
+      page.ScrollControlIntoView(minimum); form.PerformLayout(); Application.DoEvents();
+      Check(minimum.Visible && minimum.Parent.ClientRectangle.Contains(minimum.Bounds)
+        && page.ClientRectangle.Contains(page.RectangleToClient(minimum.RectangleToScreen(minimum.ClientRectangle))),
+        "shared chunk minimum remains visible and reachable by scrolling at 640x480 with a large font");
+      var model = Find<ComboBox>(form, "apiModel"); page.ScrollControlIntoView(model); form.PerformLayout(); Application.DoEvents();
+      Check(model.Visible && model.Width >= model.Font.Height * 3 && model.Parent.ClientRectangle.Contains(model.Bounds)
+        && page.ClientRectangle.Contains(page.RectangleToClient(model.RectangleToScreen(model.ClientRectangle))),
+        "API model field retains usable text width and remains reachable at 640x480 with a large font");
       var actions = Find<FlowLayoutPanel>(form, "apiActions");
       Find<TabPage>(form, "translationPage").ScrollControlIntoView(Find<Button>(form, "apiClearCredentials"));
       form.PerformLayout(); Application.DoEvents();
@@ -232,9 +296,15 @@ internal static class SettingsTests
       form.Close();
     }
   }
+  private static bool SameRow(Control first, Control second)
+  {
+    var a = first.RectangleToScreen(first.ClientRectangle); var b = second.RectangleToScreen(second.ClientRectangle);
+    return Math.Abs(a.Top + a.Height / 2 - b.Top - b.Height / 2) <= 4 && a.Right <= b.Left;
+  }
   private sealed class BackgroundSettings : SettingsForm
   {
     public BackgroundSettings(Settings settings) : base(settings) { }
+    public BackgroundSettings(Settings settings, SettingsDiscoveryCache discovery) : base(settings, discovery) { }
     protected override bool ShowWithoutActivation => true;
     protected override CreateParams CreateParams { get { var value = base.CreateParams; value.ExStyle |= 0x08000000; return value; } }
   }
@@ -341,13 +411,16 @@ internal static class SettingsTests
       var efforts = Find<ComboBox>(form, "translationEffort");
       Check(efforts.Enabled && efforts.Items.Count == 3, "Codex effort selector uses advertised choices");
       var custom = (CheckBox)typeof(SettingsForm).GetField("translationCustomArguments", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
-      var note = (Label)typeof(SettingsForm).GetField("translationEffortNote", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
-      custom.Checked = true; custom.Checked = false;
-      Check(efforts.Enabled && note.Text == "", "leaving custom arguments refreshes effort control and note");
+      var hints = (ToolTip)typeof(SettingsForm).GetField("settingsToolTips", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
+      var modelHint = hints.GetToolTip(efforts);
+      custom.Checked = true;
+      Check(hints.GetToolTip(efforts) != modelHint && efforts.AccessibleDescription == hints.GetToolTip(efforts), "custom arguments update the effort hint without adding a layout row");
+      custom.Checked = false;
+      Check(efforts.Enabled && hints.GetToolTip(efforts) == modelHint, "leaving custom arguments restores the model effort hint");
       using (var refreshing = new System.Threading.CancellationTokenSource()) {
         typeof(SettingsForm).GetField("modelCancellation", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(form, refreshing);
         custom.Checked = true; custom.Checked = false;
-        Check(!efforts.Enabled, "custom toggle cannot enable stale effort choices during model refresh");
+        Check(efforts.Enabled, "cached effort choices remain editable during a background model refresh");
         typeof(SettingsForm).GetField("modelCancellation", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(form, null);
       }
       efforts.SelectedIndex = 2;

@@ -89,6 +89,81 @@
         "algorithm": "SHA256",
         "digest": "sha256:9d358a09ae543df34ea8a857a886a01d1f619214811eafaf1745a2764a9f3c60"
       }
+    },
+    {
+      "id": "Markdig.1.4.0",
+      "url": "https://api.nuget.org/v3-flatcontainer/markdig/1.4.0/markdig.1.4.0.nupkg",
+      "cacheNames": [
+        "Markdig.1.4.0.nupkg",
+        "Markdig.1.4.0.zip"
+      ],
+      "sha256": "bdd84353a3f499f989f3111b33aceebd9434f8a069ca8b3da2a065f2230e7baf",
+      "sha512": "8EkBFFlLoQCRS+LKLGdEUN6L57BGkQN2tiR2/zzrd+N2kVFANJzq24TKSeH7lE+ucHcA+OxhlNNmsJAZFJeTqg==",
+      "provenance": {
+        "source": "https://api.nuget.org/v3/catalog0/data/2026.09.20.08.03.41/markdig.1.4.0.json",
+        "algorithm": "SHA512",
+        "digest": "8EkBFFlLoQCRS+LKLGdEUN6L57BGkQN2tiR2/zzrd+N2kVFANJzq24TKSeH7lE+ucHcA+OxhlNNmsJAZFJeTqg=="
+      }
+    },
+    {
+      "id": "System.Memory.4.6.3",
+      "url": "https://api.nuget.org/v3-flatcontainer/system.memory/4.6.3/system.memory.4.6.3.nupkg",
+      "cacheNames": [
+        "System.Memory.4.6.3.nupkg",
+        "System.Memory.4.6.3.zip"
+      ],
+      "sha256": "26078aeb758c9ae985e8bf851f973026061da6a5eb4837204d0c2d2204c72955",
+      "sha512": "NXcNYlWoXe5cz9sb8Huo6x2dCZVYkhwKtgE00n/MoI8V4ZI/7/t+EI5bOhQFlZfFjjqM8+U6prjU/aARt7H/tA==",
+      "provenance": {
+        "source": "https://api.nuget.org/v3/catalog0/data/2026.04.10.00.14.09/system.memory.4.6.3.json",
+        "algorithm": "SHA512",
+        "digest": "NXcNYlWoXe5cz9sb8Huo6x2dCZVYkhwKtgE00n/MoI8V4ZI/7/t+EI5bOhQFlZfFjjqM8+U6prjU/aARt7H/tA=="
+      }
+    },
+    {
+      "id": "System.Buffers.4.6.1",
+      "url": "https://api.nuget.org/v3-flatcontainer/system.buffers/4.6.1/system.buffers.4.6.1.nupkg",
+      "cacheNames": [
+        "System.Buffers.4.6.1.nupkg",
+        "System.Buffers.4.6.1.zip"
+      ],
+      "sha256": "b00451e91d016fbec091ad1e361f3a7015e1d91d4047f7e48a74455b2a673d79",
+      "sha512": "qve/dFwECwehSWlZmpkrrlIeATCvo/Hw2koyMrUVcDBy5gXAQrnwX8pHEoqgj8DgkrWuWW1DrQbFqoMbo+Fvrg==",
+      "provenance": {
+        "source": "https://api.nuget.org/v3/catalog0/data/2026.04.10.00.14.09/system.buffers.4.6.1.json",
+        "algorithm": "SHA512",
+        "digest": "qve/dFwECwehSWlZmpkrrlIeATCvo/Hw2koyMrUVcDBy5gXAQrnwX8pHEoqgj8DgkrWuWW1DrQbFqoMbo+Fvrg=="
+      }
+    },
+    {
+      "id": "System.Numerics.Vectors.4.6.1",
+      "url": "https://api.nuget.org/v3-flatcontainer/system.numerics.vectors/4.6.1/system.numerics.vectors.4.6.1.nupkg",
+      "cacheNames": [
+        "System.Numerics.Vectors.4.6.1.nupkg",
+        "System.Numerics.Vectors.4.6.1.zip"
+      ],
+      "sha256": "2bc500a86dcb02f2032d6d877f9e2d6e9e4a79080e57239b4198679d4031f2c7",
+      "sha512": "/rkvpUeUPlCY/2qYVQKiUsj5IKaXZcy2+SQAGAfemAdyEF5AgIgYOFNSTMWDXo09JWFX9HB+wV1yCyi2Mwi3TA==",
+      "provenance": {
+        "source": "https://api.nuget.org/v3/catalog0/data/2026.04.10.00.17.49/system.numerics.vectors.4.6.1.json",
+        "algorithm": "SHA512",
+        "digest": "/rkvpUeUPlCY/2qYVQKiUsj5IKaXZcy2+SQAGAfemAdyEF5AgIgYOFNSTMWDXo09JWFX9HB+wV1yCyi2Mwi3TA=="
+      }
+    },
+    {
+      "id": "System.Runtime.CompilerServices.Unsafe.6.1.2",
+      "url": "https://api.nuget.org/v3-flatcontainer/system.runtime.compilerservices.unsafe/6.1.2/system.runtime.compilerservices.unsafe.6.1.2.nupkg",
+      "cacheNames": [
+        "System.Runtime.CompilerServices.Unsafe.6.1.2.nupkg",
+        "System.Runtime.CompilerServices.Unsafe.6.1.2.zip"
+      ],
+      "sha256": "5f6a7f53af3465f92beb6da873ebe0e496206c313313b98badee4355a6b25937",
+      "sha512": "t2aXWJZBkAkRrTOnw31OBELKEVSDD5YvC3O5dXaHFsR66/nRTKm1y3Iq6NwFI5u5IlKrWYfdan66V+GKKkY8hQ==",
+      "provenance": {
+        "source": "https://api.nuget.org/v3/catalog0/data/2026.04.10.00.14.09/system.runtime.compilerservices.unsafe.6.1.2.json",
+        "algorithm": "SHA512",
+        "digest": "t2aXWJZBkAkRrTOnw31OBELKEVSDD5YvC3O5dXaHFsR66/nRTKm1y3Iq6NwFI5u5IlKrWYfdan66V+GKKkY8hQ=="
+      }
     }
   ]
 }

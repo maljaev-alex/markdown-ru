@@ -15,14 +15,18 @@ namespace AnotherMarkdown.Translation
     public string Model { get; set; } = "gpt-6-astra";
     public string ReasoningEffort { get; set; } = "";
     public bool UseDefaultModel { get; set; }
+    public bool UseManualModel { get; set; }
     public bool UseCustomArguments { get; set; }
     public string OutputFormat { get; set; } = "text";
     public string Arguments { get; set; } = DefaultArguments;
     public int TimeoutSeconds { get; set; } = 300;
     public int ParallelRequests { get; set; } = 1;
+    public int MinimumChunkCharacters { get; set; } = 2000;
     public bool ShowButtons { get; set; } = true;
     public string ConnectionMode { get; set; } = "cli";
     public List<ApiConnection> ApiConnections { get; set; } = new List<ApiConnection>();
+    public List<CliConnectionSettings> CliConnections { get; set; } = new List<CliConnectionSettings>();
+    public string CliConfigurationError { get; set; }
     public string SelectedApiConnectionId { get; set; } = "";
     public string ApiConfigurationError { get; set; }
     public bool UseApi => ConnectionMode == "api";
@@ -37,10 +41,20 @@ namespace AnotherMarkdown.Translation
       }
     }
 
+    public void LoadCliConnections(string path)
+    {
+      try { CliConnections = CliConnectionStore.Load(path); CliConfigurationError = null; }
+      catch (Exception error) when (error is InvalidDataException || error is IOException || error is UnauthorizedAccessException || error is ArgumentException) {
+        CliConnections = new List<CliConnectionSettings>();
+        CliConfigurationError = "Не удалось прочитать сохранённые настройки CLI. Исходный файл настроек сохранён.";
+      }
+    }
+
     public TranslationOptions Copy()
     {
       var copy = (TranslationOptions)MemberwiseClone();
       copy.ApiConnections = ApiConnections?.Select(c => c.Copy()).ToList() ?? new List<ApiConnection>();
+      copy.CliConnections = CliConnections?.Select(c => c.Copy()).ToList() ?? new List<CliConnectionSettings>();
       return copy;
     }
 
@@ -52,6 +66,7 @@ namespace AnotherMarkdown.Translation
       if (ConnectionMode != "cli" && ConnectionMode != "api") throw new ArgumentException("Выберите способ подключения: CLI или API.");
       if (TimeoutSeconds < 10 || TimeoutSeconds > 3600) throw new ArgumentException("Тайм-аут должен быть от 10 до 3600 секунд.");
       if (ParallelRequests < 1 || ParallelRequests > 8) throw new ArgumentException("Число параллельных запросов должно быть от 1 до 8.");
+      if (MinimumChunkCharacters < 0 || MinimumChunkCharacters > 1000000) throw new ArgumentException("Минимальный размер части должен быть от 0 до 1 000 000 символов.");
       if (UseApi) {
         if (ActiveApiConnection == null) {
           if (requireReady) throw new ArgumentException("Добавьте подключение API.");

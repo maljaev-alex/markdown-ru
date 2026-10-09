@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Windows.Forms;
 using AnotherMarkdown.Entities;
+using AnotherMarkdown.Translation;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -21,9 +22,50 @@ namespace AnotherMarkdown.Forms
     public bool ShowStatusbar { get; set; }
 
     public string[] AllowedMarkdownPlugins { get; set; }
+    private readonly List<Control> initialLayouts = new List<Control>();
+    private readonly SettingsDiscoveryCache settingsDiscovery;
+    private ToolTip settingsToolTips;
 
-    public SettingsForm(Settings settings)
+    private sealed class SettingsLayoutPanel : TableLayoutPanel
     {
+      public SettingsLayoutPanel() { DoubleBuffered = true; ResizeRedraw = true; }
+    }
+
+    // Discovery messages must not resize the form's rows while the user reads them.
+    private sealed class SettingsStatusLabel : Label
+    {
+      public SettingsStatusLabel() { AutoSize = false; AutoEllipsis = true; Dock = DockStyle.Fill; Height = Font.Height + 4; }
+      protected override void OnFontChanged(EventArgs e) { base.OnFontChanged(e); Height = Font.Height + 4; }
+      public override Size GetPreferredSize(Size proposedSize) => new Size(1, Font.Height + 4);
+    }
+
+    private Label CreateSettingsStatus(string name, string text)
+    {
+      var status = new SettingsStatusLabel { Name = name, Text = text, Margin = new Padding(3, 4, 3, 8) };
+      status.TextChanged += (_, __) => { settingsToolTips.SetToolTip(status, status.Text); status.AccessibleDescription = status.Text; };
+      settingsToolTips.SetToolTip(status, text);
+      return status;
+    }
+
+    private T HoldInitialLayout<T>(T control) where T : Control
+    {
+      control.SuspendLayout(); initialLayouts.Add(control); return control;
+    }
+
+    private void CompleteInitialLayout()
+    {
+      for (var i = initialLayouts.Count - 1; i >= 0; i--) initialLayouts[i].ResumeLayout(true);
+      initialLayouts.Clear(); ResumeLayout(true);
+    }
+
+    public SettingsForm(Settings settings) : this(settings, SettingsDiscoveryCache.Shared) { }
+
+    internal SettingsForm(Settings settings, SettingsDiscoveryCache discovery)
+    {
+      settingsDiscovery = discovery ?? throw new ArgumentNullException(nameof(discovery));
+      DoubleBuffered = true;
+      SuspendLayout();
+      try {
       _defaultAssetPath = settings.DefaultAssetPath;
 
       AssetsPath = settings.AssetsPath;
@@ -60,16 +102,20 @@ namespace AnotherMarkdown.Forms
         .OrderBy(li => li.Id)
         .ToArray();
 
-      MarkdownPlugins.Items.Clear();
-      foreach (var plugin in pluginItems) {
-        MarkdownPlugins.Items.Add(plugin, _originalPlugins.Contains(plugin.Id));
+      MarkdownPlugins.BeginUpdate();
+      try {
+        MarkdownPlugins.Items.Clear();
+        foreach (var plugin in pluginItems) MarkdownPlugins.Items.Add(plugin, _originalPlugins.Contains(plugin.Id));
       }
+      finally { MarkdownPlugins.EndUpdate(); }
       _pluginsLoaded = true;
       }
       catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is JsonException) {
         MarkdownPlugins.Enabled = false;
         sblInvalidHtmlPath.Text = "Не удалось прочитать расширения Markdown. Текущий выбор будет сохранён.";
       }
+      }
+      finally { CompleteInitialLayout(); }
     }
 
     protected override void OnLoad(EventArgs e)

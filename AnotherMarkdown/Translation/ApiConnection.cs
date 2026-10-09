@@ -25,6 +25,15 @@ namespace AnotherMarkdown.Translation
     public string Model { get; set; } = "";
     [JsonProperty]
     public string ReasoningEffort { get; set; } = "";
+    // Missing values in older profiles inherit the previously shared translation settings.
+    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+    public int? TimeoutSeconds { get; set; }
+    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+    public int? ParallelRequests { get; set; }
+    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+    public int? MinimumChunkCharacters { get; set; }
+    [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
+    public bool? ShowButtons { get; set; }
     [JsonProperty]
     public string ProxyMode { get; set; } = "system";
     [JsonProperty]

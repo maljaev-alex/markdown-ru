@@ -19,6 +19,7 @@ internal static class ApiConnectionStoreTests
       Run(directory);
       ProxySettings(directory);
       RequiredProxyCredentialSettings(directory);
+      ConnectionPreferences(directory);
       Console.WriteLine("PASS API store: " + passed + " assertions");
       return 0;
     }
@@ -28,6 +29,24 @@ internal static class ApiConnectionStoreTests
       if (Directory.Exists(resolved) && resolved.StartsWith(scratch.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
         Directory.Delete(resolved, true);
     }
+  }
+
+  private static void ConnectionPreferences(string directory)
+  {
+    var first = new ApiConnection { Name = "A", TimeoutSeconds = 25, ParallelRequests = 2, MinimumChunkCharacters = 500, ShowButtons = false };
+    var second = new ApiConnection { Name = "B", TimeoutSeconds = 600, ParallelRequests = 8, MinimumChunkCharacters = 0, ShowButtons = true };
+    var legacy = new ApiConnection { Name = "Legacy" };
+    var path = Path.Combine(directory, "preferences.json");
+    ApiConnectionStore.Save(path, new[] { first, second, legacy });
+    var saved = ApiConnectionStore.Load(path);
+    Check(saved[0].TimeoutSeconds == 25 && saved[0].ParallelRequests == 2 && saved[0].MinimumChunkCharacters == 500 && saved[0].ShowButtons == false,
+      "first API profile preserves its request and view preferences");
+    Check(saved[1].TimeoutSeconds == 600 && saved[1].ParallelRequests == 8 && saved[1].MinimumChunkCharacters == 0 && saved[1].ShowButtons == true,
+      "second API profile preserves independent preferences including zero minimum");
+    Check(saved[2].TimeoutSeconds == null && saved[2].ParallelRequests == null && saved[2].MinimumChunkCharacters == null && saved[2].ShowButtons == null,
+      "legacy profiles retain missing preferences for INI migration");
+    var copy = first.Copy(); copy.ParallelRequests = 5;
+    Check(first.ParallelRequests == 2, "API preference copies do not mutate the saved profile");
   }
 
   private static void Run(string directory)

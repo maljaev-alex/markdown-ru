@@ -74,6 +74,12 @@ internal static class ApiTests
     }
   }
 
+  // These protocol fixtures intentionally return synthetic canned content. Exercise
+  // the HTTP/prompt layer here; exact-source protection across native CLI and API
+  // is covered by ParallelTranslationTests.ProtectedCodeIntegration.
+  private static Task<string> TranslateTransport(ApiConnection connection, int timeoutSeconds, CancellationToken token) =>
+    new ApiTranslator().TranslatePromptAsync(CliTranslator.CreatePrompt(Source), connection, timeoutSeconds, token);
+
   private static async Task Run()
   {
     var cachedConnection = new ApiConnection { Endpoint = "https://example.test/v1", Model = "fixture-model", MaxOutputTokens = 512 };
@@ -102,7 +108,7 @@ internal static class ApiTests
   {
     using (var server = new LoopbackServer(_ => Response.Json(Success(protocol)))) {
       var connection = Connection(server, protocol);
-      var output = await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None);
+      var output = await TranslateTransport(connection, 5, CancellationToken.None);
       Check(output == Answer, protocol + " extracts complete answer and preserves Markdown whitespace");
       var request = await server.FirstRequest;
       var suffix = protocol == "chat-completions" ? "/chat/completions" : protocol == "responses" ? "/responses" : protocol == "anthropic" ? "/messages" : "/models/gemini-fixture:generateContent";
@@ -131,7 +137,7 @@ internal static class ApiTests
       case "gemini": response["candidates"][0]["finishReason"] = "MAX_TOKENS"; break;
     }
     using (var server = new LoopbackServer(_ => Response.Json(response))) {
-      var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, protocol), 5, CancellationToken.None), protocol + " rejects a token-truncated answer instead of saving partial Markdown");
+      var error = await Failure(() => TranslateTransport(Connection(server, protocol), 5, CancellationToken.None), protocol + " rejects a token-truncated answer instead of saving partial Markdown");
       Check(error is InvalidOperationException, protocol + " exposes truncation as a failed translation");
       Check(error.Message.Contains("0") && error.Message.Contains("effort"), protocol + " explains output-budget exhaustion and available settings");
     }
@@ -142,7 +148,7 @@ internal static class ApiTests
     foreach (var protocol in new[] { "chat-completions", "responses", "gemini" }) {
       using (var server = new LoopbackServer(_ => Response.Json(Success(protocol)))) {
         var connection = Connection(server, protocol); connection.MaxOutputTokens = 0;
-        var output = await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None);
+        var output = await TranslateTransport(connection, 5, CancellationToken.None);
         var body = JObject.Parse((await server.FirstRequest).Body);
         Check(output == Answer && body["max_tokens"] == null && body["max_completion_tokens"] == null && body["max_output_tokens"] == null && body["generationConfig"]?["maxOutputTokens"] == null,
           protocol + " automatic budget uses the service default without an artificial 8192-token cap");
@@ -150,7 +156,7 @@ internal static class ApiTests
     }
     using (var server = new LoopbackServer(_ => Response.Json(Success("anthropic")))) {
       var connection = Connection(server, "anthropic"); connection.MaxOutputTokens = 0;
-      await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "Anthropic requires an explicit budget");
+      await Failure(() => TranslateTransport(connection, 5, CancellationToken.None), "Anthropic requires an explicit budget");
       Check(!server.HasConnections, "missing mandatory Anthropic max_tokens is caught before sending");
     }
     var response = Success("chat-completions");
@@ -158,14 +164,14 @@ internal static class ApiTests
     response["choices"][0]["message"]["content"] = "";
     response["usage"] = JObject.Parse("{\"completion_tokens\":8192,\"completion_tokens_details\":{\"reasoning_tokens\":8192}}");
     using (var server = new LoopbackServer(_ => Response.Json(response))) {
-      var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "chat-completions"), 5, CancellationToken.None), "reasoning-only exhausted budget fails safely");
+      var error = await Failure(() => TranslateTransport(Connection(server, "chat-completions"), 5, CancellationToken.None), "reasoning-only exhausted budget fails safely");
       Check(error.Message.Contains("8192") && error.Message.Contains("effort") && !error.ToString().Contains(FixtureKey), "reasoning budget diagnostic includes safe counts and never credentials");
       Check(server.RequestCount == 1, "a token limit never triggers hidden paid retries");
     }
     foreach (var reason in new[] { "content_filter", "tool_calls", "unknown-" + FixtureKey }) {
       response = Success("chat-completions"); response["choices"][0]["finish_reason"] = reason;
       using (var server = new LoopbackServer(_ => Response.Json(response))) {
-        var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "chat-completions"), 5, CancellationToken.None), "non-final finish is rejected: " + reason.Split('-')[0]);
+        var error = await Failure(() => TranslateTransport(Connection(server, "chat-completions"), 5, CancellationToken.None), "non-final finish is rejected: " + reason.Split('-')[0]);
         Check(!error.ToString().Contains(FixtureKey), "unknown finish reason cannot echo server secrets");
       }
     }
@@ -181,7 +187,7 @@ internal static class ApiTests
       if (protocol == "gemini") payload["candidates"][0]["finishReason"] = "MAX_TOKENS";
       payload[protocol == "gemini" ? "usageMetadata" : "usage"] = JValue.CreateNull();
       using (var server = new LoopbackServer(_ => Response.Json(payload))) {
-        var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, protocol), 5, CancellationToken.None), protocol + " rejects truncation with explicit null usage");
+        var error = await Failure(() => TranslateTransport(Connection(server, protocol), 5, CancellationToken.None), protocol + " rejects truncation with explicit null usage");
         Check(error is InvalidOperationException && error.Message.Contains("effort") && error.Message.Contains("0"), protocol + " null usage preserves the friendly output-budget diagnostic");
       }
     }
@@ -190,37 +196,37 @@ internal static class ApiTests
       payload["choices"][0]["finish_reason"] = "length";
       payload["usage"] = new JObject { ["completion_tokens"] = 8192, ["completion_tokens_details"] = details, ["output_tokens_details"] = JValue.CreateNull() };
       using (var server = new LoopbackServer(_ => Response.Json(payload))) {
-        var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "chat-completions"), 5, CancellationToken.None), "malformed or null token details fail as exhausted budget");
+        var error = await Failure(() => TranslateTransport(Connection(server, "chat-completions"), 5, CancellationToken.None), "malformed or null token details fail as exhausted budget");
         Check(error.Message.Contains("8192") && error.Message.Contains("effort") && !error.ToString().Contains(FixtureKey) && !error.ToString().Contains("JValue"), "token-details diagnostics retain safe numeric counts without raw JSON values");
       }
     }
     foreach (var usage in new JToken[] { new JValue(FixtureKey), new JArray() }) {
       var payload = Success("chat-completions"); payload["choices"][0]["finish_reason"] = "length"; payload["usage"] = usage;
       using (var server = new LoopbackServer(_ => Response.Json(payload))) {
-        var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "chat-completions"), 5, CancellationToken.None), "non-object usage fails as exhausted budget");
+        var error = await Failure(() => TranslateTransport(Connection(server, "chat-completions"), 5, CancellationToken.None), "non-object usage fails as exhausted budget");
         Check(error.Message.Contains("effort") && !error.ToString().Contains(FixtureKey) && !error.ToString().Contains("JValue"), "non-object usage cannot expose server strings or a JSON-indexing exception");
       }
     }
     using (var server = new LoopbackServer(_ => { var payload = Success("responses"); payload["usage"] = JValue.CreateNull(); return Response.Json(payload); })) {
-      var translated = await new ApiTranslator().TranslateAsync(Source, Connection(server, "responses"), 5, CancellationToken.None);
+      var translated = await TranslateTransport(Connection(server, "responses"), 5, CancellationToken.None);
       Check(translated == Answer, "standard completed Responses accepts null incomplete_details/error/usage and completed message status");
     }
     foreach (var content in new JToken[] { JValue.CreateNull(), new JValue(FixtureKey), new JArray() }) {
       var payload = Success("gemini"); payload["candidates"][0]["content"] = content;
       using (var server = new LoopbackServer(_ => Response.Json(payload))) {
-        var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "gemini"), 5, CancellationToken.None), "Gemini rejects missing or non-object content");
+        var error = await Failure(() => TranslateTransport(Connection(server, "gemini"), 5, CancellationToken.None), "Gemini rejects missing or non-object content");
         Check(error is InvalidOperationException && !error.ToString().Contains(FixtureKey) && !error.ToString().Contains("JValue"), "Gemini malformed content receives a safe final-text diagnostic");
       }
     }
     foreach (var feedback in new JToken[] { new JValue(FixtureKey), new JArray() }) {
       var payload = Success("gemini"); payload["promptFeedback"] = feedback;
       using (var server = new LoopbackServer(_ => Response.Json(payload))) {
-        var translated = await new ApiTranslator().TranslateAsync(Source, Connection(server, "gemini"), 5, CancellationToken.None);
+        var translated = await TranslateTransport(Connection(server, "gemini"), 5, CancellationToken.None);
         Check(translated == Answer, "Gemini ignores non-object optional feedback without indexing a JSON scalar");
       }
     }
     using (var server = new LoopbackServer(_ => { var payload = Success("responses"); payload["incomplete_details"] = FixtureKey; return Response.Json(payload); })) {
-      var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "responses"), 5, CancellationToken.None), "Responses rejects non-object incomplete details");
+      var error = await Failure(() => TranslateTransport(Connection(server, "responses"), 5, CancellationToken.None), "Responses rejects non-object incomplete details");
       Check(error is InvalidOperationException && !error.ToString().Contains(FixtureKey) && !error.ToString().Contains("JValue"), "malformed incomplete details cannot leak the server value");
     }
   }
@@ -236,7 +242,7 @@ internal static class ApiTests
       connection.AdditionalParametersJson = "{\"top_p\":0.75}";
       connection.Temperature = 0.25;
       connection.ReasoningEffort = "high";
-      await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None);
+      await TranslateTransport(connection, 5, CancellationToken.None);
       var request = await server.FirstRequest;
       var body = JObject.Parse(request.Body);
       Check(request.Target == "/gateway/v1/chat/completions", "full operation endpoint is not appended twice");
@@ -247,7 +253,7 @@ internal static class ApiTests
     foreach (var protocol in new[] { "responses", "anthropic", "gemini" }) {
       using (var server = new LoopbackServer(_ => Response.Json(Success(protocol)))) {
         var connection = Connection(server, protocol); connection.ReasoningEffort = "high";
-        await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None);
+        await TranslateTransport(connection, 5, CancellationToken.None);
         var body = JObject.Parse((await server.FirstRequest).Body);
         var effort = protocol == "responses" ? body["reasoning"]?["effort"] : protocol == "anthropic" ? body["output_config"]?["effort"] : body["generationConfig"]?["thinkingConfig"]?["thinkingLevel"];
         Check((string)effort == (protocol == "gemini" ? "HIGH" : "high"), protocol + " maps explicit effort to the provider request field");
@@ -281,7 +287,7 @@ internal static class ApiTests
   {
     using (var server = new LoopbackServer(_ => new Response { DelayMilliseconds = 30000 }))
     using (var cancellation = new CancellationTokenSource()) {
-      var pending = new ApiTranslator().TranslateAsync(Source, Connection(server, "chat-completions"), 5, cancellation.Token);
+      var pending = TranslateTransport(Connection(server, "chat-completions"), 5, cancellation.Token);
       await server.FirstRequest;
       cancellation.Cancel();
       var error = await Failure(() => pending, "canceling an accepted HTTP request aborts translation");
@@ -289,13 +295,13 @@ internal static class ApiTests
     }
     using (var server = new LoopbackServer(_ => new Response { DelayMilliseconds = 30000 })) {
       var timer = Stopwatch.StartNew();
-      var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "chat-completions"), 1, CancellationToken.None), "configured timeout aborts a provider that never answers");
+      var error = await Failure(() => TranslateTransport(Connection(server, "chat-completions"), 1, CancellationToken.None), "configured timeout aborts a provider that never answers");
       Check(error is TimeoutException && timer.Elapsed < TimeSpan.FromSeconds(6), "API timeout is distinguished from caller cancellation and completes promptly");
     }
     using (var server = new LoopbackServer(_ => Response.Json(Success("chat-completions"))))
     using (var cancellation = new CancellationTokenSource()) {
       cancellation.Cancel();
-      var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "chat-completions"), 5, cancellation.Token), "already canceled token prevents translation");
+      var error = await Failure(() => TranslateTransport(Connection(server, "chat-completions"), 5, cancellation.Token), "already canceled token prevents translation");
       Check(error is OperationCanceledException && !server.HasConnections, "already canceled token makes no network request");
     }
   }
@@ -303,16 +309,16 @@ internal static class ApiTests
   private static async Task SafeErrorsAndRedirects()
   {
     using (var server = new LoopbackServer(_ => new Response { Status = 401, Body = "{\"error\":{\"message\":\"Invalid key " + FixtureKey + "\"}}" })) {
-      var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "chat-completions"), 5, CancellationToken.None), "HTTP authentication failure is not returned as translated text");
+      var error = await Failure(() => TranslateTransport(Connection(server, "chat-completions"), 5, CancellationToken.None), "HTTP authentication failure is not returned as translated text");
       Check(!error.ToString().Contains(FixtureKey) && error.Message.Contains("401"), "API diagnostic preserves HTTP status without leaking echoed credentials");
     }
     using (var target = new LoopbackServer(_ => Response.Json(Success("chat-completions"))))
     using (var redirect = new LoopbackServer(_ => new Response { Status = 302, Headers = new Dictionary<string, string> { ["Location"] = target.Address + "/stolen" } })) {
-      await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(redirect, "chat-completions"), 5, CancellationToken.None), "provider redirect is rejected");
+      await Failure(() => TranslateTransport(Connection(redirect, "chat-completions"), 5, CancellationToken.None), "provider redirect is rejected");
       Check(redirect.RequestCount == 1 && !target.HasConnections, "redirect target receives neither request nor credentials");
     }
     using (var server = new LoopbackServer(_ => new Response { Body = "{\"choices\":" })) {
-      await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, "chat-completions"), 5, CancellationToken.None), "malformed provider response cannot become a translation");
+      await Failure(() => TranslateTransport(Connection(server, "chat-completions"), 5, CancellationToken.None), "malformed provider response cannot become a translation");
     }
     foreach (var protocol in new[] { "chat-completions", "responses", "anthropic", "gemini" }) {
       var payload = Success(protocol);
@@ -321,7 +327,7 @@ internal static class ApiTests
       if (protocol == "anthropic") ((JArray)payload["content"]).Add(JObject.Parse("{\"type\":\"tool_use\",\"name\":\"fixture_tool\",\"input\":{}}"));
       if (protocol == "gemini") ((JArray)payload["candidates"][0]["content"]["parts"]).Add(JObject.Parse("{\"functionCall\":{\"name\":\"fixture_tool\",\"args\":{}}}"));
       using (var server = new LoopbackServer(_ => Response.Json(payload)))
-        await Failure(() => new ApiTranslator().TranslateAsync(Source, Connection(server, protocol), 5, CancellationToken.None), protocol + " rejects tool-bearing response even when it also contains text");
+        await Failure(() => TranslateTransport(Connection(server, protocol), 5, CancellationToken.None), protocol + " rejects tool-bearing response even when it also contains text");
     }
   }
 
@@ -353,7 +359,7 @@ internal static class ApiTests
     }
     using (var server = new LoopbackServer(_ => Response.Json(Success("chat-completions")))) {
       var connection = Connection(server, "chat-completions"); connection.Model = "";
-      await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "translation requires a selected API model");
+      await Failure(() => TranslateTransport(connection, 5, CancellationToken.None), "translation requires a selected API model");
       Check(!server.HasConnections, "missing model fails before network");
     }
   }
@@ -391,7 +397,7 @@ internal static class ApiTests
         var connection = Connection(server, "chat-completions"); connection.Endpoint = draft;
         var storage = await Failure(() => { ApiTranslator.ValidateEndpointCredentials(draft); return Task.FromResult(0); }, "storage helper rejects credentials even in a malformed or schemeless draft");
         var validation = await Failure(() => { ApiTranslator.Validate(connection); return Task.FromResult(0); }, "credential draft fails API validation");
-        var translation = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "credential draft fails before translation");
+        var translation = await Failure(() => TranslateTransport(connection, 5, CancellationToken.None), "credential draft fails before translation");
         var discovery = await Failure(() => new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None), "credential draft fails before model discovery");
         Check(new[] { storage, validation, translation, discovery }.All(error => error is ArgumentException && !error.ToString().Contains(FixtureKey))
           && !server.HasConnections, "all credential draft checks refuse before network without echoing secret values");
@@ -408,7 +414,7 @@ internal static class ApiTests
     using (var server = new LoopbackServer(_ => Response.Json(Success("chat-completions")))) {
       var connection = Connection(server, "chat-completions"); connection.Endpoint += "?api-version=2026-01-01&tenant=fixture";
       ApiTranslator.Validate(connection);
-      Check(await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None) == Answer, "noncredential endpoint query remains usable");
+      Check(await TranslateTransport(connection, 5, CancellationToken.None) == Answer, "noncredential endpoint query remains usable");
       Check((await server.FirstRequest).Target.EndsWith("?api-version=2026-01-01&tenant=fixture"), "endpoint normalization preserves noncredential query parameters");
     }
   }
@@ -419,21 +425,21 @@ internal static class ApiTests
       using (var server = new LoopbackServer(_ => Response.Json(Success("anthropic")))) {
         var connection = Connection(server, "anthropic"); connection.Temperature = temperature;
         ApiTranslator.Validate(connection);
-        Check(await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None) == Answer, "Anthropic accepts the documented temperature boundary " + temperature);
+        Check(await TranslateTransport(connection, 5, CancellationToken.None) == Answer, "Anthropic accepts the documented temperature boundary " + temperature);
         Check((double)JObject.Parse((await server.FirstRequest).Body)["temperature"] == temperature, "Anthropic sends the configured supported temperature");
       }
     }
     using (var server = new LoopbackServer(_ => Response.Json(Success("anthropic")))) {
       var connection = Connection(server, "anthropic"); connection.Temperature = 1.01;
       var validation = await Failure(() => { ApiTranslator.Validate(connection); return Task.FromResult(0); }, "Anthropic rejects temperature greater than one during validation");
-      var translation = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "Anthropic rejects temperature greater than one during translation");
+      var translation = await Failure(() => TranslateTransport(connection, 5, CancellationToken.None), "Anthropic rejects temperature greater than one during translation");
       Check(validation is ArgumentException && translation is ArgumentException && !server.HasConnections, "Anthropic temperature validation happens before any network request");
     }
     foreach (var protocol in new[] { "chat-completions", "responses", "gemini" }) {
       using (var server = new LoopbackServer(_ => Response.Json(Success(protocol)))) {
         var connection = Connection(server, protocol); connection.Temperature = 2;
         ApiTranslator.Validate(connection);
-        Check(await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None) == Answer, protocol + " retains its existing maximum temperature of two");
+        Check(await TranslateTransport(connection, 5, CancellationToken.None) == Answer, protocol + " retains its existing maximum temperature of two");
       }
     }
   }
@@ -472,7 +478,7 @@ internal static class ApiTests
         var connection = Connection(origin, "chat-completions"); connection.ProxyMode = "custom"; connection.ProxyAddress = proxy.Address;
         connection.Endpoint = new UriBuilder(connection.Endpoint) { Host = host }.Uri.AbsoluteUri;
         var saved = await Failure(() => { ApiTranslator.ValidateProxyDraft(connection); return Task.FromResult(0); }, "saved custom proxy profile rejects a known loopback API destination");
-        var translation = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "custom proxy cannot silently send local API translation directly");
+        var translation = await Failure(() => TranslateTransport(connection, 5, CancellationToken.None), "custom proxy cannot silently send local API translation directly");
         var discovery = await Failure(() => new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None), "custom proxy cannot silently bypass model discovery for a local API");
         Check(new[] { saved, translation, discovery }.All(error => error is ArgumentException && error.Message.Contains("loopback")) && !origin.HasConnections && !proxy.HasConnections,
           "Framework loopback proxy limitation fails closed before any network request");
@@ -490,14 +496,14 @@ internal static class ApiTests
       return ForwardProxyRequest(request, origin.Address);
     })) {
       var connection = ProxiedConnection(origin, proxy);
-      Check(await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None) == Answer, "custom HTTP proxy forwards a real translation to loopback origin");
+      Check(await TranslateTransport(connection, 5, CancellationToken.None) == Answer, "custom HTTP proxy forwards a real translation to loopback origin");
       var catalog = await new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None);
       Check(catalog.Models.Any(model => model.Id == "fixture-model"), "proxied model discovery parses origin model IDs");
       Check(proxy.RequestCount == 2 && origin.RequestCount == 2, "model discovery uses the same per-connection custom proxy route (proxy=" + proxy.RequestCount + ", origin=" + origin.RequestCount + ")");
       Check(proxyRequests.All(request => request.Target.StartsWith("http://api-proxy-fixture.invalid:", StringComparison.Ordinal)) && proxyRequests[1].Method == "GET", "proxy receives absolute remote request targets without DNS or internet access");
       Check(originRequests.All(request => request.Header("Proxy-Authorization") == "" && request.Header("Authorization") == "Bearer " + FixtureKey), "proxy credentials never replace or leak into origin authorization");
       connection.ProxyMode = "direct"; connection.Endpoint = origin.Address + "/gateway/v1"; connection.ProxyUsername = proxyUsername; connection.ProxyPassword = proxyPassword;
-      Check(await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None) == Answer && proxy.RequestCount == 2 && origin.RequestCount == 3, "switching to direct bypasses retained custom proxy settings");
+      Check(await TranslateTransport(connection, 5, CancellationToken.None) == Answer && proxy.RequestCount == 2 && origin.RequestCount == 3, "switching to direct bypasses retained custom proxy settings");
     }
 
     originRequests.Clear(); proxyRequests.Clear();
@@ -509,18 +515,18 @@ internal static class ApiTests
     })) {
       var connection = ProxiedConnection(origin, proxy);
       connection.ProxyUsername = proxyUsername; connection.ProxyPassword = proxyPassword;
-      Check(await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None) == Answer && proxy.RequestCount >= 2, "HTTP 407 challenge authenticates using this connection's proxy credentials");
+      Check(await TranslateTransport(connection, 5, CancellationToken.None) == Answer && proxy.RequestCount >= 2, "HTTP 407 challenge authenticates using this connection's proxy credentials");
       Check(proxyRequests.Any(request => request.Header("Proxy-Authorization") == expectedProxyAuth)
         && originRequests.All(request => request.Header("Proxy-Authorization") == "" && request.Header("Authorization") == "Bearer " + FixtureKey), "proxy Basic authorization is confined to proxy transport and absent at the origin");
       connection.ProxyUsername = "wrong-fixture-user";
-      var error = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "invalid proxy credentials fail safely after HTTP 407");
+      var error = await Failure(() => TranslateTransport(connection, 5, CancellationToken.None), "invalid proxy credentials fail safely after HTTP 407");
       Check(error.Message.Contains("407") && !error.ToString().Contains(proxyPassword) && !error.ToString().Contains(proxyUsername) && !error.ToString().Contains(FixtureKey) && !error.ToString().Contains(expectedProxyAuth), "407 diagnostic omits keys, proxy credentials and echoed error body");
     }
 
     using (var origin = new LoopbackServer(_ => Response.Json(Success("chat-completions"))))
     using (var proxy = new LoopbackServer(_ => new Response { Status = 302, Headers = new Dictionary<string, string> { ["Location"] = origin.Address + "/stolen" } })) {
       var connection = ProxiedConnection(origin, proxy);
-      await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "proxy redirect is not followed");
+      await Failure(() => TranslateTransport(connection, 5, CancellationToken.None), "proxy redirect is not followed");
       Check(proxy.RequestCount == 1 && !origin.HasConnections, "proxy redirect cannot move origin credentials to another request");
     }
     proxyRequests.Clear();
@@ -532,7 +538,7 @@ internal static class ApiTests
       var connection = ProxiedConnection(origin, proxy);
       connection.Endpoint = new UriBuilder(connection.Endpoint) { Scheme = "https" }.Uri.AbsoluteUri;
       connection.ProxyUsername = proxyUsername; connection.ProxyPassword = proxyPassword;
-      var translation = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "HTTPS translation rejects a denied native CONNECT tunnel before TLS");
+      var translation = await Failure(() => TranslateTransport(connection, 5, CancellationToken.None), "HTTPS translation rejects a denied native CONNECT tunnel before TLS");
       var discovery = await Failure(() => new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None), "HTTPS model discovery rejects a denied native CONNECT tunnel before TLS");
       Check(proxyRequests.Count >= 2 && proxyRequests.All(request => request.Method == "CONNECT" && request.Target.StartsWith("api-proxy-fixture.invalid:", StringComparison.Ordinal)), "HTTPS proxy transport uses native CONNECT against the synthetic remote API host");
       Check(proxyRequests.All(request => request.Header("Authorization") == "" && request.Body == "") && !origin.HasConnections, "CONNECT failure sends neither origin authorization nor API request body and never reaches the origin");
@@ -543,7 +549,7 @@ internal static class ApiTests
     using (var proxy = new LoopbackServer(_ => new Response { DelayMilliseconds = 30000 }))
     using (var cancellation = new CancellationTokenSource()) {
       var connection = ProxiedConnection(origin, proxy);
-      var pending = new ApiTranslator().TranslateAsync(Source, connection, 5, cancellation.Token);
+      var pending = TranslateTransport(connection, 5, cancellation.Token);
       await proxy.FirstRequest; var timer = Stopwatch.StartNew(); cancellation.Cancel();
       var error = await Failure(() => pending, "canceling a request accepted by the proxy aborts translation");
       Check(error is OperationCanceledException && timer.Elapsed < TimeSpan.FromSeconds(3) && !origin.HasConnections, "proxy cancellation returns promptly without contacting the origin");
@@ -561,7 +567,7 @@ internal static class ApiTests
         var draft = connection.Copy(); draft.Endpoint = ""; draft.Model = "";
         var standalone = await Failure(() => { ApiTranslator.ValidateProxyDraft(draft); return Task.FromResult(0); }, "standalone proxy validation rejects unsupported route without requiring API endpoint/model");
         var savedDraft = await Failure(() => { ApiTranslator.ValidateDraft(draft); return Task.FromResult(0); }, "incomplete API draft still validates its proxy settings");
-        var translation = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "malformed custom proxy is rejected before translation");
+        var translation = await Failure(() => TranslateTransport(connection, 5, CancellationToken.None), "malformed custom proxy is rejected before translation");
         var discovery = await Failure(() => new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None), "malformed custom proxy is rejected before discovery");
         Check(new[] { standalone, savedDraft, translation, discovery }.All(error => error is ArgumentException && !error.ToString().Contains(proxyPassword)) && !server.HasConnections, "invalid proxy settings produce safe diagnostics before any network activity");
       }
@@ -594,7 +600,7 @@ internal static class ApiTests
         connection.EncryptedProxyUsername = unreadableUsername; connection.EncryptedProxyPassword = unreadablePassword;
         connection.RestoreCredentials(FixtureKey, false, "{}", false, "", mode != "custom-anonymous", "", true);
         Check(!string.IsNullOrEmpty(connection.CredentialError), mode + " retains an unreadable proxy warning before transport");
-        Check(await new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None) == Answer, mode + " translation ignores unavailable proxy credentials that are not used");
+        Check(await TranslateTransport(connection, 5, CancellationToken.None) == Answer, mode + " translation ignores unavailable proxy credentials that are not used");
         var catalog = await new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None);
         Check(catalog.Models.Any(model => model.Id == "fixture-model") && origin.RequestCount == 2 && proxy.RequestCount == (custom ? 2 : 0), mode + " discovery follows the selected route with unused unreadable proxy credentials");
         Check(requests.All(request => request.Header("Authorization") == "Bearer " + FixtureKey && request.Header("Proxy-Authorization") == ""), mode + " unused proxy secrets never become origin credentials");
@@ -606,7 +612,7 @@ internal static class ApiTests
       using (var proxy = new LoopbackServer(request => ForwardProxyRequest(request, origin.Address))) {
         var connection = ProxiedConnection(origin, proxy);
         connection.RestoreCredentials(FixtureKey, false, "{}", false, unavailableUsername ? "" : "fixture-proxy-user", unavailableUsername, "", !unavailableUsername);
-        var translation = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), "required unreadable manual proxy credentials block translation");
+        var translation = await Failure(() => TranslateTransport(connection, 5, CancellationToken.None), "required unreadable manual proxy credentials block translation");
         var discovery = await Failure(() => new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None), "required unreadable manual proxy credentials block discovery");
         Check(new[] { translation, discovery }.All(error => error is InvalidOperationException && !error.ToString().Contains(FixtureKey)) && !origin.HasConnections && !proxy.HasConnections, "required manual proxy credential failure occurs before any network request");
       }
@@ -620,7 +626,7 @@ internal static class ApiTests
           connection.ProxyMode = custom ? "custom" : mode;
           connection.ProxyUseDefaultCredentials = mode == "custom-windows";
           connection.RestoreCredentials(unavailableKey ? "" : FixtureKey, unavailableKey, "{}", !unavailableKey);
-          var translation = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), mode + " required unavailable API key or headers block translation");
+          var translation = await Failure(() => TranslateTransport(connection, 5, CancellationToken.None), mode + " required unavailable API key or headers block translation");
           var discovery = await Failure(() => new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None), mode + " required unavailable API key or headers block discovery");
           Check(new[] { translation, discovery }.All(error => error is InvalidOperationException && !error.ToString().Contains(FixtureKey)) && !origin.HasConnections && !proxy.HasConnections, mode + " unavailable API credentials fail before network regardless of proxy mode");
         }
@@ -661,7 +667,7 @@ internal static class ApiTests
     using (var server = new LoopbackServer(_ => Response.Json(Success("chat-completions")))) {
       var connection = Connection(server, "chat-completions"); mutate(connection);
       var validation = await Failure(() => { ApiTranslator.Validate(connection); return Task.FromResult(0); }, label + " fails settings validation");
-      var translation = await Failure(() => new ApiTranslator().TranslateAsync(Source, connection, 5, CancellationToken.None), label + " fails translation validation");
+      var translation = await Failure(() => TranslateTransport(connection, 5, CancellationToken.None), label + " fails translation validation");
       Check(validation is ArgumentException && translation is ArgumentException && !server.HasConnections, label + " is rejected before any network request");
       Check(!validation.ToString().Contains(FixtureKey) && !translation.ToString().Contains(FixtureKey), label + " validation does not expose credentials");
     }
