@@ -19,6 +19,7 @@ namespace AnotherMarkdown.Translation
     public string OutputFormat { get; set; } = "text";
     public string Arguments { get; set; } = DefaultArguments;
     public int TimeoutSeconds { get; set; } = 300;
+    public int ParallelRequests { get; set; } = 1;
     public bool ShowButtons { get; set; } = true;
     public string ConnectionMode { get; set; } = "cli";
     public List<ApiConnection> ApiConnections { get; set; } = new List<ApiConnection>();
@@ -50,6 +51,7 @@ namespace AnotherMarkdown.Translation
       ValidateArgumentStorage();
       if (ConnectionMode != "cli" && ConnectionMode != "api") throw new ArgumentException("Выберите способ подключения: CLI или API.");
       if (TimeoutSeconds < 10 || TimeoutSeconds > 3600) throw new ArgumentException("Тайм-аут должен быть от 10 до 3600 секунд.");
+      if (ParallelRequests < 1 || ParallelRequests > 8) throw new ArgumentException("Число параллельных запросов должно быть от 1 до 8.");
       if (UseApi) {
         if (ActiveApiConnection == null) {
           if (requireReady) throw new ArgumentException("Добавьте подключение API.");

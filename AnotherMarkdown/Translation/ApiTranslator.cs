@@ -143,15 +143,20 @@ namespace AnotherMarkdown.Translation
 
     public async Task<string> TranslateAsync(string markdown, ApiConnection connection, int timeoutSeconds, CancellationToken token)
     {
+      if (string.IsNullOrWhiteSpace(markdown)) throw new ArgumentException("Документ пуст.");
+      if (markdown.Length > 1000000) throw new ArgumentException("Документ превышает 1 млн символов. Разделите его на части.");
+      return await TranslatePromptAsync(CliTranslator.CreatePrompt(markdown), connection, timeoutSeconds, token).ConfigureAwait(false);
+    }
+
+    internal async Task<string> TranslatePromptAsync(string prompt, ApiConnection connection, int timeoutSeconds, CancellationToken token)
+    {
       token.ThrowIfCancellationRequested();
       RequireCredentialsAvailable(connection);
       var prepared = Prepare(connection);
       ValidateTimeout(timeoutSeconds);
       ValidateOutputBudget(prepared);
       if (string.IsNullOrWhiteSpace(prepared.Model)) throw new ArgumentException("Укажите модель API.");
-      if (string.IsNullOrWhiteSpace(markdown)) throw new ArgumentException("Документ пуст.");
-      if (markdown.Length > 1000000) throw new ArgumentException("Документ превышает 1 млн символов. Разделите его на части.");
-      var body = CreateBody(prepared, CliTranslator.CreatePrompt(markdown));
+      var body = CreateBody(prepared, prompt);
       var response = await SendAsync(prepared, HttpMethod.Post, OperationUri(prepared), body, timeoutSeconds, token).ConfigureAwait(false);
       var translated = ExtractTranslation(response, prepared.Protocol).TrimStart('\uFEFF').Trim('\r', '\n');
       if (string.IsNullOrWhiteSpace(translated)) throw new InvalidOperationException("API вернул пустой перевод.");

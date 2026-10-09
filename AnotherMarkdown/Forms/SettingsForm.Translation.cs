@@ -17,7 +17,7 @@ namespace AnotherMarkdown.Forms
     private TranslationOptions translationDraft;
     private ComboBox translationCli, translationModel, translationProfile, translationOutput, translationEffort;
     private TextBox translationExecutable, translationArguments, translationManualModel;
-    private NumericUpDown translationTimeout;
+    private NumericUpDown translationTimeout, translationParallelRequests;
     private CheckBox translationShowButtons, translationAdvanced, translationCustomArguments, translationUseManualModel;
     private Button translationModelsRefresh, translationCliRefresh;
     private Label translationModelStatus;
@@ -85,7 +85,7 @@ namespace AnotherMarkdown.Forms
       advanced.Controls.Add(advancedLayout);
       translationProfile = new ComboBox { Name = "translationProfile", AccessibleName = "Тип CLI", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, TabIndex = 0 };
       translationProfile.Items.AddRange(CliProfiles.All);
-      translationTimeout = new NumericUpDown { Name = "translationTimeout", AccessibleName = "Тайм-аут, сек.", Minimum = 10, Maximum = 3600, Width = 120, TabIndex = 1 };
+      translationTimeout = new NumericUpDown { Name = "translationTimeout", AccessibleName = "Тайм-аут на запрос, сек.", Minimum = 10, Maximum = 3600, Width = 120, TabIndex = 1 };
       translationCustomArguments = new CheckBox { Text = "Изменить параметры запуска", AutoSize = true, TabIndex = 2 };
       translationArguments = new TextBox { Name = "translationArguments", AccessibleName = "Аргументы запуска", Multiline = true, AcceptsReturn = true, MaxLength = TranslationOptions.MaximumStoredArgumentCharacters, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, ReadOnly = true, TabIndex = 3 };
       translationOutput = new ComboBox { Name = "translationOutput", AccessibleName = "Формат ответа CLI", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, TabIndex = 4 };
@@ -93,7 +93,7 @@ namespace AnotherMarkdown.Forms
       translationUseManualModel = new CheckBox { Text = "Другая модель", AutoSize = true, TabIndex = 5 };
       translationManualModel = MakeSettingsTextBox("translationManualModel", "Идентификатор другой модели", 6);
       advancedLayout.Controls.Add(MakeSettingsLabel("Тип CLI"), 0, 0); advancedLayout.Controls.Add(translationProfile, 1, 0);
-      advancedLayout.Controls.Add(MakeSettingsLabel("Тайм-аут, сек."), 0, 1); advancedLayout.Controls.Add(translationTimeout, 1, 1);
+      advancedLayout.Controls.Add(MakeSettingsLabel("Тайм-аут на запрос, сек."), 0, 1); advancedLayout.Controls.Add(translationTimeout, 1, 1);
       advancedLayout.Controls.Add(translationCustomArguments, 0, 2); advancedLayout.SetColumnSpan(translationCustomArguments, 2);
       advancedLayout.Controls.Add(translationArguments, 0, 3); advancedLayout.SetColumnSpan(translationArguments, 2);
       advancedLayout.Controls.Add(MakeSettingsLabel("Формат ответа"), 0, 4); advancedLayout.Controls.Add(translationOutput, 1, 4);
@@ -160,6 +160,23 @@ namespace AnotherMarkdown.Forms
       value.Margin = new Padding(3, 5, 3, 8); layout.Controls.Add(value, 1, row); layout.Controls.Add(extra, 2, row);
     }
 
+    private Control CreateParallelRequestsSettings()
+    {
+      var layout = new TableLayoutPanel { Name = "translationParallelLayout", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 2, RowCount = 2, Padding = new Padding(8, 0, 8, 0) };
+      layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
+      layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+      layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+      translationParallelRequests = new NumericUpDown {
+        Name = "translationParallelRequests", AccessibleName = "Параллельные запросы", Minimum = 1, Maximum = 8,
+        Value = Math.Max(1, Math.Min(8, translationDraft.ParallelRequests)), Width = 85, Margin = new Padding(3, 5, 3, 8)
+      };
+      layout.Controls.Add(MakeSettingsLabel("Параллельные запросы"), 0, 0); layout.Controls.Add(translationParallelRequests, 1, 0);
+      var help = new Label { Name = "translationParallelHelp", Text = "Короткие документы не делятся.", AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 0, 3, 6) };
+      layout.Controls.Add(help, 0, 1); layout.SetColumnSpan(help, 2);
+      layout.SizeChanged += (_, __) => help.MaximumSize = new Size(Math.Max(200, layout.ClientSize.Width - 24), 0);
+      return layout;
+    }
+
     public void SelectTranslationTab() => settingsTabs.SelectedTab = translationPage;
 
     private async Task FindInstalledCliAsync()
@@ -213,6 +230,7 @@ namespace AnotherMarkdown.Forms
       cliDiscoveryGeneration++;
       CancelModelDiscovery();
       var options = defaults ? CliProfiles.Defaults(installation.ProviderId, installation.Executable) : translationDraft.Copy();
+      options.ParallelRequests = (int)translationParallelRequests.Value;
       options.ProviderId = installation.ProviderId; options.Executable = installation.Executable;
       translationDraft = options;
       SetTranslationControls(options);
@@ -348,6 +366,7 @@ namespace AnotherMarkdown.Forms
     private TranslationOptions ReadTranslationDraft()
     {
       var options = translationDraft.Copy();
+      options.ParallelRequests = (int)translationParallelRequests.Value;
       options.Executable = translationExecutable.Text.Trim();
       options.TimeoutSeconds = (int)translationTimeout.Value; options.ShowButtons = translationShowButtons.Checked;
       options.UseCustomArguments = translationCustomArguments.Checked;

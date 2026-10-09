@@ -68,7 +68,7 @@ if (-not $SkipTests) {
     if ($LASTEXITCODE -ne 0) { throw 'Launcher test compilation failed.' }
     & $launcherTests
     if ($LASTEXITCODE -ne 0) { throw 'Launcher tests failed.' }
-    foreach ($apiTestName in @('ApiTests', 'ApiConnectionStoreTests', 'SocksApiTests', 'ApiLiveTests')) {
+    foreach ($apiTestName in @('ApiTests', 'ApiConnectionStoreTests', 'SocksApiTests', 'ParallelTranslationTests', 'ApiLiveTests')) {
         $apiTests = Join-Path $CacheRoot ($apiTestName + '.exe')
         $apiSources = @($sources | Where-Object { $_ -notlike '*TranslationTests.cs' })
         $apiSources += Join-Path $projectRoot ('tests\' + $apiTestName + '.cs')
@@ -89,11 +89,13 @@ if (-not $SkipTests) {
     Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\markdown\md.extensions.json') -Destination $testAssets -Force
     & $settingsTests
     if ($LASTEXITCODE -ne 0) { throw 'Settings tests failed.' }
-    $iniTests = Join-Path $buildDirectory 'IniSettingsTests.exe'
-    & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe /platform:x64 "/out:$iniTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$ref\System.Drawing.dll" "/r:$buildDirectory\AnotherMarkdown.dll" (Join-Path $projectRoot 'tests\IniSettingsTests.cs')
-    if ($LASTEXITCODE -ne 0) { throw 'INI test compilation failed.' }
-    & $iniTests
-    if ($LASTEXITCODE -ne 0) { throw 'INI tests failed.' }
+    foreach ($pluginTestName in @('IniSettingsTests', 'PreviewProgressTests')) {
+        $pluginTests = Join-Path $buildDirectory ($pluginTestName + '.exe')
+        & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe /platform:x64 "/out:$pluginTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$ref\System.Drawing.dll" "/r:$buildDirectory\AnotherMarkdown.dll" (Join-Path $projectRoot ('tests\' + $pluginTestName + '.cs'))
+        if ($LASTEXITCODE -ne 0) { throw "$pluginTestName compilation failed." }
+        & $pluginTests
+        if ($LASTEXITCODE -ne 0) { throw "$pluginTestName failed." }
+    }
 }
 
 & python (Join-Path $PSScriptRoot 'export_plugin.py') (Join-Path $buildDirectory 'AnotherMarkdown.dll') --ildasm (Join-Path $disassembler 'runtimes\win-x64\native\ildasm.exe') --ilasm (Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\ilasm.exe') --work $CacheRoot
@@ -120,7 +122,7 @@ try {
     $brandDirectory = Join-Path $stage 'assets\branding'
     New-Item -ItemType Directory -Path $brandDirectory -Force | Out-Null
     Copy-Item -Path (Join-Path $projectRoot 'AnotherMarkdown\Resources\translate-ru.*') -Destination $brandDirectory -Force
-    $archive = Join-Path $OutputDirectory 'AnotherMarkdown-0.1.12-ru.8-x64.zip'
+    $archive = Join-Path $OutputDirectory 'AnotherMarkdown-0.1.12-ru.9-x64.zip'
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -Force
     Write-Output "Package: $archive"
     Get-FileHash -LiteralPath $archive -Algorithm SHA256

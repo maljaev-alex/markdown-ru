@@ -113,26 +113,37 @@ namespace AnotherMarkdown.Forms
       UpdateTranslationButtons();
       var modelLabel = CliModel.CleanDisplayName(options.UseApi ? options.ActiveApiConnection?.Model ?? "модель API" : options.UseDefaultModel ? "модель CLI" : options.Model);
       translationStatus.Text = "Перевод… " + modelLabel;
+      var completedParts = 0;
+      var acceptingProgress = true;
+      var progress = new Progress<TranslationProgress>(value => {
+        if (!acceptingProgress || _disposed || !ReferenceEquals(translationCancellation, cancellation) || cancellation.IsCancellationRequested || sourceText != text || sourcePath != path) return;
+        completedParts = Math.Max(completedParts, value.Completed);
+        translationStatus.Text = value.Total > 1 ? "Перевод… " + completedParts + " из " + value.Total + " частей · " + modelLabel : "Перевод… " + modelLabel;
+      });
       try {
         var cached = translationCache.TryGet(key, out var result);
         if (!cached) {
-          result = await new CliTranslator().TranslateAsync(text, options, cancellation.Token);
+          result = await new CliTranslator().TranslateAsync(text, options, cancellation.Token, progress);
+          acceptingProgress = false;
           translationCache.Add(key, result);
         }
+        acceptingProgress = false;
         if (_disposed || cancellation.IsCancellationRequested || sourceText != text || sourcePath != path) return;
         translatedText = result;
         IsTranslationPreview = true;
         translationStatus.Text = cached ? "Русский · из кэша" : "Русский · " + modelLabel;
         await RenderPreviewAsync();
       }
-      catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+      catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { acceptingProgress = false; }
       catch (Exception error) {
+        acceptingProgress = false;
         if (!_disposed && !cancellation.IsCancellationRequested) {
           translationStatus.Text = "Ошибка перевода";
           MessageBox.Show(this, error.Message, "Перевод Markdown", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
       }
       finally {
+        acceptingProgress = false;
         if (ReferenceEquals(translationCancellation, cancellation)) translationCancellation = null;
         cancellation.Dispose();
         if (!_disposed) UpdateTranslationButtons();

@@ -1,5 +1,13 @@
 ## Version History
 
+### Markdown RU 0.1.12-ru.9
+
+* Add persistent 1-8 parallel translation requests for CLI and API, defaulting to one whole-document request.
+* Split long Markdown at conservative block boundaries, provide neighboring source context, and assemble only target translations in source order.
+* Show completed/total fragment progress; cancel all workers on failure and cache only complete translations.
+* Resolve Codex isolation once per document and retain per-request timeouts and existing credential/proxy policies.
+* Cover Markdown boundaries, concurrent CLI/API transports, stable assembly, cancellation and settings persistence with regression tests.
+
 ### Markdown RU 0.1.12-ru.8
 
 * Add per-API system/direct/custom HTTP and SOCKS5 proxy settings, explicit authentication, remote/local SOCKS DNS and DPAPI-protected proxy credentials.

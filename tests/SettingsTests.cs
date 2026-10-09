@@ -31,6 +31,7 @@ internal static class SettingsTests
       ApiSettings();
       ApiProxySettings();
       SocksProxySettings();
+      ParallelSettings();
       DraftSettings();
       GeometrySettings();
       settings.Translation.ShowButtons = false;
@@ -62,6 +63,62 @@ internal static class SettingsTests
     catch (Exception error) { Console.Error.WriteLine(error); return 1; }
   }
   private static void Save(SettingsForm form) => typeof(SettingsForm).GetMethod("btnSave_Click", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { null, EventArgs.Empty });
+  private static void ParallelSettings()
+  {
+    var settings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
+    // The custom provider has no model-list command, so mode/default tests never run a CLI.
+    settings.Translation = CliProfiles.Defaults("custom", Assembly.GetExecutingAssembly().Location);
+    settings.Translation.ParallelRequests = 4; settings.Translation.ShowButtons = false;
+    using (var form = new SettingsForm(settings)) {
+      var parallel = Find<NumericUpDown>(form, "translationParallelRequests");
+      var mode = Find<ComboBox>(form, "translationConnectionMode");
+      Check(parallel.Minimum == 1 && parallel.Maximum == 8 && parallel.Value == 4, "parallel request control restores the saved count and enforces 1..8");
+      Check(parallel.Parent.Name == "translationParallelLayout" && parallel.Parent.Parent.Name == "translationConnections"
+        && form.Controls.Find("translationParallelRequests", true).Length == 1, "one shared parallel request control is outside CLI and API advanced sections");
+      parallel.Value = 6; mode.SelectedIndex = 1;
+      Check(ReadDraft(form).UseApi && ReadDraft(form).ParallelRequests == 6, "switching to API retains the edited shared parallel count");
+      mode.SelectedIndex = 0;
+      WaitForLocalSettings(() => ((Button)typeof(SettingsForm).GetField("translationCliRefresh", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form)).Enabled
+        && Find<Button>(form, "btnSave").Enabled);
+      Check(!ReadDraft(form).UseApi && ReadDraft(form).ParallelRequests == 6, "switching back to CLI retains the API parallel count");
+      var picker = Find<ComboBox>(form, "translationCli");
+      var installation = new CliInstallation { Executable = Assembly.GetExecutingAssembly().Location, ProviderId = "custom" };
+      picker.Items.Add(installation); picker.SelectedItem = installation;
+      WaitForLocalSettings(() => Find<Button>(form, "btnSave").Enabled);
+      Check(parallel.Value == 6 && ReadDraft(form).ParallelRequests == 6, "choosing another CLI preserves the shared parallel count");
+      parallel.Value = 7; Click(Find<Button>(form, "translationDefaults"));
+      WaitForLocalSettings(() => Find<Button>(form, "btnSave").Enabled);
+      Check(parallel.Value == 7 && ReadDraft(form).ParallelRequests == 7, "CLI defaults do not reset parallel requests");
+      mode.SelectedIndex = 1; Find<ComboBox>(form, "apiPreset").SelectedIndex = 4;
+      Check(ReadDraft(form).ParallelRequests == 7, "API service presets preserve the shared parallel count");
+      Save(form);
+      Check(form.DialogResult == DialogResult.OK && form.TranslationOptions.ParallelRequests == 7 && settings.Translation.ParallelRequests == 4,
+        "Save commits the parallel count while leaving supplied settings unchanged");
+    }
+    foreach (var value in new[] { 0, 9 }) {
+      settings.Translation.ParallelRequests = value;
+      using (var form = new SettingsForm(settings))
+        Check(Find<NumericUpDown>(form, "translationParallelRequests").Value == (value == 0 ? 1 : 8), "invalid stored parallel count is clamped: " + value);
+    }
+    settings.Translation = new TranslationOptions { ConnectionMode = "api", ParallelRequests = 3, ShowButtons = false };
+    using (var apiCancellation = new System.Threading.CancellationTokenSource())
+    using (var modelCancellation = new System.Threading.CancellationTokenSource())
+    using (var form = new BackgroundSettings(settings)) {
+      form.SelectTranslationTab(); form.Show();
+      Find<NumericUpDown>(form, "translationParallelRequests").Value = 8;
+      typeof(SettingsForm).GetField("apiCancellation", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(form, apiCancellation);
+      typeof(SettingsForm).GetField("modelCancellation", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(form, modelCancellation);
+      Find<Button>(form, "btnCancel").PerformClick(); form.Close();
+      Check(form.DialogResult == DialogResult.Cancel && settings.Translation.ParallelRequests == 3, "Cancel leaves the original parallel count unchanged");
+      Check(apiCancellation.IsCancellationRequested && modelCancellation.IsCancellationRequested, "closing the canceled parallel settings dialog cancels pending discovery work");
+    }
+  }
+  private static void WaitForLocalSettings(Func<bool> ready)
+  {
+    var timer = System.Diagnostics.Stopwatch.StartNew();
+    while (!ready() && timer.Elapsed < TimeSpan.FromSeconds(5)) { Application.DoEvents(); System.Threading.Thread.Sleep(5); }
+    if (!ready()) throw new TimeoutException("Local settings discovery did not finish.");
+  }
   private static void DraftSettings()
   {
     var settings = new Settings { ZoomLevel = 100, EnabledMarkdownPlugins = new[] { "attrs" } };
@@ -159,6 +216,12 @@ internal static class SettingsTests
       form.SelectTranslationTab(); form.Show();
       form.Font = new Font("Segoe UI", 13.5F);
       form.ClampToWorkingArea(new Rectangle(form.Left, form.Top, 640, 480));
+      var parallel = Find<NumericUpDown>(form, "translationParallelRequests");
+      var page = Find<TabPage>(form, "translationPage");
+      page.ScrollControlIntoView(parallel); form.PerformLayout(); Application.DoEvents();
+      Check(parallel.Visible && parallel.Parent.ClientRectangle.Contains(parallel.Bounds)
+        && page.ClientRectangle.Contains(page.RectangleToClient(parallel.RectangleToScreen(parallel.ClientRectangle))),
+        "shared parallel request control remains visible and reachable at 640x480 with a large font");
       var actions = Find<FlowLayoutPanel>(form, "apiActions");
       Find<TabPage>(form, "translationPage").ScrollControlIntoView(Find<Button>(form, "apiClearCredentials"));
       form.PerformLayout(); Application.DoEvents();

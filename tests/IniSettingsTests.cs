@@ -83,16 +83,20 @@ internal static class IniSettingsTests
       settings.Translation.ConnectionMode = "api";
       settings.Translation.SelectedApiConnectionId = "new-id";
       settings.Translation.ReasoningEffort = "high";
+      settings.Translation.ParallelRequests = 4;
       // Exercise persistence without initializing or messaging a Notepad++ window.
       var controller = (MarkdownPanelController)FormatterServices.GetUninitializedObject(typeof(MarkdownPanelController));
       var controllerType = typeof(MarkdownPanelController);
       controllerType.GetField("_settings", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(controller, settings);
       controllerType.GetField("_iniFilePath", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(controller, file);
+      var loadSettings = controllerType.GetMethod("LoadSettingsFromIni", BindingFlags.NonPublic | BindingFlags.Instance);
+      Check(((Settings)loadSettings.Invoke(controller, null)).Translation.ParallelRequests == 1, "an older INI without the parallel key keeps sequential translation by default");
       using (var locked = new FileStream(file + ".api.json", FileMode.Open, FileAccess.Read, FileShare.None)) {
         var saved = (bool)controllerType.GetMethod("SaveSettings", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(controller, new object[] { false });
         Check(!saved, "controller reports API persistence failure without an unhandled exception");
         Check(Win32.ReadIniValue("Options", "ZoomLevel", file, "") == "175", "API persistence failure does not discard unrelated preview options");
         Check(Win32.ReadIniValue("Translation", "ReasoningEffort", file, "") == "high", "API persistence failure does not discard CLI options");
+        Check(Win32.GetPrivateProfileInt("Translation", "ParallelRequests", 0, file) == 4, "API persistence failure still saves the shared parallel request count");
         Check(Win32.ReadIniValue("Translation", "ConnectionMode", file, "") == "cli" && Win32.ReadIniValue("Translation", "ApiConnectionId", file, "") == "previous-id", "failed API save preserves the previous persisted connection selection");
       }
       Check(File.ReadAllText(file + ".api.json") == "[]", "controller failure leaves the locked API file unchanged");
@@ -103,6 +107,18 @@ internal static class IniSettingsTests
       settings.Translation.ApiConnections.Add(new ApiConnection { Name = "New profile after failed load" });
       var recoveredSave = (bool)controllerType.GetMethod("SaveSettings", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(controller, new object[] { false });
       Check(recoveredSave && Directory.GetFiles(directory, "settings.ini.api.json.unreadable-*").Any(path => File.ReadAllBytes(path).SequenceEqual(originalBytes)), "a transient startup load failure preserves original credential profiles after the lock clears");
+      foreach (var value in new[] { 1, 4, 8 }) {
+        settings.Translation.ParallelRequests = value;
+        var saved = (bool)controllerType.GetMethod("SaveSettings", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(controller, new object[] { false });
+        Check(saved && ((Settings)loadSettings.Invoke(controller, null)).Translation.ParallelRequests == value,
+          "controller saves and reloads the shared parallel count: " + value);
+      }
+      foreach (var value in new[] { "-2", "0", "9", "invalid" }) {
+        Win32.WriteIniValue("Translation", "ParallelRequests", value, file);
+        Check(((Settings)loadSettings.Invoke(controller, null)).Translation.ParallelRequests == (value == "9" ? 8 : 1),
+          "INI parallel count is safely clamped: " + value);
+      }
+      settings.Translation.ParallelRequests = 4;
       File.WriteAllText(file, "[Translation]\r\n", Encoding.Unicode);
       foreach (var template in new[] { "plain --flags", "\"first argument\" --middle \"last argument\"", "\"one whole argument\"", "'first' --middle 'last'", "", new string('a', 32765), new string('\u6d4b', 32765) }) {
         settings.Translation.Arguments = template;

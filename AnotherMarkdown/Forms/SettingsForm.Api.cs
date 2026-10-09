@@ -41,20 +41,20 @@ namespace AnotherMarkdown.Forms
     {
       apiDrafts = translationDraft.ApiConnections.Select(c => c.Copy()).ToList();
       apiConfigurationError = translationDraft.ApiConfigurationError;
-      var root = new TableLayoutPanel { Name = "translationConnections", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 1, RowCount = 3 };
+      var root = new TableLayoutPanel { Name = "translationConnections", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 1, RowCount = 4 };
       root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-      for (var i = 0; i < 3; i++) root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+      for (var i = 0; i < 4; i++) root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       var modeRow = new TableLayoutPanel { AutoSize = true, Dock = DockStyle.Top, ColumnCount = 2, Padding = new Padding(8, 8, 8, 0) };
       modeRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120)); modeRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
       connectionMode = new ComboBox { Name = "translationConnectionMode", AccessibleName = "Способ подключения", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
       connectionMode.Items.AddRange(new object[] { "CLI — установленная программа", "API — HTTP-эндпойнт" });
       modeRow.Controls.Add(MakeSettingsLabel("Подключение"), 0, 0); modeRow.Controls.Add(connectionMode, 1, 0);
       translationPage.Controls.Remove(cliLayout);
-      root.Controls.Add(modeRow, 0, 0); root.Controls.Add(cliLayout, 0, 1);
+      root.Controls.Add(modeRow, 0, 0); root.Controls.Add(CreateParallelRequestsSettings(), 0, 1); root.Controls.Add(cliLayout, 0, 2);
       apiLayout = new TableLayoutPanel { Name = "apiLayout", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 3, RowCount = 15, Padding = new Padding(8) };
       apiLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120)); apiLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); apiLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
       for (var i = 0; i < 15; i++) apiLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-      root.Controls.Add(apiLayout, 0, 2); translationPage.Controls.Add(root);
+      root.Controls.Add(apiLayout, 0, 3); translationPage.Controls.Add(root);
 
       apiConnections = new ComboBox { Name = "apiConnections", AccessibleName = "Сохранённое подключение API", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
       var profileActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false };
@@ -128,7 +128,7 @@ namespace AnotherMarkdown.Forms
       var advancedHelp = new Label { AutoSize = true, Dock = DockStyle.Fill, Text = "Лимит ответа 0 — по умолчанию сервиса; Anthropic требует явный лимит. Пустой effort, выключенная temperature и пустой заголовок ключа сохраняют настройки протокола. Поддержка параметров зависит от модели. Дополнительные заголовки шифруются вместе с ключом." };
       advanced.Controls.Add(advancedHelp, 0, 8); advanced.SetColumnSpan(advancedHelp, 2);
       apiTimeout = new NumericUpDown { Name = "apiTimeout", Minimum = 10, Maximum = 3600, Value = translationDraft.TimeoutSeconds, Width = 130 };
-      AddTranslationRow(apiLayout, 12, "Тайм-аут, сек.", apiTimeout, new Label());
+      AddTranslationRow(apiLayout, 12, "Тайм-аут на запрос, сек.", apiTimeout, new Label());
       apiShowButtons = new CheckBox { Name = "apiShowButtons", Text = "Показывать кнопки перевода в панели", Checked = translationDraft.ShowButtons, AutoSize = true };
       apiLayout.Controls.Add(apiShowButtons, 0, 13); apiLayout.SetColumnSpan(apiShowButtons, 3);
       var help = new Label { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 8, 3, 8), Text = "Можно указать базовый URL API или полный адрес операции. Ключ необязателен для локального сервера. «Модели» получает список; ID модели можно ввести вручную. «Проверить» отправляет короткий тестовый запрос. Ключи защищены Windows для текущего пользователя. Перевод отображается только в предпросмотре." };

@@ -101,6 +101,8 @@
     <Compile Include="Translation\CliTranslator.cs" />
     <Compile Include="Translation\ProcessJob.cs" />
     <Compile Include="Translation\TranslationCache.cs" />
+    <Compile Include="Translation\MarkdownTranslationPlan.cs" />
+    <Compile Include="Translation\TranslationBatch.cs" />
     <Compile Include="Forms\MarkdownPreviewForm.Translation.cs">
       <DependentUpon>MarkdownPreviewForm.cs</DependentUpon>
     </Compile>
