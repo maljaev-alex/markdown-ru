@@ -30,6 +30,10 @@ namespace AnotherMarkdown.Translation
     public bool IsDefault { get; set; }
     public string BaseModelId { get; set; }
     public string BaseModelName { get; set; }
+    // An exact launcher alias advertised alongside this model, not a guessed flag.
+    public string FastModelId { get; set; }
+    // This effort has only a Fast launcher alias; there is no ordinary ID to run.
+    public bool FastOnly { get; set; }
     public string DefaultReasoningEffort { get; set; }
     public List<CliReasoningEffort> ReasoningEfforts { get; set; } = new List<CliReasoningEffort>();
 
@@ -79,7 +83,10 @@ namespace AnotherMarkdown.Translation
     {
       cancellation.ThrowIfCancellationRequested();
       var provider = (providerId ?? "").Trim().ToLowerInvariant();
-      if (provider == "codex") return await LoadCodexAsync(executable, cancellation).ConfigureAwait(false);
+      if (provider == "codex") {
+        var codex = await LoadCodexAsync(executable, cancellation).ConfigureAwait(false);
+        AttachFastVariants(codex); ReadAliasReasoning(codex); return codex;
+      }
       if (provider != "cursor" && provider != "opencode" && provider != "ollama" && provider != "agy" && provider != "kimi")
         return new CliModelCatalog { Note = "У этого CLI нет поддерживаемой команды списка моделей. Можно использовать модель из настроек CLI или указать её ID в дополнительных параметрах." };
 
@@ -118,6 +125,7 @@ namespace AnotherMarkdown.Translation
           if (property.Value is JObject model)
             AddModel(catalog, models, property.Name, model["model"]?.Type == JTokenType.String ? (string)model["model"] : property.Name, false);
         }
+        AttachFastVariants(catalog); ReadAliasReasoning(catalog);
         return catalog;
       }
       using (var reader = new StringReader(CleanText(output))) {
@@ -154,23 +162,103 @@ namespace AnotherMarkdown.Translation
           AddModel(catalog, models, id, name, isDefault);
         }
       }
-      if (provider == "cursor") ReadCursorReasoning(catalog);
-      return catalog;
+       AttachFastVariants(catalog);
+       if (provider == "cursor") ReadCursorReasoning(catalog);
+       ReadAliasReasoning(catalog);
+       return catalog;
+     }
+
+    internal static void AttachFastVariants(CliModelCatalog catalog)
+    {
+      // A paired speed variant can be switched off. A confirmed standalone
+      // speed variant is still one model/effort, but cannot be switched off.
+      // Never synthesize the ordinary launcher ID by trimming the Fast suffix.
+      foreach (var fast in catalog.Models.Where(m => m.Id.EndsWith("-fast", StringComparison.OrdinalIgnoreCase)).ToList()) {
+        if (fast.FastOnly) continue;
+        var normalId = fast.Id.Substring(0, fast.Id.Length - "-fast".Length);
+        var normal = catalog.Models.FirstOrDefault(m => string.Equals(m.Id, normalId, StringComparison.OrdinalIgnoreCase));
+        var fastName = Regex.Replace(fast.Name ?? "", @"[\u200B-\u200D\uFEFF]", "").Trim();
+        var hasSpeedLabel = Regex.IsMatch(fastName, @"\s+Fast$", RegexOptions.IgnoreCase);
+        var name = Regex.Replace(fastName, @"\s+Fast$", "", RegexOptions.IgnoreCase).Trim();
+        var normalName = Regex.Replace(normal?.Name ?? "", @"[\u200B-\u200D\uFEFF]", "").Trim();
+        if (normal != null && string.Equals(Regex.Replace(name, @"\s+", " "), Regex.Replace(normalName, @"\s+", " "), StringComparison.OrdinalIgnoreCase)) {
+          normal.FastModelId = fast.Id;
+          catalog.Models.Remove(fast);
+        }
+        else if (hasSpeedLabel) {
+          fast.Name = name;
+          fast.FastOnly = true;
+          fast.FastModelId = fast.Id;
+        }
+      }
+    }
+
+    private static string ReasoningModelId(CliModel model) => model.FastOnly && model.Id.EndsWith("-fast", StringComparison.OrdinalIgnoreCase)
+      ? model.Id.Substring(0, model.Id.Length - "-fast".Length) : model.Id;
+
+    internal static void ReadAliasReasoning(CliModelCatalog catalog)
+    {
+      // A CLI may expose one launcher alias per effort. Require agreement
+      // between the ID and label, or at least two labeled levels with the
+      // same visible base name. The exact advertised ID remains executable.
+      var label = new Regex(@"^(?<name>.+?)\s*\((?<effort>none|minimal|low|medium|high|extra high|xhigh|max)\)$", RegexOptions.IgnoreCase);
+      var trailing = new Regex(@"^(?<name>.+?)\s+(?<effort>none|minimal|low|medium|high|extra high|xhigh|max)$", RegexOptions.IgnoreCase);
+      var suffix = new Regex(@"^(?<base>.+?)[-_.:/](?<effort>none|minimal|low|medium|high|extra-high|xhigh|max)$", RegexOptions.IgnoreCase);
+      var order = new[] { "", "none", "minimal", "low", "medium", "high", "xhigh", "max" };
+      var groups = new Dictionary<string, List<Tuple<CliModel, string, string>>>(StringComparer.Ordinal);
+      var confirmed = new HashSet<CliModel>();
+      foreach (var model in catalog.Models) {
+        if (model.BaseModelId != null || model.ReasoningEfforts.Count > 0) continue;
+        var idMatch = suffix.Match(ReasoningModelId(model));
+        var idEffort = idMatch.Groups["effort"].Value.ToLowerInvariant().Replace("extra-high", "xhigh");
+        var match = label.Match(model.Name);
+        if (!match.Success && idMatch.Success) match = trailing.Match(model.Name);
+        var effort = match.Success ? match.Groups["effort"].Value.ToLowerInvariant().Replace("extra high", "xhigh") : idEffort;
+        if (!match.Success && !idMatch.Success || match.Success && idMatch.Success && idEffort != effort) continue;
+        var name = CliModel.CleanDisplayName(match.Success ? match.Groups["name"].Value : model.Name);
+        var key = idMatch.Success ? "id:" + idMatch.Groups["base"].Value : "name:" + name.ToLowerInvariant();
+        if (!groups.TryGetValue(key, out var members)) groups[key] = members = new List<Tuple<CliModel, string, string>>();
+        members.Add(Tuple.Create(model, effort, name));
+        if (match.Success && idMatch.Success) confirmed.Add(model);
+      }
+      foreach (var group in groups) {
+        if ((group.Key.StartsWith("name:", StringComparison.Ordinal) || !group.Value.Any(item => confirmed.Contains(item.Item1))) &&
+            group.Value.Select(item => item.Item2).Distinct(StringComparer.Ordinal).Count() < 2) continue;
+        var name = group.Value.First().Item3;
+        if (group.Value.Any(item => !string.Equals(item.Item3, name, StringComparison.OrdinalIgnoreCase))) continue;
+        if (group.Key.StartsWith("id:", StringComparison.Ordinal)) {
+          var baseId = group.Key.Substring(3);
+          var baseModel = catalog.Models.FirstOrDefault(m => ReasoningModelId(m) == baseId &&
+            string.Equals(CliModel.CleanDisplayName(m.Name), name, StringComparison.OrdinalIgnoreCase));
+          if (baseModel != null) group.Value.Add(Tuple.Create(baseModel, "", name));
+        }
+        var efforts = group.Value.GroupBy(item => item.Item2).OrderBy(level => Array.IndexOf(order, level.Key))
+          .Select(level => new CliReasoningEffort { Id = level.Key, ModelId = level.First().Item1.Id,
+            ModelIds = level.Select(item => item.Item1.Id).ToList() }).ToList();
+        foreach (var item in group.Value) {
+          item.Item1.BaseModelId = group.Key;
+          item.Item1.BaseModelName = name;
+          item.Item1.DefaultReasoningEffort = item.Item2;
+          item.Item1.ReasoningEfforts = efforts;
+        }
+      }
     }
 
     private static void ReadCursorReasoning(CliModelCatalog catalog)
     {
       // These aliases come from the account catalog. Metadata groups the model
       // picker; commands always use an advertised, unchanged alias.
-      catalog.Models.RemoveAll(model => model.Id.EndsWith("-fast", StringComparison.OrdinalIgnoreCase));
+      // A Fast-only effort groups by its ordinary family identity, while its
+      // executable ID remains the exact Fast alias advertised by the CLI.
       var suffix = new Regex(@"^(?<base>.+?)-(?<effort>extra-high|xhigh|minimal|none|low|medium|high|max)(?<variant>(?:-(?:thinking|context|[0-9]+(?:\.[0-9]+)?[km]))*)$", RegexOptions.IgnoreCase);
       var labelEffort = new Regex(@"\b(extra\s+high|minimal|none|low|medium|high|max)\b", RegexOptions.IgnoreCase);
       var context = new Regex(@"\b[0-9]+(?:\.[0-9]+)?[km]\b", RegexOptions.IgnoreCase);
       var effortOrder = new[] { "", "none", "minimal", "low", "medium", "high", "xhigh", "max" };
       var variants = new List<CursorVariant>();
       foreach (var model in catalog.Models) {
-        var match = suffix.Match(model.Id);
-        var baseId = match.Success ? match.Groups["base"].Value + match.Groups["variant"].Value : model.Id;
+        var groupingId = ReasoningModelId(model);
+        var match = suffix.Match(groupingId);
+        var baseId = match.Success ? match.Groups["base"].Value + match.Groups["variant"].Value : groupingId;
         var noThinking = Regex.IsMatch(model.Name, @"\bno[\s_-]+thinking\b", RegexOptions.IgnoreCase);
         variants.Add(new CursorVariant {
           Model = model,

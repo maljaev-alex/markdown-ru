@@ -29,11 +29,13 @@ internal static class SettingsTests
       SimpleModelSettings();
       ModelSortingSettings();
       ApiSettings();
+      ApiEffortPreservation();
       ApiProxySettings();
       SocksProxySettings();
       ParallelSettings();
       DraftSettings();
       GeometrySettings();
+      DynamicModelLayout();
       settings.Translation.ShowButtons = false;
       using (var form = new SettingsForm(settings)) {
         Check(Find<TrackBar>(form, "trackBar1").Value == 800, "invalid stored zoom is clamped");
@@ -63,6 +65,44 @@ internal static class SettingsTests
     catch (Exception error) { Console.Error.WriteLine(error); return 1; }
   }
   private static void Save(SettingsForm form) => typeof(SettingsForm).GetMethod("btnSave_Click", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { null, EventArgs.Empty });
+  private static void ApiEffortPreservation()
+  {
+    var settings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
+    settings.Translation = CliProfiles.Defaults("codex", Assembly.GetExecutingAssembly().Location);
+    settings.Translation.ShowButtons = false;
+    var api = new ApiConnection { Name = "Saved", Endpoint = "https://example.test/v1", Protocol = "responses",
+      Model = "gpt-test", ReasoningEffort = "high", ReasoningEffortModel = "gpt-test" };
+    api.ReasoningEffortCatalogKey = SettingsDiscoveryCache.ApiModelKey(api);
+    settings.Translation.ApiConnections.Add(api);
+    settings.Translation.SelectedApiConnectionId = api.Id;
+    using (var form = new SettingsForm(settings)) {
+      var pending = ReadDraft(form).ActiveApiConnection;
+      Check(pending.ReasoningEffort == "high" && pending.ReasoningEffortModel == "gpt-test" &&
+        pending.ReasoningEffortCatalogKey == api.ReasoningEffortCatalogKey,
+        "CLI mode preserves the API profile effort while its model list has not loaded");
+      Save(form);
+      Check(form.DialogResult == DialogResult.OK && form.TranslationOptions.ActiveApiConnection.ReasoningEffort == "high" &&
+        form.TranslationOptions.ActiveApiConnection.ReasoningEffortCatalogKey == api.ReasoningEffortCatalogKey,
+        "saving CLI settings does not erase a saved API effort or its model-catalog binding");
+    }
+    using (var form = new SettingsForm(settings)) {
+      Find<ComboBox>(form, "translationConnectionMode").SelectedIndex = 1;
+      Check(ReadDraft(form).ActiveApiConnection.ReasoningEffort == "high" &&
+        ReadDraft(form).ActiveApiConnection.ReasoningEffortModel == "gpt-test",
+        "switching to API before discovery completes retains the saved effort");
+      Save(form);
+      Check(form.DialogResult == DialogResult.OK && form.TranslationOptions.ActiveApiConnection.ReasoningEffort == "high",
+        "saving API mode before model discovery completes retains the saved effort");
+    }
+    var second = new ApiConnection { Name = "Other", Endpoint = "https://other.example.test/v1", Model = "other-model" };
+    settings.Translation.ApiConnections.Add(second);
+    using (var form = new SettingsForm(settings)) {
+      Find<ComboBox>(form, "translationConnectionMode").SelectedIndex = 1;
+      Find<ComboBox>(form, "apiConnections").SelectedItem = Find<ComboBox>(form, "apiConnections").Items.Cast<ApiConnection>().Single(item => item.Id == second.Id);
+      Check(ReadDraft(form).ApiConnections.Single(item => item.Id == api.Id).ReasoningEffort == "high",
+        "switching API profiles before discovery does not erase the previous profile's effort");
+    }
+  }
   private static void ParallelSettings()
   {
     var settings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
@@ -245,8 +285,8 @@ internal static class SettingsTests
       Check(group.Text == "\u041c\u043d\u043e\u0433\u043e\u043f\u043e\u0442\u043e\u0447\u043d\u043e\u0441\u0442\u044c"
         && SameRow(Find<NumericUpDown>(form, "translationParallelRequests"), Find<NumericUpDown>(form, "translationMinimumChunk")),
         "thread count and minimum share one horizontal row in the named threading group");
-      Check(SameRow(Find<ComboBox>(form, "translationModel"), Find<ComboBox>(form, "translationEffort")),
-        "CLI model and reasoning effort share one horizontal row at normal width");
+      Check(!Find<ComboBox>(form, "translationEffort").Visible && !Find<CheckBox>(form, "translationFast").Visible,
+        "CLI hides effort and Fast before a model advertises those choices");
       form.Close();
     }
     foreach (var workingArea in new[] { new Rectangle(0, 0, 1920, 1032), new Rectangle(-1366, 40, 1366, 728) }) {
@@ -267,8 +307,7 @@ internal static class SettingsTests
     } } };
     using (var form = new BackgroundSettings(apiSettings)) {
       form.SelectTranslationTab(); form.Show();
-      Check(SameRow(Find<ComboBox>(form, "apiModel"), Find<ComboBox>(form, "apiEffort")),
-        "API model and reasoning effort share one horizontal row at normal width");
+      Check(!Find<ComboBox>(form, "apiEffort").Visible, "API hides effort without model-specific metadata");
       form.Font = new Font("Segoe UI", 13.5F);
       form.ClampToWorkingArea(new Rectangle(form.Left, form.Top, 640, 480));
       var parallel = Find<NumericUpDown>(form, "translationParallelRequests");
@@ -293,6 +332,86 @@ internal static class SettingsTests
         "all API action buttons remain reachable at 640x480 with a large font");
       Check(form.ClientRectangle.Contains(BoundsInForm(Find<Button>(form, "btnSave"), form)) && form.ClientRectangle.Contains(BoundsInForm(Find<Button>(form, "btnCancel"), form)),
         "large-font small API window retains the Save and Cancel footer");
+      form.Close();
+    }
+  }
+  private static void DynamicModelLayout()
+  {
+    var settings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
+    var options = CliProfiles.Defaults("cursor", Assembly.GetExecutingAssembly().Location);
+    options.UseDefaultModel = false; options.Model = "gpt-5.4-high-fast";
+    settings.Translation = options;
+    var catalog = CliModelDiscovery.ParseCommandOutput("cursor", "gpt-5.4-fast - GPT-5.4 Fast\ngpt-5.4-high-fast - GPT-5.4 High Fast\ngpt-5.4-xhigh-fast - GPT-5.4 Extra High Fast\ngrok-4.7-low - Grok 4.7 Low\ngrok-4.7-high - Grok 4.7 High\ngrok-4.7-high-fast - Grok 4.7 High Fast\nplain - Plain\n", default(System.Threading.CancellationToken));
+    var discovery = new SettingsDiscoveryCache(token => Task.FromResult(new System.Collections.Generic.List<CliInstallation>()),
+      (provider, executable, token) => Task.FromResult(catalog));
+    using (var form = new BackgroundSettings(settings, discovery)) {
+      form.SelectTranslationTab(); form.Show();
+      FillCatalog(form, options, catalog); form.PerformLayout(); Application.DoEvents();
+      var model = Find<ComboBox>(form, "translationModel");
+      var effort = Find<ComboBox>(form, "translationEffort");
+      var fast = Find<CheckBox>(form, "translationFast");
+      Check(model.Items.Cast<object>().Count(item => item.ToString() == "GPT-5.4") == 1 &&
+        !model.Items.Cast<object>().Any(item => item.ToString().IndexOf("Fast", StringComparison.OrdinalIgnoreCase) >= 0),
+        "fast-only aliases appear as one clean model row with separate effort");
+      Check(fast.Visible && fast.Checked && !fast.Enabled && ReadDraft(form).Model == "gpt-5.4-high-fast",
+        "fast-only effort keeps Fast checked and immutable without fabricating a normal launch ID");
+      var modelWithBoth = model.Width;
+      options.Model = "grok-4.7-high"; options.ReasoningEffort = "high"; FillCatalog(form, options, catalog);
+      Check(fast.Visible && fast.Enabled && !fast.Checked, "a switchable model re-enables the independent Fast checkbox");
+      effort.SelectedIndex = 0; form.PerformLayout(); Application.DoEvents();
+      Check(effort.Visible && !fast.Visible && model.Width > modelWithBoth, "model expands into the space freed by unavailable Fast");
+      var modelWithEffort = model.Width;
+      model.SelectedItem = model.Items.Cast<object>().Single(item => item.ToString() == "Plain");
+      form.PerformLayout(); Application.DoEvents();
+      var cli = Find<ComboBox>(form, "translationCli");
+      var path = Find<TextBox>(form, "translationExecutable");
+      Check(!effort.Visible && !fast.Visible && model.Width > modelWithEffort &&
+        BoundsInForm(model, form).Left == BoundsInForm(cli, form).Left &&
+        BoundsInForm(model, form).Right == BoundsInForm(cli, form).Right && model.Width == path.Width,
+        "hiding all model options returns the entire value column and aligns CLI, path and model edges");
+      var refresh = BoundsInForm(Find<Button>(form, "translationModelsRefresh"), form);
+      Check(refresh.Left == BoundsInForm(Find<Button>(form, "translationCliRefresh"), form).Left &&
+        refresh.Right == BoundsInForm(Find<Button>(form, "translationBrowse"), form).Right,
+        "all CLI action buttons share the same left and right edges");
+      foreach (var picker in new[] { cli, model, effort }) Check(picker.DropDownWidth == picker.Width,
+        picker.Name + " popup matches its current field width");
+      options.Model = "gpt-5.4-high-fast"; FillCatalog(form, options, catalog);
+      form.Size = new Size(640, 480); Application.DoEvents();
+      Check(model.Parent.ClientRectangle.Contains(model.Bounds) && model.Parent.ClientRectangle.Contains(effort.Bounds) &&
+        model.Parent.ClientRectangle.Contains(fast.Bounds) && SameRow(model, Find<Button>(form, "translationModelsRefresh")),
+        "narrow form wraps model options while keeping the model and action button usable");
+      Check(model.DropDownWidth == model.Width && effort.DropDownWidth == effort.Width, "popup sizes follow narrow responsive layout");
+      form.Close();
+    }
+    var api = new ApiConnection { Endpoint = "https://example.test/v1", Protocol = "responses", Model = "gpt-6.1-sol" };
+    var apiCatalog = new CliModelCatalog { Models = {
+      new CliModel { Id = "gpt-6.1-sol", Name = "GPT-6.1 Sol", ReasoningEfforts = {
+        new CliReasoningEffort { Id = "low" }, new CliReasoningEffort { Id = "high" } } },
+      new CliModel { Id = "plain", Name = "Plain" }
+    } };
+    var apiSettings = new Settings { EnabledMarkdownPlugins = new[] { "attrs" } };
+    apiSettings.Translation.ConnectionMode = "api"; apiSettings.Translation.ApiConnections.Add(api);
+    apiSettings.Translation.SelectedApiConnectionId = api.Id;
+    var apiDiscovery = new SettingsDiscoveryCache(apiModelLoader: (profile, timeout, token) => Task.FromResult(apiCatalog));
+    using (var form = new BackgroundSettings(apiSettings, apiDiscovery)) {
+      form.SelectTranslationTab(); form.Show();
+      typeof(SettingsForm).GetMethod("FillApiModels", BindingFlags.Instance | BindingFlags.NonPublic)
+        .Invoke(form, new object[] { apiCatalog, api.Model });
+      var model = Find<ComboBox>(form, "apiModel"); var effort = Find<ComboBox>(form, "apiEffort");
+      var withEffort = model.Width;
+      Check(effort.Visible, "API layout shows effort only when selected model metadata offers levels");
+      model.SelectedItem = model.Items.Cast<CliModel>().Single(item => item.Id == "plain");
+      Application.DoEvents(); form.PerformLayout();
+      Check(!effort.Visible && model.Width > withEffort && model.Width == Find<ComboBox>(form, "apiConnections").Width &&
+        model.Width == Find<TextBox>(form, "apiKey").Width,
+        "API model expands to the same full value width as profile and key when effort is hidden");
+      var modeBounds = BoundsInForm(Find<ComboBox>(form, "translationConnectionMode"), form);
+      foreach (var name in new[] { "apiName", "apiEndpoint", "apiPreset", "apiProtocol", "apiProxyMode" }) {
+        var bounds = BoundsInForm(form.Controls.Find(name, true).Single(), form);
+        Check(bounds.Left == modeBounds.Left && bounds.Right == modeBounds.Right, name + " fills the shared API field column when no action is present");
+      }
+      Check(model.DropDownWidth == model.Width && Find<ComboBox>(form, "apiPreset").DropDownWidth == Find<ComboBox>(form, "apiPreset").Width,
+        "API dropdowns use the actual field widths after capability changes");
       form.Close();
     }
   }
@@ -427,19 +546,32 @@ internal static class SettingsTests
       Check(ReadDraft(form).ReasoningEffort == "ultra" && Find<TextBox>(form, "translationArguments").Text.Contains("model_reasoning_effort=ultra"), "effort selection updates saved draft and argument preview");
       var models = Find<ComboBox>(form, "translationModel");
       models.SelectedItem = models.Items.Cast<object>().Single(m => m.ToString() == "plain");
-      Check(!efforts.Enabled && ReadDraft(form).ReasoningEffort == "", "switching to model without effort clears previous override");
+      Check(!efforts.Visible && ReadDraft(form).ReasoningEffort == "", "switching to model without effort hides the control and clears previous override");
+      options.UseDefaultModel = false; options.Model = "plain"; options.ReasoningEffort = "high";
+      FillCatalog(form, options, catalog);
+      typeof(SettingsForm).GetMethod("UpdateArgumentPreview", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, null);
+      Check(ReadDraft(form).ReasoningEffort == "" && !Find<TextBox>(form, "translationArguments").Text.Contains("model_reasoning_effort=high"),
+        "a discovered CLI model with no effort levels cannot send a hidden stale override");
       options = CliProfiles.Defaults("cursor", options.Executable); options.UseDefaultModel = false; options.Model = "grok-4.7-xhigh";
       catalog = CliModelDiscovery.ParseCommandOutput("cursor", "auto - Auto (default)\ngrok-4.7-low - Grok 4.7 Low\ngrok-4.7-medium - Grok 4.7 Medium\ngrok-4.7-xhigh - Grok 4.7 Extra High\ngrok-4.7-xhigh-fast - Grok 4.7 Extra High Fast\n", default(System.Threading.CancellationToken));
       FillCatalog(form, options, catalog);
       Check(Find<ComboBox>(form, "translationModel").Items.Count == 3 && efforts.Items.Count == 3 && ReadDraft(form).Model == "grok-4.7-xhigh", "Cursor groups exact effort variants, hides Fast and restores saved full model ID");
+      var fast = Find<CheckBox>(form, "translationFast");
+      Check((bool)typeof(SettingsForm).GetField("translationFastAvailable", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form) && !fast.Checked,
+        "Fast is offered separately for the advertised effort variant");
+      fast.Checked = true;
+      Check(ReadDraft(form).Model == "grok-4.7-xhigh-fast" && ReadDraft(form).ReasoningEffort == "xhigh", "Fast selects only the exact advertised CLI variant");
+      fast.Checked = false;
+      Check(ReadDraft(form).Model == "grok-4.7-xhigh", "turning off Fast restores the exact normal variant");
       efforts.SelectedIndex = 1;
-      Check(ReadDraft(form).Model == "grok-4.7-medium" && ReadDraft(form).ReasoningEffort == "medium" && !ReadDraft(form).UseDefaultModel, "Cursor effort selects returned model ID instead of fabricated base");
+      Check(ReadDraft(form).Model == "grok-4.7-medium" && ReadDraft(form).ReasoningEffort == "medium" && !ReadDraft(form).UseDefaultModel &&
+        !(bool)typeof(SettingsForm).GetField("translationFastAvailable", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form), "Cursor effort selects returned model ID and hides unavailable Fast");
       Check(!Find<ComboBox>(form, "translationModel").Items.Cast<object>().Any(m => m.ToString().IndexOf("Fast", StringComparison.OrdinalIgnoreCase) >= 0), "Cursor Fast variants remain hidden from the model picker");
       Find<ComboBox>(form, "translationModel").SelectedIndex = 0;
-      Check(!efforts.Enabled && ReadDraft(form).UseDefaultModel && ReadDraft(form).ReasoningEffort == "", "Cursor CLI default retains Auto and exposes no invented effort");
+      Check(!efforts.Visible && !fast.Visible && ReadDraft(form).UseDefaultModel && ReadDraft(form).ReasoningEffort == "", "Cursor CLI default retains Auto and exposes no invented effort or Fast");
       options.Model = "grok-4.7-xhigh-fast";
       FillCatalog(form, options, catalog);
-      Check(ReadDraft(form).Model == "grok-4.7-xhigh" && ReadDraft(form).ReasoningEffort == "xhigh", "saved Cursor Fast model migrates only to its exact advertised normal variant and retains effort");
+      Check(ReadDraft(form).Model == "grok-4.7-xhigh-fast" && ReadDraft(form).ReasoningEffort == "xhigh" && fast.Checked, "saved Cursor Fast model restores its exact advertised variant and separate checkbox");
       options.Model = "not-advertised-low-fast";
       FillCatalog(form, options, catalog);
       Check(ReadDraft(form).UseDefaultModel && ReadDraft(form).ReasoningEffort == "" && !Find<ComboBox>(form, "translationModel").Items.Cast<object>().Any(m => m.ToString().IndexOf("Fast", StringComparison.OrdinalIgnoreCase) >= 0), "missing normal Cursor counterpart falls back to CLI default without reintroducing a saved Fast row");
@@ -463,6 +595,12 @@ internal static class SettingsTests
       catalog = new CliModelCatalog { Models = { new CliModel { Id = "other-fast", Name = "Other Fast" } } };
       FillCatalog(form, options, catalog);
       Check(ReadDraft(form).Model == "other-fast" && !ReadDraft(form).UseDefaultModel, "Fast filtering and migration do not affect another CLI provider");
+      options = CliProfiles.Defaults("agy", options.Executable); options.UseDefaultModel = false; options.Model = "gemini-3.8-flash-high";
+      catalog = CliModelDiscovery.ParseCommandOutput("agy", "gemini-3.8-flash-low Gemini 3.8 Flash (Low)\ngemini-3.8-flash-high Gemini 3.8 Flash (High)\ngemini-3.8-flash-high-fast Gemini 3.8 Flash (High) Fast\n", default(System.Threading.CancellationToken));
+      FillCatalog(form, options, catalog);
+      fast.Checked = true;
+      Check(ReadDraft(form).Model == "gemini-3.8-flash-high-fast" && ReadDraft(form).ReasoningEffort == "high" && fast.Checked,
+        "generic CLI alias grouping uses the separate Fast checkbox and exact advertised effort model ID");
     }
   }
   private static void SimpleModelSettings()

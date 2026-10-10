@@ -39,7 +39,7 @@ internal static class DiscoveryCacheTests
   }
   private static async Task Run()
   {
-    await OffCallingThread(); await LifetimeAndRefresh(); await EmptyResults(); await DeepCopies();
+    await OffCallingThread(); await LifetimeAndRefresh(); await PersistentModelCache(); await EmptyResults(); await DeepCopies();
     await JoinedInstallations(); await OneSubscriberCancels(); await AllSubscribersCancel(); await ReplacementFlight();
     await FailedRefresh(); await CanceledRefresh(); await BoundedEntries(); await EnvironmentKeys(); await RawDiscoveryStaysFresh();
   }
@@ -55,7 +55,7 @@ internal static class DiscoveryCacheTests
   private static CliModelCatalog Models(string id = "fixture") => new CliModelCatalog {
     DefaultModelId = id, ConfiguredReasoningEffort = "high", Note = "fixture note", McpConfigurationRead = true,
     McpServerNames = new List<string> { "fixture-mcp" }, Models = new List<CliModel> {
-      new CliModel { Id = id, Name = "Fixture model", IsDefault = true, BaseModelId = "fixture-base", BaseModelName = "Fixture base", DefaultReasoningEffort = "high",
+      new CliModel { Id = id, Name = "Fixture model", IsDefault = true, BaseModelId = "fixture-base", BaseModelName = "Fixture base", DefaultReasoningEffort = "high", FastModelId = id + "-fast", FastOnly = true,
         ReasoningEfforts = new List<CliReasoningEffort> { new CliReasoningEffort { Id = "high", Description = "fixture effort", ModelId = id, ModelIds = new List<string> { id, id + "-alias" } } } }
     }
   };
@@ -118,6 +118,59 @@ internal static class DiscoveryCacheTests
       Check(error is OperationCanceledException && calls == 3, "an already canceled consumer cannot receive a cached success or start discovery");
     }
   }
+  private static async Task PersistentModelCache()
+  {
+    var clock = new Clock(); var path = Path.Combine(scratch, "models.json");
+    var cliCalls = 0; var apiCalls = 0;
+    Func<string, string, CancellationToken, Task<CliModelCatalog>> cli = (provider, executable, token) => {
+      Interlocked.Increment(ref cliCalls); return Task.FromResult(Models("cli-" + cliCalls));
+    };
+    Func<ApiConnection, int, CancellationToken, Task<CliModelCatalog>> api = (connection, timeout, token) => {
+      Interlocked.Increment(ref apiCalls); return Task.FromResult(Models("api-" + apiCalls));
+    };
+    var profile = new ApiConnection { Endpoint = "https://example.test/v1", ApiKey = "cache-secret-fixture", Model = "first" };
+    var first = new SettingsDiscoveryCache(modelLoader: cli, apiModelLoader: api, utcNow: clock.Now);
+    first.ConfigureModelPersistence(path);
+    await first.LoadModelsAsync("cursor", "fixture.exe", false, CancellationToken.None);
+    await first.LoadApiModelsAsync(profile, 30, false, CancellationToken.None);
+    using (var canceled = new CancellationTokenSource()) {
+      canceled.Cancel();
+      Check(await Failure(() => first.LoadApiModelsAsync(profile, 30, false, canceled.Token)) is OperationCanceledException,
+        "a canceled API consumer cannot receive a cached catalog success");
+    }
+    await Within(Task.Run(async () => {
+      for (var i = 0; i < 500; i++) {
+        if (File.Exists(path) && File.ReadAllText(path, Encoding.UTF8).Contains("api-1") && File.ReadAllText(path, Encoding.UTF8).Contains("cli-1")) return true;
+        await Task.Delay(10);
+      }
+      throw new TimeoutException("Persistent model cache was not written.");
+    }));
+    var bytes = File.ReadAllText(path, Encoding.UTF8);
+    Check(!bytes.Contains(profile.ApiKey) && !bytes.Contains(profile.Endpoint), "persistent metadata contains no API key or endpoint");
+    var next = new SettingsDiscoveryCache(modelLoader: cli, apiModelLoader: api, utcNow: clock.Now);
+    next.ConfigureModelPersistence(path);
+    await next.PersistenceReady;
+    Check(next.TryModelsInMemory("cursor", "fixture.exe", out var readyCli, out var readyFresh) && readyFresh
+      && next.TryApiModelsInMemory(profile, out var readyApi, out readyFresh) && readyFresh,
+      "plugin startup loads persisted CLI and API catalogs into the non-I/O path before opening Settings");
+    profile.Model = "second";
+    Check(next.TryModels("cursor", "fixture.exe", out var cliCatalog, out var fresh) && fresh && cliCatalog.DefaultModelId == "cli-1"
+      && next.TryApiModels(profile, 30, out var apiCatalog, out fresh) && fresh && apiCatalog.DefaultModelId == "api-1",
+      "CLI and API model metadata survive restart and API model selection without a request");
+    clock.Advance(TimeSpan.FromHours(23));
+    await next.LoadModelsAsync("cursor", "fixture.exe", false, CancellationToken.None);
+    await next.LoadApiModelsAsync(profile, 30, false, CancellationToken.None);
+    Check(cliCalls == 1 && apiCalls == 1, "both model catalogs remain fresh inside the twenty-four-hour window");
+    await next.LoadApiModelsAsync(profile, 30, true, CancellationToken.None);
+    Check(apiCalls == 2, "explicit API Refresh bypasses the fresh model cache");
+    clock.Advance(TimeSpan.FromHours(1));
+    Check(first.TryModels("cursor", "fixture.exe", out var staleCli, out fresh) && !fresh && staleCli.DefaultModelId == "cli-1",
+      "expired disk metadata cannot erase the stale in-memory model catalog shown during refresh");
+    var afterExpiry = new SettingsDiscoveryCache(modelLoader: cli, apiModelLoader: api, utcNow: clock.Now);
+    afterExpiry.ConfigureModelPersistence(path);
+    await afterExpiry.LoadModelsAsync("cursor", "fixture.exe", false, CancellationToken.None);
+    Check(cliCalls == 2, "persisted CLI metadata expires exactly twenty-four hours after its original fetch");
+  }
   private static async Task EmptyResults()
   {
     var installs = 0; var models = 0;
@@ -143,7 +196,7 @@ internal static class DiscoveryCacheTests
       && copy.Models[0].ReasoningEfforts[0].Description == "fixture effort" && copy.Models[0].ReasoningEfforts[0].ModelIds.SequenceEqual(new[] { "fixture", "fixture-alias" })
       && copy.McpServerNames.SequenceEqual(new[] { "fixture-mcp" }), "model effort aliases and MCP names are deep copied from source and every consumer");
     Check(copy.DefaultModelId == "fixture" && copy.ConfiguredReasoningEffort == "high" && copy.Note == "fixture note" && copy.McpConfigurationRead
-      && copy.Models[0].IsDefault && copy.Models[0].BaseModelId == "fixture-base" && copy.Models[0].BaseModelName == "Fixture base" && copy.Models[0].DefaultReasoningEffort == "high", "deep copies retain discovery and grouping metadata");
+      && copy.Models[0].IsDefault && copy.Models[0].BaseModelId == "fixture-base" && copy.Models[0].BaseModelName == "Fixture base" && copy.Models[0].DefaultReasoningEffort == "high" && copy.Models[0].FastModelId == "fixture-fast" && copy.Models[0].FastOnly, "deep copies retain discovery and grouping metadata including a Fast-only capability");
     copy.Models.Clear(); installations.Clear();
     Check((await cache.LoadModelsAsync("cursor", "fixture.exe", false, CancellationToken.None)).Models.Count == 1
       && (await cache.LoadInstallationsAsync(false, CancellationToken.None)).Count == 1, "mutating a cached lookup never poisons a later load");

@@ -11,7 +11,12 @@ namespace AnotherMarkdown.Translation
   {
     public int Completed { get; }
     public int Total { get; }
-    public TranslationProgress(int completed, int total) { Completed = completed; Total = total; }
+    public int RetryPart { get; }
+    public int RetryAttempt { get; }
+    public int RetryMaxAttempts { get; }
+    public TranslationProgress(int completed, int total) : this(completed, total, 0, 0, 0) { }
+    public TranslationProgress(int completed, int total, int retryPart, int retryAttempt, int retryMaxAttempts)
+    { Completed = completed; Total = total; RetryPart = retryPart; RetryAttempt = retryAttempt; RetryMaxAttempts = retryMaxAttempts; }
   }
 
   public static class TranslationBatch
@@ -20,41 +25,61 @@ namespace AnotherMarkdown.Translation
       Func<TranslationChunk, CancellationToken, Task<string>> translate, CancellationToken token,
       IProgress<TranslationProgress> progress = null, bool preserveTranslatedWhitespace = false)
     {
+      if (translate == null) throw new ArgumentNullException(nameof(translate));
+      return await RunAsync(chunks, parallelRequests, (chunk, retry, cancellation) => translate(chunk, cancellation), token,
+        progress, preserveTranslatedWhitespace).ConfigureAwait(false);
+    }
+
+    public static async Task<string> RunAsync(IReadOnlyList<TranslationChunk> chunks, int parallelRequests,
+      Func<TranslationChunk, Action<int, int>, CancellationToken, Task<string>> translate, CancellationToken token,
+      IProgress<TranslationProgress> progress = null, bool preserveTranslatedWhitespace = false)
+    {
       if (chunks == null || chunks.Count == 0) throw new ArgumentException("Нет частей для перевода.");
       if (parallelRequests < 1 || parallelRequests > 8) throw new ArgumentOutOfRangeException(nameof(parallelRequests));
       if (translate == null) throw new ArgumentNullException(nameof(translate));
       token.ThrowIfCancellationRequested();
       var results = new string[chunks.Count];
-      var next = -1; var completed = 0; var characters = 0; var progressGate = new object();
+      var next = -1; var completed = 0; var characters = 0; var progressGate = new object(); var active = true;
       Exception failure = null;
       using (var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token)) {
-        progress?.Report(new TranslationProgress(0, chunks.Count));
-        var workers = Enumerable.Range(0, Math.Min(parallelRequests, chunks.Count)).Select(_ => Task.Run(async () => {
-          try {
-            while (true) {
-              cancellation.Token.ThrowIfCancellationRequested();
-              var index = Interlocked.Increment(ref next);
-              if (index >= chunks.Count) return;
-              var result = await translate(chunks[index], cancellation.Token).ConfigureAwait(false);
-              cancellation.Token.ThrowIfCancellationRequested();
-              if (!preserveTranslatedWhitespace) result = result?.TrimStart('\uFEFF', '\r', '\n').TrimEnd('\r', '\n');
-              if (string.IsNullOrWhiteSpace(result?.TrimStart('\uFEFF'))) throw new InvalidOperationException("Модель вернула пустой перевод части " + (index + 1) + ".");
-              if (Interlocked.Add(ref characters, result.Length + chunks[index].PrefixBefore.Length + chunks[index].SeparatorAfter.Length) > 32000000)
-                throw new InvalidOperationException("Итоговый перевод слишком большой (более 32 млн символов).");
-              results[index] = result;
-              lock (progressGate) { completed++; progress?.Report(new TranslationProgress(completed, chunks.Count)); }
+        try {
+          progress?.Report(new TranslationProgress(0, chunks.Count));
+          var workers = Enumerable.Range(0, Math.Min(parallelRequests, chunks.Count)).Select(_ => Task.Run(async () => {
+            try {
+              while (true) {
+                cancellation.Token.ThrowIfCancellationRequested();
+                var index = Interlocked.Increment(ref next);
+                if (index >= chunks.Count) return;
+                Action<int, int> retry = (attempt, maximum) => {
+                  lock (progressGate) {
+                    if (!active || cancellation.IsCancellationRequested || failure != null || results[index] != null) return;
+                    progress?.Report(new TranslationProgress(completed, chunks.Count, index + 1, attempt, maximum));
+                  }
+                };
+                var result = await translate(chunks[index], retry, cancellation.Token).ConfigureAwait(false);
+                cancellation.Token.ThrowIfCancellationRequested();
+                if (!preserveTranslatedWhitespace) result = result?.TrimStart('\uFEFF', '\r', '\n').TrimEnd('\r', '\n');
+                if (string.IsNullOrWhiteSpace(result?.TrimStart('\uFEFF'))) throw new InvalidOperationException("Модель вернула пустой перевод части " + (index + 1) + ".");
+                if (Interlocked.Add(ref characters, result.Length + chunks[index].PrefixBefore.Length + chunks[index].SeparatorAfter.Length) > 32000000)
+                  throw new InvalidOperationException("Итоговый перевод слишком большой (более 32 млн символов).");
+                lock (progressGate) {
+                  if (cancellation.IsCancellationRequested || failure != null) return;
+                  results[index] = result; completed++; progress?.Report(new TranslationProgress(completed, chunks.Count));
+                }
+              }
             }
-          }
-          catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
-          catch (Exception error) {
-            Interlocked.CompareExchange(ref failure, error, null);
-            cancellation.Cancel();
-          }
-        })).ToArray();
-        // Wait for every worker to release its HTTP request/process before returning an error.
-        await Task.WhenAll(workers).ConfigureAwait(false);
-        token.ThrowIfCancellationRequested();
-        if (failure != null) ExceptionDispatchInfo.Capture(failure).Throw();
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+            catch (Exception error) {
+              Interlocked.CompareExchange(ref failure, error, null);
+              cancellation.Cancel();
+            }
+          })).ToArray();
+          // Wait for every worker to release its HTTP request/process before returning an error.
+          await Task.WhenAll(workers).ConfigureAwait(false);
+          token.ThrowIfCancellationRequested();
+          if (failure != null) ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+        finally { lock (progressGate) active = false; }
       }
       if (chunks.Count == 1) return results[0];
       return string.Concat(chunks.Select((chunk, index) => chunk.PrefixBefore + results[index] + chunk.SeparatorAfter));

@@ -29,7 +29,17 @@ internal static class PreviewProgressTests
       Console.Write(Result);
       return 0;
     }
-    var tempParent = Directory.Exists(@"D:\Temp") ? @"D:\Temp\agent\markdown-ru" : Path.Combine(Path.GetTempPath(), "markdown-ru");
+    if (args.Length == 2 && args[0] == "fake-retry-translation") {
+      var prompt = Console.In.ReadToEnd(); var counter = args[1];
+      if (!File.Exists(counter)) { File.WriteAllText(counter, "1"); Console.Write("Missing protected marker"); return 0; }
+      File.WriteAllText(counter + ".started", "2");
+      var deadline = Stopwatch.StartNew();
+      while (!File.Exists(counter + ".release")) { if (deadline.Elapsed > TimeSpan.FromSeconds(5)) return 3; Thread.Sleep(5); }
+      var marker = System.Text.RegularExpressions.Regex.Match(prompt, @"AM_KEEP_[a-f0-9]+_[0-9]+_END").Value;
+      if (marker.Length == 0) return 4;
+      Console.Write("# Fixture\n\nTranslated " + marker + ".\n"); return 0;
+    }
+    var tempParent = Directory.Exists(@"D:\Temp") ? @"D:\Temp\agent\markdown-ru\ru16-retry" : Path.Combine(Path.GetTempPath(), "markdown-ru");
     var directory = Path.GetFullPath(Path.Combine(tempParent, "preview-progress-" + Guid.NewGuid().ToString("N")));
     var previousTemp = Environment.GetEnvironmentVariable("TEMP");
     var previousTmp = Environment.GetEnvironmentVariable("TMP");
@@ -41,6 +51,8 @@ internal static class PreviewProgressTests
       Application.EnableVisualStyles();
       DeferredProgress(false);
       DeferredProgress(true);
+      DeferredProgress(false, true);
+      RetryProgress(directory);
       Console.WriteLine("PASS preview progress: " + checks + " assertions");
       return 0;
     }
@@ -50,6 +62,48 @@ internal static class PreviewProgressTests
       Environment.SetEnvironmentVariable("TMP", previousTmp);
       var parent = Path.GetFullPath(tempParent) + Path.DirectorySeparatorChar;
       if (directory.StartsWith(parent, StringComparison.OrdinalIgnoreCase)) Directory.Delete(directory, true);
+    }
+  }
+
+  private static void RetryProgress(string directory)
+  {
+    var counter = Path.Combine(directory, "retry-stage"); var releaseRenderer = new TaskCompletionSource<bool>(); var rendererEntered = false;
+    var settings = new Settings { Translation = new TranslationOptions {
+      Executable = Assembly.GetExecutingAssembly().Location, ProviderId = "custom", Arguments = "fake-retry-translation " + CliTranslator.QuoteArgument(counter),
+      UseCustomArguments = true, UseDefaultModel = false, Model = "fixture-model", OutputFormat = "text", TimeoutSeconds = 10, ParallelRequests = 2, ShowButtons = true
+    } };
+    Func<string, string, bool, Task> renderer = (text, path, translated) => {
+      if (!translated) return Task.CompletedTask;
+      Check(text == "# Fixture\n\nTranslated `keep()`.", "repaired local CLI output restores the protected code before rendering");
+      rendererEntered = true; return releaseRenderer.Task;
+    };
+    var constructor = typeof(MarkdownPreviewForm).GetConstructor(BindingFlags.NonPublic | BindingFlags.Instance,
+      null, new[] { typeof(Settings), typeof(Func<string, string, bool, Task>) }, null);
+    using (var preview = (MarkdownPreviewForm)constructor.Invoke(new object[] { settings, renderer })) {
+      var previousContext = SynchronizationContext.Current; var context = new DeferredContext(); Task translation = null;
+      SynchronizationContext.SetSynchronizationContext(context);
+      try {
+        preview.RenderMarkdown("# Retry fixture\n\nEnglish `keep()`.\n", "retry-fixture.md").GetAwaiter().GetResult();
+        translation = (Task)typeof(MarkdownPreviewForm).GetMethod("TranslateCurrentAsync", BindingFlags.NonPublic | BindingFlags.Instance).Invoke(preview, null);
+        context.PumpUntil(() => File.Exists(counter + ".started") || translation.IsCompleted);
+        Check(!translation.IsCompleted && File.ReadAllText(counter + ".started") == "2", "a real local retry request remains pending at its controlled second attempt");
+        context.DeliverProgress(); var status = Field<ToolStripLabel>(preview, "translationStatus");
+        Check(status.Text.Contains("\u041f\u043e\u0432\u0442\u043e\u0440 \u0447\u0430\u0441\u0442\u0438 1")
+          && status.Text.Contains("\u043f\u043e\u043f\u044b\u0442\u043a\u0430 2 \u0438\u0437 3"), "preview identifies the damaged part and its active repair attempt");
+        Check(Field<ToolStripLabel>(preview, "translationIndicator").Available && Field<System.Windows.Forms.Timer>(preview, "translationAnimation").Enabled
+          && Field<ToolStripButton>(preview, "cancelButton").Available, "retry keeps the spinner and cancellation action active");
+        File.WriteAllText(counter + ".release", "continue"); context.PumpUntil(() => rendererEntered || translation.IsCompleted);
+        Check(rendererEntered && status.Text == RussianStatus && !translation.IsCompleted, "successful repair publishes terminal status while rendering is still deferred");
+        context.ReplayRetry(); context.DeliverProgress();
+        Check(status.Text == RussianStatus, "a delayed real retry notification cannot overwrite terminal success");
+        releaseRenderer.SetResult(true); context.PumpUntil(() => translation.IsCompleted); translation.GetAwaiter().GetResult();
+        Check(Field<CancellationTokenSource>(preview, "translationCancellation") == null && !Field<System.Windows.Forms.Timer>(preview, "translationAnimation").Enabled,
+          "completed repair releases the request and stops the spinner");
+      }
+      finally {
+        File.WriteAllText(counter + ".release", "cleanup"); releaseRenderer.TrySetResult(true); preview.Dispose();
+        if (translation != null) context.PumpUntil(() => translation.IsCompleted); SynchronizationContext.SetSynchronizationContext(previousContext);
+      }
     }
   }
 
@@ -63,10 +117,12 @@ internal static class PreviewProgressTests
   private static T Field<T>(MarkdownPreviewForm form, string name) =>
     (T)typeof(MarkdownPreviewForm).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance).GetValue(form);
 
-  private static void DeferredProgress(bool changeSource)
+  private static void DeferredProgress(bool changeSource, bool cancelDuringRender = false)
   {
     var releaseRenderer = new TaskCompletionSource<bool>();
     var rendererEntered = false;
+    var cancelledOriginalRendered = false;
+    var cancelRequested = false;
     var renderedTranslation = "";
     var settings = new Settings { Translation = new TranslationOptions {
       Executable = Assembly.GetExecutingAssembly().Location, ProviderId = "custom", Arguments = "fake-translation",
@@ -74,7 +130,7 @@ internal static class PreviewProgressTests
       TimeoutSeconds = 10, ParallelRequests = 2, ShowButtons = true
     } };
     Func<string, string, bool, Task> renderer = (text, path, translated) => {
-      if (!translated) return Task.CompletedTask;
+      if (!translated) { if (cancelRequested) cancelledOriginalRendered = true; return Task.CompletedTask; }
       renderedTranslation = text;
       rendererEntered = true;
       return releaseRenderer.Task;
@@ -99,6 +155,12 @@ internal static class PreviewProgressTests
           "terminal status is tested while renderer awaits and the request is still owned");
         var status = Field<ToolStripLabel>(preview, "translationStatus");
         Check(preview.IsTranslationPreview && status.Text == RussianStatus, "successful translation publishes terminal Russian status before rendering completes");
+        if (cancelDuringRender) {
+          cancelRequested = true;
+          Field<ToolStripButton>(preview, "cancelButton").PerformClick();
+          Check(!preview.IsTranslationPreview && status.Text == "Перевод отменён",
+            "cancel during deferred rendering immediately restores original preview state");
+        }
         if (changeSource) {
           sourceUpdate = preview.RenderMarkdown("# Replacement source\n", "replacement.md");
           Check(!preview.IsTranslationPreview && status.Text == "" && !sourceUpdate.IsCompleted,
@@ -111,12 +173,14 @@ internal static class PreviewProgressTests
           ? "late progress from the previous source cannot restore an obsolete translating status"
           : "late progress cannot replace terminal Russian status while rendering is pending");
         releaseRenderer.SetResult(true);
-        context.PumpUntil(() => translation.IsCompleted && (sourceUpdate == null || sourceUpdate.IsCompleted));
+        context.PumpUntil(() => translation.IsCompleted && (sourceUpdate == null || sourceUpdate.IsCompleted) && (!cancelDuringRender || cancelledOriginalRendered));
         translation.GetAwaiter().GetResult();
         if (sourceUpdate != null) sourceUpdate.GetAwaiter().GetResult();
         Check(Field<CancellationTokenSource>(preview, "translationCancellation") == null,
           "completed preview releases its owned translation request");
         Check(status.Text == terminalStatus, "renderer completion retains the terminal status after delayed progress delivery");
+        if (cancelDuringRender) Check(cancelledOriginalRendered && !preview.IsTranslationPreview,
+          "queued render after cancellation displays the original document rather than translation");
       }
       finally {
         releaseRenderer.TrySetResult(true);
@@ -134,6 +198,7 @@ internal static class PreviewProgressTests
     private readonly object gate = new object();
     private readonly Queue<Action> continuations = new Queue<Action>();
     private readonly Queue<Action> progress = new Queue<Action>();
+    private Action retry;
     public int ProgressPosted { get; private set; }
     public int ProgressDelivered { get; private set; }
     public override SynchronizationContext CreateCopy() => this;
@@ -141,10 +206,16 @@ internal static class PreviewProgressTests
     public override void Post(SendOrPostCallback callback, object state)
     {
       lock (gate) {
-        if (state is TranslationProgress) { progress.Enqueue(() => callback(state)); ProgressPosted++; }
+        if (state is TranslationProgress value) {
+          Action deliver = () => callback(state); progress.Enqueue(deliver); ProgressPosted++;
+          if (value.RetryPart != 0) retry = deliver;
+        }
         else continuations.Enqueue(() => callback(state));
       }
     }
+
+    public void ReplayRetry()
+    { lock (gate) { if (retry == null) throw new Exception("No real retry callback was captured."); progress.Enqueue(retry); } }
 
     public void PumpUntil(Func<bool> complete)
     {

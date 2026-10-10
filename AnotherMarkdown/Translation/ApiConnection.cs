@@ -25,6 +25,12 @@ namespace AnotherMarkdown.Translation
     public string Model { get; set; } = "";
     [JsonProperty]
     public string ReasoningEffort { get; set; } = "";
+    // A level may be sent only after this model advertised it in the API catalog.
+    // Older saved profiles lack this marker and keep their effort inactive.
+    [JsonProperty]
+    public string ReasoningEffortModel { get; set; } = "";
+    [JsonProperty]
+    public string ReasoningEffortCatalogKey { get; set; } = "";
     // Missing values in older profiles inherit the previously shared translation settings.
     [JsonProperty(NullValueHandling = NullValueHandling.Ignore)]
     public int? TimeoutSeconds { get; set; }

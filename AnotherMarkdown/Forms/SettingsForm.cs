@@ -4,6 +4,8 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using AnotherMarkdown.Entities;
 using AnotherMarkdown.Translation;
@@ -24,7 +26,56 @@ namespace AnotherMarkdown.Forms
     public string[] AllowedMarkdownPlugins { get; set; }
     private readonly List<Control> initialLayouts = new List<Control>();
     private readonly SettingsDiscoveryCache settingsDiscovery;
+    private readonly CancellationTokenSource startupDiscoveryCancellation = new CancellationTokenSource();
+    private bool startupDiscoveryDisposed;
     private ToolTip settingsToolTips;
+    private const int SettingsLabelWidth = 144;
+    private const int SettingsActionWidth = 120;
+    private static readonly Padding SettingsFieldMargin = new Padding(3, 3, 3, 5);
+
+    // A picker and its popup share the same geometry, including after DPI or
+    // capability changes. Long values remain available through a tooltip.
+    private sealed class SettingsComboBox : ComboBox
+    {
+      public bool DeferEmptyList { get; set; }
+      protected override bool ProcessCmdKey(ref Message message, Keys keyData)
+      {
+        if (DeferEmptyList && Items.Count == 0 && (keyData == Keys.F4 || keyData == (Keys.Alt | Keys.Down))) {
+          OnDropDown(EventArgs.Empty);
+          return true;
+        }
+        return base.ProcessCmdKey(ref message, keyData);
+      }
+      protected override void WndProc(ref Message message)
+      {
+        // Native ComboBox opens an empty popup after OnDropDown returns. Stop
+        // the request before native handling, then let the owner fetch data.
+        var arrowClick = (message.Msg == 0x0201 || message.Msg == 0x0203) &&
+          (DropDownStyle == ComboBoxStyle.DropDownList ||
+            (unchecked((int)(long)message.LParam) & 0xffff) >= ClientSize.Width - SystemInformation.VerticalScrollBarWidth);
+        var keyboardOpen = (message.Msg == 0x0100 && (Keys)(int)message.WParam == Keys.F4) ||
+          ((message.Msg == 0x0100 || message.Msg == 0x0104) && (Keys)(int)message.WParam == Keys.Down &&
+            (message.Msg == 0x0104 || (ModifierKeys & Keys.Alt) != 0));
+        if (DeferEmptyList && Items.Count == 0 &&
+          ((message.Msg == 0x014f && message.WParam != IntPtr.Zero) || arrowClick || keyboardOpen)) {
+          if (arrowClick) Focus();
+          OnDropDown(EventArgs.Empty);
+          message.Result = IntPtr.Zero;
+          return;
+        }
+        base.WndProc(ref message);
+      }
+      protected override void OnSizeChanged(EventArgs e)
+      {
+        base.OnSizeChanged(e);
+        DropDownWidth = Math.Max(1, Width);
+      }
+      protected override void OnDropDown(EventArgs e)
+      {
+        DropDownWidth = Math.Max(1, Width);
+        base.OnDropDown(e);
+      }
+    }
 
     private sealed class SettingsLayoutPanel : TableLayoutPanel
     {
@@ -63,6 +114,7 @@ namespace AnotherMarkdown.Forms
     internal SettingsForm(Settings settings, SettingsDiscoveryCache discovery)
     {
       settingsDiscovery = discovery ?? throw new ArgumentNullException(nameof(discovery));
+      StartDiscoveryWithInitialization(settings.Translation.Copy());
       DoubleBuffered = true;
       SuspendLayout();
       try {
@@ -78,6 +130,8 @@ namespace AnotherMarkdown.Forms
 
       InitializeComponent();
       InitializeTranslationSettings(settings);
+      ApplyReadyModelCatalog();
+      ConfigurePickerHints(this);
 
       tbAssetsPath.Text = AssetsPath;
       trackBar1.Value = Math.Max(trackBar1.Minimum, Math.Min(trackBar1.Maximum, ZoomLevel));
@@ -120,8 +174,68 @@ namespace AnotherMarkdown.Forms
 
     protected override void OnLoad(EventArgs e)
     {
+      ApplyReadyModelCatalog();
       base.OnLoad(e);
       ClampToWorkingArea(Screen.FromControl(this).WorkingArea);
+    }
+
+    private void ConfigurePickerHints(Control parent)
+    {
+      foreach (Control control in parent.Controls) {
+        if (control is ComboBox picker && picker != translationEffort && picker != apiEffort) {
+          settingsToolTips.SetToolTip(picker, picker.Text);
+          picker.TextChanged += (_, __) => settingsToolTips.SetToolTip(picker, picker.Text);
+        }
+        if (control.HasChildren) ConfigurePickerHints(control);
+      }
+    }
+
+    private void ApplyReadyModelCatalog()
+    {
+      CliModelCatalog catalog; bool fresh;
+      if (IsApiMode) {
+        if (activeApiDraft != null && settingsDiscovery.TryApiModelsInMemory(activeApiDraft, out catalog, out fresh)) {
+          FillApiModels(catalog, activeApiDraft.Model);
+          apiStatus.Text = "Моделей получено: " + catalog.Models.Count;
+        }
+      }
+      else if (settingsDiscovery.TryModelsInMemory(translationDraft.ProviderId, translationDraft.Executable, out catalog, out fresh))
+        ApplyModelCatalog(catalog, translationDraft);
+    }
+
+    private void QueueActiveDiscovery()
+    {
+      if (!settingsShown || settingsTabs.SelectedTab != translationPage) return;
+      if (IsApiMode) QueueApiDiscovery(); else QueueCliDiscovery();
+    }
+
+    private void StartDiscoveryWithInitialization(TranslationOptions snapshot)
+    {
+      var token = startupDiscoveryCancellation.Token;
+      if (snapshot.UseApi) {
+        var profile = snapshot.ActiveApiConnection?.Copy();
+        if (profile != null && !string.IsNullOrWhiteSpace(profile.Endpoint)) _ = Task.Run(async () => {
+          try { await settingsDiscovery.LoadApiModelsAsync(profile, Math.Min(30, profile.TimeoutSeconds ?? snapshot.TimeoutSeconds), false, token).ConfigureAwait(false); }
+          catch (Exception) { /* The visible request reports failures when the API tab opens. */ }
+        }, token);
+      }
+      else {
+        _ = Task.Run(async () => {
+          try { await settingsDiscovery.LoadInstallationsAsync(false, token).ConfigureAwait(false); }
+          catch (Exception) { }
+        }, token);
+        if (Path.IsPathRooted(snapshot.Executable)) _ = Task.Run(async () => {
+          try { await settingsDiscovery.LoadModelsAsync(snapshot.ProviderId, snapshot.Executable, false, token).ConfigureAwait(false); }
+          catch (Exception) { }
+        }, token);
+      }
+      FormClosing += (_, __) => { if (!startupDiscoveryDisposed) startupDiscoveryCancellation.Cancel(); };
+      Disposed += (_, __) => {
+        if (startupDiscoveryDisposed) return;
+        startupDiscoveryDisposed = true;
+        startupDiscoveryCancellation.Cancel(); CancelCliDiscovery(); CancelModelDiscovery(); CancelApiDiscovery();
+        startupDiscoveryCancellation.Dispose();
+      };
     }
 
     internal void ClampToWorkingArea(Rectangle workingArea)
@@ -134,6 +248,9 @@ namespace AnotherMarkdown.Forms
       var top = Math.Max(workingArea.Top, Math.Min(Top, workingArea.Bottom - height));
       Bounds = new Rectangle(left, top, width, height);
       PerformLayout();
+      // Nested auto-sized rows can settle after the Form's layout pass.
+      // Refresh the viewport range after they have their final height.
+      translationPage?.PerformLayout();
     }
 
     private void trackBar1_ValueChanged(object sender, EventArgs e)

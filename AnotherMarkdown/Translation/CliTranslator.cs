@@ -13,7 +13,7 @@ namespace AnotherMarkdown.Translation
 {
   public sealed class CliTranslator
   {
-    public const string PromptVersion = "ru-markdown-6";
+    public const string PromptVersion = "ru-markdown-7";
     private static readonly Encoding Utf8 = new UTF8Encoding(false, true);
 
     public async Task<string> TranslateAsync(string markdown, TranslationOptions options, CancellationToken token, IProgress<TranslationProgress> progress = null)
@@ -22,7 +22,23 @@ namespace AnotherMarkdown.Translation
       options.Validate(); token.ThrowIfCancellationRequested();
       if (string.IsNullOrWhiteSpace(markdown)) throw new ArgumentException("Документ пуст.");
       if (markdown.Length > 1000000) throw new ArgumentException("Документ слишком большой (более 1 млн символов). Разделите его на части.");
-      var plan = await Task.Run(() => MarkdownTranslationPlan.Create(markdown, options.ParallelRequests, options.MinimumChunkCharacters), token).ConfigureAwait(false);
+      var planTask = Task.Run(() => MarkdownTranslationPlan.Create(markdown, options.ParallelRequests, options.MinimumChunkCharacters), token);
+      var isolationTask = ResolveIsolationArgumentsAsync(options, token);
+      await Task.WhenAll(planTask, isolationTask).ConfigureAwait(false);
+      var plan = await planTask.ConfigureAwait(false);
+      var isolationArguments = await isolationTask.ConfigureAwait(false);
+      return await TranslationBatch.RunAsync(plan, options.ParallelRequests, (chunk, retry, cancellation) =>
+        ProtectedTranslation.RunAsync(chunk.Markdown,
+          target => plan.Count == 1 ? CreatePrompt(target) : CreateChunkPrompt(new TranslationChunk(
+            chunk.Index, target, chunk.SeparatorAfter, chunk.ContextBefore, chunk.ContextAfter, chunk.DocumentContext, chunk.PrefixBefore)),
+          (prompt, attemptToken) => options.UseApi
+            ? new ApiTranslator().TranslatePromptAsync(prompt, options.ActiveApiConnection, options.TimeoutSeconds, attemptToken)
+            : TranslatePromptAsync(prompt, options, isolationArguments, attemptToken), cancellation, retry),
+        token, progress, preserveTranslatedWhitespace: true).ConfigureAwait(false);
+    }
+
+    private static async Task<string> ResolveIsolationArgumentsAsync(TranslationOptions options, CancellationToken token)
+    {
       var isolationArguments = "";
       if (!options.UseApi && options.ProviderId == "codex" && !options.UseCustomArguments) {
         // Resolve isolation once per document, before any parallel translation processes.
@@ -34,15 +50,7 @@ namespace AnotherMarkdown.Translation
           isolationArguments += " -c " + QuoteArgument("mcp_servers." + name + ".enabled=false");
         }
       }
-      return await TranslationBatch.RunAsync(plan, options.ParallelRequests, async (chunk, cancellation) => {
-        var protection = new MarkdownCodeProtection(chunk.Markdown);
-        var prompt = protection.Prompt(target => plan.Count == 1 ? CreatePrompt(target) : CreateChunkPrompt(
-          new TranslationChunk(chunk.Index, target, chunk.SeparatorAfter, chunk.ContextBefore, chunk.ContextAfter, chunk.DocumentContext, chunk.PrefixBefore)));
-        var translated = options.UseApi
-          ? await new ApiTranslator().TranslatePromptAsync(prompt, options.ActiveApiConnection, options.TimeoutSeconds, cancellation).ConfigureAwait(false)
-          : await TranslatePromptAsync(prompt, options, isolationArguments, cancellation).ConfigureAwait(false);
-        return protection.Restore(translated);
-      }, token, progress, preserveTranslatedWhitespace: true).ConfigureAwait(false);
+      return isolationArguments;
     }
 
     private async Task<string> TranslatePromptAsync(string prompt, TranslationOptions options, string isolationArguments, CancellationToken token)
@@ -61,9 +69,14 @@ namespace AnotherMarkdown.Translation
         if (template.Contains("{config}")) File.WriteAllText(config, "{\"mcpServers\":{}}", Utf8);
         if (template.Contains("{policy}")) File.WriteAllText(policy,
           "[[rule]]\ntoolName = \"*\"\ndecision = \"deny\"\npriority = 999\n\n[[rule]]\ntoolName = \"*\"\nmcpName = \"*\"\ndecision = \"deny\"\npriority = 999\n", Utf8);
-        var arguments = template.Replace("{model}", QuoteArgument(options.Model))
-          .Replace("{output}", QuoteArgument(output)).Replace("{config}", QuoteArgument(config)).Replace("{policy}", QuoteArgument(policy))
-          .Replace("{agent}", QuoteArgument(agent)).Replace("{prompt}", QuoteArgument(prompt));
+        var replacements = new Dictionary<string, string>(StringComparer.Ordinal) {
+          ["{model}"] = QuoteArgument(options.Model), ["{output}"] = QuoteArgument(output),
+          ["{config}"] = QuoteArgument(config), ["{policy}"] = QuoteArgument(policy),
+          ["{agent}"] = QuoteArgument(agent), ["{prompt}"] = QuoteArgument(prompt)
+        };
+        // Substitute template tokens once. A literal token inside a model ID
+        // or prompt must never be interpreted as another placeholder.
+        var arguments = Regex.Replace(template, @"\{(?:model|output|config|policy|agent|prompt)\}", match => replacements[match.Value]);
         arguments += isolationArguments;
         var input = template.Contains("{prompt}") ? "" : prompt;
         if (options.ProviderId == "agy" && !options.UseCustomArguments)
@@ -140,9 +153,9 @@ namespace AnotherMarkdown.Translation
     {
       var delimiter = "DOCUMENT_" + Guid.NewGuid().ToString("N");
       return "Translate the entire document below into Russian for a technical reader. " +
-        "Return ONLY the translated Markdown, without an introduction, summary or enclosing code fence. " +
+        "Unless a structured output contract is provided, return ONLY the translated Markdown, without an introduction, summary or enclosing code fence. " +
         "Preserve every section, paragraph, list, table, link destination, image path and HTML tag. " +
-        "Keep fenced and indented code blocks, inline code, command lines, formulas and identifiers unchanged, including English prose in markdown/text code examples. " +
+        "Keep code, command lines, formulas, identifiers and protected markers unchanged. Human-readable comments and prose in code examples, when supplied as separate annotation slots, must be translated only in those slots. " +
         "Keep list nesting/indentation, task checkboxes, quote prefixes, table alignment/escaped pipes, attributes, extension delimiters and hard line breaks. " +
         "Keep link destinations, reference definition labels, footnote IDs and HTML attributes unchanged. " +
         "Keep YAML front matter unchanged EXCEPT human-readable prose values of description, title and summary: translate those values into Russian too, including quoted or multiline values. " +

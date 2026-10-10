@@ -85,7 +85,7 @@ if (-not $SkipTests) {
     if ($LASTEXITCODE -ne 0) { throw 'Launcher test compilation failed.' }
     & $launcherTests
     if ($LASTEXITCODE -ne 0) { throw 'Launcher tests failed.' }
-    foreach ($apiTestName in @('ApiTests', 'ApiConnectionStoreTests', 'CliConnectionStoreTests', 'SocksApiTests', 'ParallelTranslationTests', 'MarkdownStructureTests', 'DiscoveryCacheTests', 'ApiLiveTests')) {
+    foreach ($apiTestName in @('ApiTests', 'ApiConnectionStoreTests', 'CliConnectionStoreTests', 'SocksApiTests', 'ParallelTranslationTests', 'MarkdownStructureTests', 'CodeCommentSpanTests', 'CodeAnnotationTests', 'ProtectedTranslationTests', 'DiscoveryCacheTests', 'ApiLiveTests')) {
         $apiTests = Join-Path $CacheRoot ($apiTestName + '.exe')
         $apiSources = @($sources | Where-Object { $_ -notlike '*TranslationTests.cs' })
         $apiSources += Join-Path $projectRoot ('tests\' + $apiTestName + '.cs')
@@ -149,7 +149,7 @@ try {
     $brandDirectory = Join-Path $stage 'assets\branding'
     New-Item -ItemType Directory -Path $brandDirectory -Force | Out-Null
     Copy-Item -Path (Join-Path $projectRoot 'AnotherMarkdown\Resources\translate-ru.*') -Destination $brandDirectory -Force
-    $archive = Join-Path $OutputDirectory 'AnotherMarkdown-0.1.12-ru.15-x64.zip'
+    $archive = Join-Path $OutputDirectory 'AnotherMarkdown-0.1.12-ru.21-x64.zip'
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -Force
     Write-Output "Package: $archive"
     Get-FileHash -LiteralPath $archive -Algorithm SHA256

@@ -46,7 +46,7 @@ internal static class MarkdownStructureTests
       var row = new JObject { ["id"] = test["id"] };
       try {
         var protection = new MarkdownCodeProtection(text);
-        if (protection.Restore(protection.Target) != text) throw new Exception("code_roundtrip");
+        if (protection.Restore(Response(protection, protection.Target)) != text) throw new Exception("code_roundtrip");
         var plans = new JArray();
         foreach (var count in new[] { 2, 4, 8 }) {
           var plan = MarkdownTranslationPlan.Create(text, count, 0);
@@ -131,15 +131,28 @@ internal static class MarkdownStructureTests
         var protectedText = new MarkdownCodeProtection(source);
         Check(protectedText.Target.Contains("AM_KEEP_"), "code/formulas use exact-source markers");
         Check(!protectedText.Target.Contains("Keep English") && !protectedText.Target.Contains("Unclosed code"), "the whole protected content is removed from the translation target");
-        Check(protectedText.Restore(protectedText.Target) == source, "identity restoration is lossless including delimiters indentation BOM and line endings");
-        var output = protectedText.Restore(protectedText.Target.Replace("Translate me", "RU_prose"));
+        Check(protectedText.Restore(Response(protectedText, protectedText.Target)) == source, "identity restoration is lossless including delimiters indentation BOM and line endings");
+        var output = protectedText.Restore(Response(protectedText, protectedText.Target.Replace("Translate me", "RU_prose")));
         Check(output == source.Replace("Translate me", "RU_prose"), "only prose changes while every protected source byte is restored");
       }
     var protection = new MarkdownCodeProtection("Translate me with `one` then `two`.");
     var markers = Regex.Matches(protection.Target, @"AM_KEEP_[a-f0-9]+_[0-9]+_END").Cast<Match>().Select(m => m.Value).ToArray();
     MustReject(() => protection.Restore(protection.Target.Replace(markers[0], "")), "missing protected marker");
     MustReject(() => protection.Restore(protection.Target + markers[0]), "duplicated protected marker");
-    MustReject(() => protection.Restore(protection.Target.Replace(markers[0], "SWAP").Replace(markers[1], markers[0]).Replace("SWAP", markers[1])), "reordered protected markers");
+    Check(protection.Restore(protection.Target.Replace(markers[0], "SWAP").Replace(markers[1], markers[0]).Replace("SWAP", markers[1]))
+      == "Translate me with `two` then `one`.", "inline-code word order may change inside the same paragraph without changing code");
+    var linked = new MarkdownCodeProtection("[the `API`](https://example.test) remains available.");
+    var linkedMarker = Regex.Match(linked.Target, @"AM_KEEP_[a-f0-9]+_[0-9]+_END").Value;
+    MustReject(() => linked.Restore("[the](https://example.test) " + linkedMarker + " remains available."),
+      "inline code cannot be moved out of its original Markdown link");
+    Check(linked.Restore(linked.Target.Replace("the ", "этот ")) == "[этот `API`](https://example.test) remains available.",
+      "prose inside a link can be translated while its inline code stays protected");
+    foreach (var source in new[] { "First `one`.\n\nSecond `two`.", "# Heading `one`\n\nParagraph `two`.",
+      "```text\nOne\n```\n\n```text\nTwo\n```", "| A | B |\n| --- | --- |\n| `one` | `two` |" }) {
+      var guarded = new MarkdownCodeProtection(source);
+      var pair = Regex.Matches(guarded.Target, @"AM_KEEP_[a-f0-9]+_[0-9]+_END").Cast<Match>().Select(m => m.Value).ToArray();
+      MustReject(() => guarded.Restore(guarded.Target.Replace(pair[0], "SWAP").Replace(pair[1], pair[0]).Replace("SWAP", pair[1])), "protected fragments cannot move across paragraphs headings code blocks or table cells");
+    }
     MustReject(() => protection.Restore(protection.Target.Replace(markers[0], "`" + markers[0] + "`")), "new code wrapper around a protected marker");
     MustReject(() => protection.Restore("```markdown\n" + protection.Target + "\n```"), "outer code fence around the translation");
     Check(protection.Prompt(CliTranslator.CreatePrompt).Contains("READ-ONLY CONTEXT") && protection.Prompt(CliTranslator.CreatePrompt).Contains("`one`"), "protected originals are visible only as explicitly untrusted readonly context");
@@ -155,4 +168,6 @@ internal static class MarkdownStructureTests
       System.Threading.CancellationToken.None, preserveTranslatedWhitespace: true).GetAwaiter().GetResult();
     Check(stitched == tail, "batch assembly preserves protected trailing blank lines of an unclosed code block");
   }
+  private static string Response(MarkdownCodeProtection protection, string target) => protection.AnnotationTargets.Count == 0 ? target
+    : new JObject { ["markdown"] = target, ["annotations"] = protection.AnnotationTargets }.ToString(Formatting.None);
 }

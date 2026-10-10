@@ -395,6 +395,7 @@ namespace AnotherMarkdown
       }
 
       _iniFilePath = Path.Combine(_iniFilePath, Main.ModuleName + ".ini");
+      SettingsDiscoveryCache.Shared.ConfigureModelPersistence(_iniFilePath + ".models.json");
     }
 
     private void SyncViewWithCaretClicked()

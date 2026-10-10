@@ -113,6 +113,7 @@
     <Compile Include="Translation\CliConnectionSettings.cs" />
     <Compile Include="Translation\CliConnectionStore.cs" />
     <Compile Include="Translation\ApiConnection.cs" />
+    <Compile Include="Translation\ApiEffortOptions.cs" />
     <Compile Include="Translation\ApiConnectionStore.cs" />
     <Compile Include="Translation\ApiTranslator.cs" />
     <Compile Include="Translation\CurlApiHandler.cs" />
@@ -128,6 +129,9 @@
     <Compile Include="Translation\MarkdownTranslationPlan.cs" />
     <Compile Include="Translation\MarkdownStructure.cs" />
     <Compile Include="Translation\MarkdownCodeProtection.cs" />
+    <Compile Include="Translation\CodeBlockAnnotations.cs" />
+    <Compile Include="Translation\CodeCommentSpans.cs" />
+    <Compile Include="Translation\ProtectedTranslation.cs" />
     <Compile Include="Translation\TranslationBatch.cs" />
     <Compile Include="Forms\MarkdownPreviewForm.Translation.cs">
       <DependentUpon>MarkdownPreviewForm.cs</DependentUpon>

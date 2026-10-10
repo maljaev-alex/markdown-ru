@@ -94,7 +94,9 @@ internal static class ApiTests
     await AutomaticOutputBudget();
     await NullableResponseNodes();
     await CustomSettings();
+    await UnverifiedEffortOmitted();
     await ModelLists();
+    EffortChoices();
     await CancellationAndTimeout();
     await SafeErrorsAndRedirects();
     await InvalidSettings();
@@ -241,7 +243,8 @@ internal static class ApiTests
       connection.AdditionalHeadersJson = "{\"X-Fixture-Tenant\":\"tenant-7\"}";
       connection.AdditionalParametersJson = "{\"top_p\":0.75}";
       connection.Temperature = 0.25;
-      connection.ReasoningEffort = "high";
+      connection.ReasoningEffort = "high"; connection.ReasoningEffortModel = connection.Model;
+      connection.ReasoningEffortCatalogKey = SettingsDiscoveryCache.ApiModelKey(connection);
       await TranslateTransport(connection, 5, CancellationToken.None);
       var request = await server.FirstRequest;
       var body = JObject.Parse(request.Body);
@@ -252,7 +255,8 @@ internal static class ApiTests
     }
     foreach (var protocol in new[] { "responses", "anthropic", "gemini" }) {
       using (var server = new LoopbackServer(_ => Response.Json(Success(protocol)))) {
-        var connection = Connection(server, protocol); connection.ReasoningEffort = "high";
+        var connection = Connection(server, protocol); connection.ReasoningEffort = "high"; connection.ReasoningEffortModel = connection.Model;
+        connection.ReasoningEffortCatalogKey = SettingsDiscoveryCache.ApiModelKey(connection);
         await TranslateTransport(connection, 5, CancellationToken.None);
         var body = JObject.Parse((await server.FirstRequest).Body);
         var effort = protocol == "responses" ? body["reasoning"]?["effort"] : protocol == "anthropic" ? body["output_config"]?["effort"] : body["generationConfig"]?["thinkingConfig"]?["thinkingLevel"];
@@ -261,12 +265,35 @@ internal static class ApiTests
     }
   }
 
+  private static async Task UnverifiedEffortOmitted()
+  {
+    foreach (var protocol in new[] { "chat-completions", "responses", "anthropic", "gemini" }) {
+      using (var server = new LoopbackServer(_ => Response.Json(Success(protocol)))) {
+        var connection = Connection(server, protocol); connection.ReasoningEffort = "high";
+        await TranslateTransport(connection, 5, CancellationToken.None);
+        var body = JObject.Parse((await server.FirstRequest).Body);
+        var effort = protocol == "chat-completions" ? body["reasoning_effort"] : protocol == "responses" ? body["reasoning"]
+          : protocol == "anthropic" ? body["output_config"] : body["generationConfig"]?["thinkingConfig"];
+        Check(effort == null, protocol + " omits a legacy effort that was never confirmed for the selected model");
+      }
+    }
+    using (var server = new LoopbackServer(_ => Response.Json(Success("chat-completions")))) {
+      var connection = Connection(server, "chat-completions");
+      connection.ReasoningEffort = "high"; connection.ReasoningEffortModel = connection.Model;
+      connection.ReasoningEffortCatalogKey = SettingsDiscoveryCache.ApiModelKey(connection);
+      connection.ApiKey = "SYNTHETIC_ROTATED_KEY";
+      await TranslateTransport(connection, 5, CancellationToken.None);
+      Check(JObject.Parse((await server.FirstRequest).Body)["reasoning_effort"] == null,
+        "changing API authentication invalidates the effort confirmation for the former model catalog");
+    }
+  }
+
   private static async Task ModelLists()
   {
     foreach (var protocol in new[] { "chat-completions", "responses", "anthropic", "gemini" }) {
       var payload = protocol == "gemini"
         ? JObject.Parse("{\"models\":[{\"name\":\"models/gemini-fixture\",\"displayName\":\"Fixture\",\"supportedGenerationMethods\":[\"generateContent\"]}]}")
-        : JObject.Parse("{\"data\":[{\"id\":\"fixture-model\",\"display_name\":\"Fixture\"}]}");
+        : JObject.Parse("{\"data\":[{\"id\":\"fixture-model\",\"display_name\":\"Fixture\",\"supported_reasoning_efforts\":[\"low\",\"high\"]}]}");
       using (var server = new LoopbackServer(_ => Response.Json(payload))) {
         var connection = Connection(server, protocol);
         if (protocol == "chat-completions") connection.Endpoint += "/chat/completions";
@@ -277,10 +304,40 @@ internal static class ApiTests
         if (protocol == "anthropic") connection.MaxOutputTokens = 0;
         var catalog = await new ApiTranslator().LoadModelsAsync(connection, 5, CancellationToken.None);
         Check(catalog.Models.Any(model => model.Id == (protocol == "gemini" ? "models/gemini-fixture" : "fixture-model")), protocol + " discovers usable model IDs without requiring a selected model");
+        if (protocol == "chat-completions") Check(catalog.Models.Single().ReasoningEfforts.Select(level => level.Id).SequenceEqual(new[] { "low", "high" }),
+          "API model metadata carries only the advertised effort values");
         var request = await server.FirstRequest;
         Check(request.Method == "GET" && request.Target == (protocol == "gemini" ? "/gateway/v1beta/models" : "/gateway/v1/models"), protocol + " derives model-list URL from a full operation endpoint");
       }
     }
+  }
+
+  private static void EffortChoices()
+  {
+    var openai = new ApiConnection { Endpoint = "https://api.openai.com/v1", Protocol = "responses", Model = "gpt-6.1-sol" };
+    var choices = ApiEffortOptions.For(openai);
+    Check(choices.Values.Length == 0 && choices.WireField == "reasoning.effort",
+      "even an official model exposes no UI effort choices without per-model metadata");
+    var anthropic = new ApiConnection { Endpoint = "https://api.anthropic.com/v1", Protocol = "anthropic", Model = "claude-opus-5-5" };
+    choices = ApiEffortOptions.For(anthropic);
+    Check(choices.Values.Length == 0 && choices.WireField == "output_config.effort", "Anthropic request field is known but levels are not guessed");
+    var gemini = new ApiConnection { Endpoint = "https://generativelanguage.googleapis.com/v1beta", Protocol = "gemini", Model = "models/gemini-3-pro-preview" };
+    choices = ApiEffortOptions.For(gemini);
+    Check(choices.Values.Length == 0 && choices.WireField == "generationConfig.thinkingConfig.thinkingLevel",
+      "Gemini request field is known but levels are not guessed");
+    var unknown = new ApiConnection { Endpoint = "https://router.example/v1", Protocol = "chat-completions", Model = "deepseek/example" };
+    choices = ApiEffortOptions.For(unknown);
+    Check(choices.Values.Length == 0 && choices.WireField == "reasoning_effort", "custom gateways do not inherit a fabricated universal effort list");
+    var advertised = new CliModel { Id = unknown.Model, ReasoningEfforts = new System.Collections.Generic.List<CliReasoningEffort> {
+      new CliReasoningEffort { Id = "high" }, new CliReasoningEffort { Id = "low" }
+    } };
+    choices = ApiEffortOptions.For(unknown, advertised);
+    Check(choices.Values.SequenceEqual(new[] { "low", "high" }), "gateway-advertised effort levels are used for the chosen model");
+    var geminiAdvertised = new CliModel { Id = gemini.Model, ReasoningEfforts = new System.Collections.Generic.List<CliReasoningEffort> {
+      new CliReasoningEffort { Id = "none" }, new CliReasoningEffort { Id = "high" }, new CliReasoningEffort { Id = "max" }
+    } };
+    Check(ApiEffortOptions.For(gemini, geminiAdvertised).Values.SequenceEqual(new[] { "high" }),
+      "advertised levels incompatible with the selected API protocol stay unavailable");
   }
 
   private static async Task CancellationAndTimeout()

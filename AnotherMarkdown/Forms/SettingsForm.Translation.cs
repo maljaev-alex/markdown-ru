@@ -18,6 +18,10 @@ namespace AnotherMarkdown.Forms
     private List<CliConnectionSettings> cliDrafts;
     private bool displayedApiMode;
     private ComboBox translationCli, translationModel, translationProfile, translationOutput, translationEffort;
+    private Label translationEffortLabel, apiEffortLabel;
+    private CheckBox translationFast;
+    private bool translationFastAvailable;
+    private readonly Dictionary<Control, Action> modelRowReflows = new Dictionary<Control, Action>();
     private TextBox translationExecutable, translationArguments, translationManualModel;
     private NumericUpDown translationTimeout, translationParallelRequests, translationMinimumChunk;
     private CheckBox translationShowButtons, translationAdvanced, translationCustomArguments, translationUseManualModel;
@@ -40,6 +44,8 @@ namespace AnotherMarkdown.Forms
       public bool Default;
       public List<string> ModelIds = new List<string>();
       public List<CliReasoningEffort> Efforts = new List<CliReasoningEffort>();
+      public Dictionary<string, string> FastIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+      public HashSet<string> FastOnlyIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
       public string DefaultEffort;
       public override string ToString() => Title;
     }
@@ -58,14 +64,14 @@ namespace AnotherMarkdown.Forms
       if (translationDraft.UseApi) FindCliDraft(translationDraft.ProviderId, translationDraft.Executable)?.ApplyTo(translationDraft);
       translationPage.AutoScroll = true;
       var layout = HoldInitialLayout(new SettingsLayoutPanel { Name = "translationLayout", Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, RowCount = 10, Padding = new Padding(8) });
-      layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+      layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, SettingsLabelWidth));
       layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-      layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+      layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, SettingsActionWidth));
       for (var row = 0; row < 10; row++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       layout.RowStyles[6] = new RowStyle(SizeType.Absolute, 0);
       translationPage.Controls.Add(layout);
 
-      translationCli = new ComboBox { Name = "translationCli", AccessibleName = "CLI", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, DropDownWidth = 760, FormattingEnabled = true, TabIndex = 0 };
+      translationCli = new SettingsComboBox { Name = "translationCli", AccessibleName = "CLI", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, FormattingEnabled = true, TabIndex = 0 };
       translationCli.Format += (_, value) => {
         if (value.ListItem is CliInstallation item && translationCli.Items.Cast<CliInstallation>().Count(i => i.ToString() == item.ToString()) > 1)
           value.Value = item + " — " + Path.GetDirectoryName(item.Executable);
@@ -74,12 +80,14 @@ namespace AnotherMarkdown.Forms
       translationExecutable = MakeSettingsTextBox("translationExecutable", "Путь к CLI", 2);
       translationExecutable.ReadOnly = true;
       var browse = new Button { Name = "translationBrowse", AccessibleName = "Выбрать исполняемый файл CLI", Text = "Выбрать…", Dock = DockStyle.Top, Height = 28, TabIndex = 3 };
-      translationModel = new ComboBox { Name = "translationModel", AccessibleName = "Модель", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, DropDownWidth = 650, TabIndex = 4 };
+      translationModel = new SettingsComboBox { Name = "translationModel", AccessibleName = "Модель", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, TabIndex = 4 };
       translationModelsRefresh = new Button { Name = "translationModelsRefresh", Text = "Обновить", AutoSize = true, Dock = DockStyle.Top, TabIndex = 5 };
       AddTranslationRow(layout, 0, "CLI", translationCli, translationCliRefresh);
       AddTranslationRow(layout, 1, "Путь", translationExecutable, browse);
-      translationEffort = new ComboBox { Name = "translationEffort", AccessibleName = "Усилие рассуждения (effort)", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, DropDownWidth = 280, TabIndex = 5 };
-      AddModelEffortRow(layout, 2, "translationModelRow", translationModel, translationEffort, translationModelsRefresh);
+      translationEffort = new SettingsComboBox { Name = "translationEffort", AccessibleName = "Усилие рассуждения (effort)", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, Enabled = false, TabIndex = 5 };
+      translationFast = new CheckBox { Name = "translationFast", Text = "Fast", AccessibleName = "Быстрый вариант модели", AutoSize = true, Visible = false, TabIndex = 6 };
+      translationEffort.Visible = false;
+      translationEffortLabel = AddModelEffortRow(layout, 2, "translationModelRow", translationModel, translationEffort, translationModelsRefresh, translationFast);
       translationModelStatus = CreateSettingsStatus("translationModelStatus", "Сохранённые настройки. Список CLI и моделей обновляется в фоне.");
       layout.Controls.Add(translationModelStatus, 0, 4); layout.SetColumnSpan(translationModelStatus, 3);
       translationAdvanced = new CheckBox { Text = "Дополнительные параметры", AutoSize = true, TabIndex = 6, Margin = new Padding(3, 8, 3, 8) };
@@ -88,16 +96,16 @@ namespace AnotherMarkdown.Forms
       var advanced = HoldInitialLayout(new GroupBox { Text = "Параметры выбранного CLI", Dock = DockStyle.Fill, Visible = false, Padding = new Padding(8) });
       layout.Controls.Add(advanced, 0, 6); layout.SetColumnSpan(advanced, 3);
       var advancedLayout = HoldInitialLayout(new SettingsLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 6 });
-      advancedLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 145));
+      advancedLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, SettingsLabelWidth));
       advancedLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
       foreach (var height in new[] { 32, 32, 28, 115, 32, 32 }) advancedLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
       advanced.Controls.Add(advancedLayout);
-      translationProfile = new ComboBox { Name = "translationProfile", AccessibleName = "Тип CLI", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, TabIndex = 0 };
+      translationProfile = new SettingsComboBox { Name = "translationProfile", AccessibleName = "Тип CLI", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, TabIndex = 0 };
       translationProfile.Items.AddRange(CliProfiles.All);
       translationTimeout = new NumericUpDown { Name = "translationTimeout", AccessibleName = "Тайм-аут на запрос, сек.", Minimum = 10, Maximum = 3600, Width = 120, TabIndex = 1 };
       translationCustomArguments = new CheckBox { Text = "Изменить параметры запуска", AutoSize = true, TabIndex = 2 };
       translationArguments = new TextBox { Name = "translationArguments", AccessibleName = "Аргументы запуска", Multiline = true, AcceptsReturn = true, MaxLength = TranslationOptions.MaximumStoredArgumentCharacters, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, ReadOnly = true, TabIndex = 3 };
-      translationOutput = new ComboBox { Name = "translationOutput", AccessibleName = "Формат ответа CLI", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, TabIndex = 4 };
+      translationOutput = new SettingsComboBox { Name = "translationOutput", AccessibleName = "Формат ответа CLI", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, TabIndex = 4 };
       translationOutput.Items.AddRange(new object[] { "text", "json-result", "json-response", "opencode-json", "agy-json", "kimi-json" });
       translationUseManualModel = new CheckBox { Text = "Другая модель", AutoSize = true, TabIndex = 5 };
       translationManualModel = MakeSettingsTextBox("translationManualModel", "Идентификатор другой модели", 6);
@@ -141,7 +149,12 @@ namespace AnotherMarkdown.Forms
       translationUseManualModel.CheckedChanged += (_, __) => { translationManualModel.Enabled = translationUseManualModel.Checked; translationModel.Enabled = !translationUseManualModel.Checked; if (!updatingTranslation) FillEfforts(""); UpdateArgumentPreview(); };
       translationManualModel.TextChanged += (_, __) => UpdateArgumentPreview();
       translationModel.SelectedIndexChanged += (_, __) => { if (!updatingTranslation) FillEfforts(""); UpdateArgumentPreview(); };
-      translationEffort.SelectedIndexChanged += (_, __) => UpdateArgumentPreview();
+      translationModel.DropDown += async (_, __) => {
+        if (hasModelCatalog || modelCancellation != null || IsApiMode) return;
+        await LoadModelsForSettingsAsync(ReadTranslationDraft());
+      };
+      translationEffort.SelectedIndexChanged += (_, __) => { UpdateFastState(); UpdateArgumentPreview(); };
+      translationFast.CheckedChanged += (_, __) => UpdateArgumentPreview();
       translationProfile.SelectedIndexChanged += async (_, __) => {
         if (updatingTranslation || translationCli.SelectedItem == null) return;
         var installation = new CliInstallation { Executable = translationExecutable.Text, ProviderId = ((CliProfile)translationProfile.SelectedItem).Id };
@@ -156,57 +169,92 @@ namespace AnotherMarkdown.Forms
         if (translationCli.SelectedItem is CliInstallation installation) await ApplyCliAsync(installation, true);
       };
       browse.Click += async (_, __) => await BrowseCliAsync();
-      Shown += (_, __) => { settingsShown = true; QueueCliDiscovery(); };
-      settingsTabs.SelectedIndexChanged += (_, __) => QueueCliDiscovery();
+      Shown += (_, __) => { settingsShown = true; QueueActiveDiscovery(); };
+      settingsTabs.SelectedIndexChanged += (_, __) => QueueActiveDiscovery();
       FormClosing += (_, __) => { CancelCliDiscovery(); CancelModelDiscovery(); };
       SetTranslationControls(translationDraft);
-      List<CliInstallation> cachedInstallations; bool fresh;
-      settingsDiscovery.TryInstallations(out cachedInstallations, out fresh);
-      FillInstalledCli(cachedInstallations ?? new List<CliInstallation>(), new CliInstallation { ProviderId = translationDraft.ProviderId, Executable = translationDraft.Executable });
+      FillInstalledCli(new List<CliInstallation>(), new CliInstallation { ProviderId = translationDraft.ProviderId, Executable = translationDraft.Executable });
       InitializeApiSettings(layout);
-      CliModelCatalog cachedModels;
-      if (settingsDiscovery.TryModels(translationDraft.ProviderId, translationDraft.Executable, out cachedModels, out fresh)) ApplyModelCatalog(cachedModels, translationDraft);
     }
 
     private static void AddTranslationRow(TableLayoutPanel layout, int row, string caption, Control value, Control extra)
     {
       layout.Controls.Add(MakeSettingsLabel(caption), 0, row);
-      value.Margin = new Padding(3, 5, 3, 8); layout.Controls.Add(value, 1, row); layout.Controls.Add(extra, 2, row);
+      value.Margin = SettingsFieldMargin; layout.Controls.Add(value, 1, row);
+      if (extra == null || (extra is Label && string.IsNullOrEmpty(extra.Text))) {
+        layout.SetColumnSpan(value, 2);
+        extra?.Dispose();
+      }
+      else {
+        extra.Margin = SettingsFieldMargin;
+        if (extra is Button action) { action.AutoSize = false; action.Height = 26; }
+        layout.Controls.Add(extra, 2, row);
+      }
     }
 
-    private void AddModelEffortRow(TableLayoutPanel layout, int row, string name, Control model, Control effort, Button refresh)
+    private Label AddModelEffortRow(TableLayoutPanel layout, int row, string name, Control model, Control effort, Button refresh, CheckBox fast = null)
     {
-      var fields = HoldInitialLayout(new SettingsLayoutPanel { Name = name, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill, ColumnCount = 4, Margin = new Padding(0) });
+      var refreshColumn = fast == null ? 3 : 4;
+      var fields = HoldInitialLayout(new SettingsLayoutPanel { Name = name, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill, ColumnCount = refreshColumn + 1, Margin = new Padding(0) });
       fields.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-      fields.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-      fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+      fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 0));
+      fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 0));
+      if (fast != null) fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 0));
       fields.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, layout.ColumnStyles[2].Width));
-      model.Margin = effort.Margin = new Padding(3, 5, 3, 5);
-      model.TabIndex = 0; effort.TabIndex = 1; refresh.TabIndex = 2;
-      refresh.Margin = new Padding(3); refresh.Dock = DockStyle.Top;
-      var label = MakeSettingsLabel("Effort"); label.Margin = new Padding(8, 8, 3, 3);
-      fields.Controls.Add(model, 0, 0); fields.Controls.Add(label, 1, 0); fields.Controls.Add(effort, 2, 0); fields.Controls.Add(refresh, 3, 0);
+      model.Margin = effort.Margin = SettingsFieldMargin;
+      model.TabIndex = 0; effort.TabIndex = 1; if (fast != null) { fast.TabIndex = 2; fast.Margin = new Padding(5, 6, 3, 3); }
+      refresh.TabIndex = fast == null ? 2 : 3;
+      refresh.Margin = SettingsFieldMargin; refresh.Dock = DockStyle.Top; refresh.AutoSize = false; refresh.Height = 26;
+      var label = MakeSettingsLabel("Effort"); label.Margin = new Padding(8, 6, 3, 3); label.Visible = false;
+      fields.Controls.Add(model, 0, 0); fields.Controls.Add(label, 1, 0); fields.Controls.Add(effort, 2, 0);
+      if (fast != null) fields.Controls.Add(fast, 3, 0);
+      fields.Controls.Add(refresh, refreshColumn, 0);
       layout.Controls.Add(MakeSettingsLabel("Модель"), 0, row); layout.Controls.Add(fields, 1, row); layout.SetColumnSpan(fields, 2);
       var changing = false;
-      bool? wrapped = null; var previousEffortWidth = 0;
+      bool? wrapped = null, previousEffortVisible = null, previousFastVisible = null;
+      var previousEffortWidth = 0;
       Action reflow = () => {
         if (changing || fields.ClientSize.Width <= 0) return;
-        var effortWidth = Math.Max(150, TextRenderer.MeasureText("Extra High (xhigh)", fields.Font).Width + 36);
-        var wrap = fields.ClientSize.Width < effortWidth + label.GetPreferredSize(Size.Empty).Width + fields.ColumnStyles[3].Width + 160;
-        if (wrapped == wrap && previousEffortWidth == effortWidth) return;
+        // Enabled describes capability even while the parent tab is hidden.
+        // Visible alone would incorrectly collapse fields during tab changes.
+        var showEffort = effort.Enabled;
+        var showFast = fast != null && translationFastAvailable;
+        var effortWidth = showEffort ? Math.Max(132, TextRenderer.MeasureText("Extra High (xhigh)", fields.Font).Width + 28) : 0;
+        var labelWidth = showEffort ? TextRenderer.MeasureText("Effort", fields.Font).Width + 20 : 0;
+        var fastWidth = showFast ? TextRenderer.MeasureText("Fast", fields.Font).Width + 28 : 0;
+        var accessoryWidth = effortWidth + labelWidth + fastWidth;
+        var wrap = accessoryWidth > 0 && fields.ClientSize.Width < accessoryWidth + fields.ColumnStyles[refreshColumn].Width + Math.Max(160, fields.Font.Height * 9);
+        if (wrapped == wrap && previousEffortWidth == effortWidth && previousEffortVisible == showEffort && previousFastVisible == showFast) return;
         changing = true; fields.SuspendLayout();
         try {
-          wrapped = wrap; previousEffortWidth = effortWidth;
-          fields.SetColumnSpan(model, wrap ? 3 : 1); fields.SetColumnSpan(effort, wrap ? 3 : 1);
+          wrapped = wrap; previousEffortWidth = effortWidth; previousEffortVisible = showEffort; previousFastVisible = showFast;
+          fields.SetColumnSpan(model, wrap ? refreshColumn : 1);
           fields.SetCellPosition(label, new TableLayoutPanelCellPosition(wrap ? 0 : 1, wrap ? 1 : 0));
           fields.SetCellPosition(effort, new TableLayoutPanelCellPosition(wrap ? 1 : 2, wrap ? 1 : 0));
-          fields.ColumnStyles[0].SizeType = wrap ? SizeType.AutoSize : SizeType.Percent; fields.ColumnStyles[0].Width = wrap ? 0 : 100;
-          fields.ColumnStyles[1].SizeType = wrap ? SizeType.Percent : SizeType.AutoSize; fields.ColumnStyles[1].Width = wrap ? 100 : 0;
-          fields.ColumnStyles[2].SizeType = SizeType.Absolute; fields.ColumnStyles[2].Width = wrap ? 0 : effortWidth;
+          if (fast != null) fields.SetCellPosition(fast, new TableLayoutPanelCellPosition(wrap ? 2 : 3, wrap ? 1 : 0));
+          fields.ColumnStyles[0].SizeType = wrap ? SizeType.Absolute : SizeType.Percent;
+          fields.ColumnStyles[0].Width = wrap ? labelWidth : 100;
+          fields.ColumnStyles[1].SizeType = SizeType.Absolute;
+          fields.ColumnStyles[1].Width = wrap ? effortWidth : labelWidth;
+          fields.ColumnStyles[2].SizeType = wrap && fast == null ? SizeType.Percent : SizeType.Absolute;
+          fields.ColumnStyles[2].Width = wrap ? (fast == null ? 100 : fastWidth) : effortWidth;
+          if (fast != null) {
+            fields.ColumnStyles[3].SizeType = wrap ? SizeType.Percent : SizeType.Absolute;
+            fields.ColumnStyles[3].Width = wrap ? 100 : fastWidth;
+          }
         }
         finally { fields.ResumeLayout(true); changing = false; }
       };
       fields.SizeChanged += (_, __) => reflow(); fields.FontChanged += (_, __) => reflow();
+      effort.VisibleChanged += (_, __) => reflow(); effort.EnabledChanged += (_, __) => reflow();
+      if (fast != null) fast.VisibleChanged += (_, __) => reflow();
+      modelRowReflows[effort] = reflow;
+      return label;
+    }
+
+    private void ReflowModelOptions(Control effort)
+    {
+      if (effort != null && modelRowReflows.TryGetValue(effort, out var reflow)) reflow();
     }
 
     private Control CreateParallelRequestsSettings()
@@ -228,7 +276,7 @@ namespace AnotherMarkdown.Forms
       };
       var sizeLabel = MakeSettingsLabel("Мин. размер части, символов"); sizeLabel.Margin = new Padding(18, 8, 3, 3);
       layout.Controls.Add(sizeLabel, 2, 0); layout.Controls.Add(translationMinimumChunk, 3, 0);
-      var help = new Label { Name = "translationParallelHelp", Text = "Одновременно переводится не больше указанного числа частей. Их может быть меньше из-за размера или структуры текста. 0 символов — без минимума; таблицы, списки и код не разрываются.", AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 0, 3, 2) };
+      var help = new Label { Name = "translationParallelHelp", Text = "Одновременно переводится не больше указанного числа частей. Их может быть меньше из-за размера или структуры текста. 0\u00A0символов — без минимума; таблицы, списки и код не разрываются.", AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 0, 3, 2) };
       layout.Controls.Add(help, 0, 1); layout.SetColumnSpan(help, 5);
       var changing = false;
       bool? wrapped = null; var previousHelpWidth = 0;
@@ -331,16 +379,17 @@ namespace AnotherMarkdown.Forms
     {
       CancelCliDiscovery();
       var preferred = ReadTranslationDraft();
-      var preferenceKey = SettingsDiscoveryCache.ModelKey(preferred.ProviderId, preferred.Executable);
       var generation = cliDiscoveryGeneration;
       var cancellation = new CancellationTokenSource(); cliDiscoveryCancellation = cancellation;
       translationCliRefresh.Enabled = false;
       try {
-        var installations = await settingsDiscovery.LoadInstallationsAsync(refresh, cancellation.Token);
+        var preferenceKey = await Task.Run(() => SettingsDiscoveryCache.ModelKey(preferred.ProviderId, preferred.Executable), cancellation.Token);
+        var installations = await Task.Run(() => settingsDiscovery.LoadInstallationsAsync(refresh, cancellation.Token), cancellation.Token);
         var result = await Task.Run(() => ResolveCliSelection(installations, preferred, cancellation.Token), cancellation.Token);
         if (cancellation.IsCancellationRequested || IsDisposed || Disposing || IsApiMode || generation != cliDiscoveryGeneration) return;
         var current = ReadTranslationDraft();
-        if (preferenceKey != SettingsDiscoveryCache.ModelKey(current.ProviderId, current.Executable)) return;
+        var currentKey = await Task.Run(() => SettingsDiscoveryCache.ModelKey(current.ProviderId, current.Executable), cancellation.Token);
+        if (cancellation.IsCancellationRequested || IsDisposed || Disposing || IsApiMode || generation != cliDiscoveryGeneration || preferenceKey != currentKey) return;
         FillInstalledCli(result.Installations, result.Selected);
         if (result.Selected != null) {
           var changed = result.ResetDefaults || !CliConnectionSettings.SameIdentity(current.ProviderId, current.Executable, result.Selected.ProviderId, result.Selected.Executable);
@@ -445,8 +494,6 @@ namespace AnotherMarkdown.Forms
       translationModel.Enabled = !translationUseManualModel.Checked;
       FillModels(new CliModelCatalog(), options);
       updatingTranslation = false;
-      CliModelCatalog cached; bool fresh;
-      if (translationParallelRequests != null && settingsDiscovery.TryModels(options.ProviderId, options.Executable, out cached, out fresh)) ApplyModelCatalog(cached, options);
     }
 
     private void SetParallelControls(int parallel, int minimum)
@@ -455,19 +502,32 @@ namespace AnotherMarkdown.Forms
       translationMinimumChunk.Value = Math.Max(0, Math.Min(1000000, minimum));
     }
 
-    private Task LoadModelsForSettingsAsync(TranslationOptions preference, bool refresh = false)
+    private async Task LoadModelsForSettingsAsync(TranslationOptions preference, bool refresh = false)
     {
-      var key = SettingsDiscoveryCache.ModelKey(preference.ProviderId, preference.Executable);
-      if (modelCancellation != null && modelDiscoveryKey == key) return modelDiscoveryTask ?? Task.CompletedTask;
+      var key = await Task.Run(() => SettingsDiscoveryCache.ModelKey(preference.ProviderId, preference.Executable));
+      if (IsDisposed || Disposing || IsApiMode) return;
+      var selected = ReadTranslationDraft();
+      if (!CliConnectionSettings.SameIdentity(preference.ProviderId, preference.Executable, selected.ProviderId, selected.Executable)) return;
+      if (modelCancellation != null && modelDiscoveryKey == key) { await (modelDiscoveryTask ?? Task.CompletedTask); return; }
       CancelModelDiscovery();
+      var generation = modelGeneration;
       CliModelCatalog cached; bool fresh;
-      if (settingsDiscovery.TryModels(preference.ProviderId, preference.Executable, out cached, out fresh)) {
-        ApplyModelCatalog(cached, ReadTranslationDraft());
-        if (fresh && !refresh) return Task.CompletedTask;
+      var previous = await Task.Run(() => {
+        CliModelCatalog value; bool isFresh;
+        var found = settingsDiscovery.TryModels(preference.ProviderId, preference.Executable, out value, out isFresh);
+        return new { found, value, isFresh };
+      });
+      cached = previous.value; fresh = previous.isFresh;
+      if (IsDisposed || Disposing || IsApiMode || generation != modelGeneration) return;
+      if (previous.found) {
+        var current = ReadTranslationDraft();
+        if (!CliConnectionSettings.SameIdentity(preference.ProviderId, preference.Executable, current.ProviderId, current.Executable)) return;
+        ApplyModelCatalog(cached, current);
+        if (fresh && !refresh) return;
       }
       var cancellation = new CancellationTokenSource(); modelCancellation = cancellation; modelDiscoveryKey = key;
-      modelDiscoveryTask = LoadModelCatalogAsync(preference, key, refresh, cancellation, modelGeneration);
-      return modelDiscoveryTask;
+      modelDiscoveryTask = LoadModelCatalogAsync(preference, key, refresh, cancellation, generation);
+      await modelDiscoveryTask;
     }
 
     private void ApplyModelCatalog(CliModelCatalog catalog, TranslationOptions preference)
@@ -491,10 +551,11 @@ namespace AnotherMarkdown.Forms
       translationModelsRefresh.Enabled = false;
       translationModelStatus.Text = "Запрашиваем модели у " + CliProfiles.Get(preference.ProviderId).Name + "…";
       try {
-        var catalog = await settingsDiscovery.LoadModelsAsync(preference.ProviderId, preference.Executable, refresh, cancellation.Token);
+        var catalog = await Task.Run(() => settingsDiscovery.LoadModelsAsync(preference.ProviderId, preference.Executable, refresh, cancellation.Token), cancellation.Token);
         if (cancellation.IsCancellationRequested || generation != modelGeneration || IsDisposed || Disposing || IsApiMode) return;
         var current = ReadTranslationDraft();
-        if (key != SettingsDiscoveryCache.ModelKey(current.ProviderId, current.Executable)) return;
+        var currentKey = await Task.Run(() => SettingsDiscoveryCache.ModelKey(current.ProviderId, current.Executable), cancellation.Token);
+        if (cancellation.IsCancellationRequested || generation != modelGeneration || IsDisposed || Disposing || IsApiMode || key != currentKey) return;
         ApplyModelCatalog(catalog, current);
       }
       catch (OperationCanceledException) { }
@@ -523,34 +584,40 @@ namespace AnotherMarkdown.Forms
       var savedModel = preference.Model;
       var savedEffort = preference.ReasoningEffort;
       var useDefaultModel = preference.UseDefaultModel;
-      if (hasModelCatalog && preference.ProviderId == "cursor" && !useDefaultModel && (savedModel ?? "").EndsWith("-fast", StringComparison.Ordinal)) {
-        var normalModel = savedModel.Substring(0, savedModel.Length - "-fast".Length);
-        if (catalog.Models.Any(m => m.Id == normalModel)) {
-          savedModel = normalModel;
-          translationModelSelectionNote = "Сохранённый вариант Fast заменён соответствующей обычной моделью из списка CLI.";
-        }
-        else {
-          savedModel = ""; savedEffort = ""; useDefaultModel = true;
-          translationModelSelectionNote = "Для сохранённого варианта Fast нет обычной модели в списке CLI. Выбрана модель по умолчанию в CLI.";
-        }
+      var savedFast = false;
+      var fastBase = catalog.Models.FirstOrDefault(m => string.Equals(m.FastModelId, savedModel, StringComparison.OrdinalIgnoreCase));
+      if (!useDefaultModel && fastBase != null) {
+        savedModel = fastBase.Id; savedFast = true;
+      }
+      else if (hasModelCatalog && preference.ProviderId == "cursor" && !useDefaultModel && (savedModel ?? "").EndsWith("-fast", StringComparison.OrdinalIgnoreCase) &&
+        !catalog.Models.Any(m => string.Equals(m.Id, savedModel, StringComparison.OrdinalIgnoreCase))) {
+        savedModel = ""; savedEffort = ""; useDefaultModel = true;
+        translationModelSelectionNote = "Сохранённый вариант Fast больше не предлагается CLI. Выбрана модель по умолчанию.";
       }
       var defaultId = catalog.DefaultModelId ?? (preference.ProviderId == "ollama" ? catalog.Models.FirstOrDefault()?.Id : "");
       var defaultModel = catalog.Models.FirstOrDefault(m => m.Id == defaultId);
       var fallback = new ModelChoice { Default = true, Id = defaultId ?? "", Title = preference.ProviderId == "ollama" ? "Первая установленная модель" : "Модель по умолчанию в CLI", Efforts = defaultModel?.ReasoningEfforts ?? new List<CliReasoningEffort>(), DefaultEffort = catalog.ConfiguredReasoningEffort ?? defaultModel?.DefaultReasoningEffort };
       var choices = catalog.Models.GroupBy(m => m.BaseModelId ?? m.Id).Select(group => {
         var model = group.FirstOrDefault(m => m.BaseModelId != null && m.DefaultReasoningEffort == "") ?? group.FirstOrDefault(m => m.IsDefault) ?? group.First();
-        return new ModelChoice { Id = model.Id, Title = model.BaseModelName ?? model.ToString(), ModelIds = group.Select(m => m.Id).ToList(), Efforts = model.ReasoningEfforts, DefaultEffort = catalog.ConfiguredReasoningEffort ?? model.DefaultReasoningEffort };
+         return new ModelChoice { Id = model.Id, Title = model.BaseModelName ?? model.ToString(),
+           ModelIds = group.SelectMany(m => new[] { m.Id, m.FastModelId }).Where(id => !string.IsNullOrEmpty(id)).ToList(),
+            FastIds = group.Where(m => !string.IsNullOrEmpty(m.FastModelId)).GroupBy(m => m.Id, StringComparer.OrdinalIgnoreCase)
+              .ToDictionary(matches => matches.Key, matches => matches.First().FastModelId, StringComparer.OrdinalIgnoreCase),
+            FastOnlyIds = new HashSet<string>(group.Where(m => m.FastOnly).Select(m => m.Id), StringComparer.OrdinalIgnoreCase),
+           Efforts = model.ReasoningEfforts, DefaultEffort = catalog.ConfiguredReasoningEffort ?? model.DefaultReasoningEffort };
       }).ToList();
       var desired = !useDefaultModel ? choices.FirstOrDefault(m => m.Id == savedModel || m.ModelIds.Contains(savedModel)) : fallback;
       if (desired == null && !string.IsNullOrWhiteSpace(savedModel)) {
-        desired = new ModelChoice { Id = savedModel, Title = "Сохранённая модель · " + CliModel.CleanDisplayName(savedModel) }; choices.Add(desired);
+        desired = new ModelChoice { Id = savedModel, Title = CliModel.CleanDisplayName(savedModel) }; choices.Add(desired);
       }
       translationModel.Items.Add(fallback);
       translationModel.Items.AddRange(choices.OrderBy(m => m.Title, StringComparer.OrdinalIgnoreCase).ThenBy(m => m.Id, StringComparer.OrdinalIgnoreCase).ToArray());
       translationModel.SelectedItem = desired ?? fallback;
-      if (preference.ProviderId == "cursor" && !useDefaultModel && string.IsNullOrEmpty(savedEffort))
-        savedEffort = catalog.Models.FirstOrDefault(m => m.Id == savedModel && m.BaseModelId != null)?.DefaultReasoningEffort;
+       if (!useDefaultModel && string.IsNullOrEmpty(savedEffort))
+         savedEffort = catalog.Models.FirstOrDefault(m => m.Id == savedModel && m.BaseModelId != null)?.DefaultReasoningEffort;
       FillEfforts(savedEffort, useDefaultModel ? null : savedModel);
+      translationFast.Checked = savedFast;
+      UpdateFastState();
       }
       finally { translationModel.EndUpdate(); }
     }
@@ -564,17 +631,19 @@ namespace AnotherMarkdown.Forms
       var model = translationModel.SelectedItem as ModelChoice;
       translationEffort.Items.Clear();
       var automatic = new EffortChoice { Id = "", Title = "По умолчанию в CLI" + (string.IsNullOrWhiteSpace(model?.DefaultEffort) ? "" : " · " + model.DefaultEffort) };
-      var cursorVariants = translationDraft.ProviderId == "cursor" && !translationUseManualModel.Checked && model != null && !model.Default && model.Efforts.Count > 0;
-      if (!cursorVariants) translationEffort.Items.Add(automatic);
+      var nativeVariants = !translationUseManualModel.Checked && model != null && !model.Default &&
+        model.Efforts.Any(e => !string.IsNullOrEmpty(e.ModelId));
+      if (!nativeVariants) translationEffort.Items.Add(automatic);
       if (!translationUseManualModel.Checked && model != null)
-        foreach (var effort in model.Efforts.Where(e => cursorVariants || !string.IsNullOrEmpty(e.Id)))
+        foreach (var effort in model.Efforts.Where(e => nativeVariants || !string.IsNullOrEmpty(e.Id)))
           translationEffort.Items.Add(new EffortChoice { Id = effort.Id, Title = string.IsNullOrEmpty(effort.Id) ? "По умолчанию в CLI" : effort.ToString(), ModelId = preferredModelId != null && effort.ModelIds.Contains(preferredModelId) ? preferredModelId : effort.ModelId });
       var desired = translationEffort.Items.Cast<EffortChoice>().FirstOrDefault(e => e.Id == preferred);
       if (desired == null && !string.IsNullOrEmpty(preferred)) {
         desired = new EffortChoice { Id = preferred, Title = "Сохранено · " + preferred }; translationEffort.Items.Add(desired);
       }
-      translationEffort.SelectedItem = desired ?? (cursorVariants ? translationEffort.Items.Cast<EffortChoice>().FirstOrDefault(e => e.Id == model.DefaultEffort) ?? translationEffort.Items[0] : automatic);
-      UpdateEffortState();
+       translationEffort.SelectedItem = desired ?? (nativeVariants ? translationEffort.Items.Cast<EffortChoice>().FirstOrDefault(e => e.Id == model.DefaultEffort) ?? translationEffort.Items[0] : automatic);
+       UpdateEffortState();
+       UpdateFastState();
       }
       finally { translationEffort.EndUpdate(); updatingTranslation = wasUpdating; }
     }
@@ -584,6 +653,8 @@ namespace AnotherMarkdown.Forms
     private void UpdateEffortState()
     {
       translationEffort.Enabled = CanEditEffort;
+      translationEffort.Visible = CanEditEffort;
+      translationEffortLabel.Visible = CanEditEffort;
       var selected = translationEffort.SelectedItem as EffortChoice;
       var known = (translationModel.SelectedItem as ModelChoice)?.Efforts.Any(e => e.Id == selected?.Id) ?? false;
       var note = translationCustomArguments.Checked ? "Effort задан в аргументах запуска." : !translationUseManualModel.Checked && !string.IsNullOrEmpty(selected?.Id) && !known ? "Сохранённый effort; этот вариант пока отсутствует в каталоге." : !translationUseManualModel.Checked && ((translationModel.SelectedItem as ModelChoice)?.Efforts.Count ?? 0) > 0 ? "Уровень рассуждений выбранной модели." : "Уровень рассуждений задаётся в CLI.";
@@ -591,6 +662,36 @@ namespace AnotherMarkdown.Forms
       settingsToolTips.SetToolTip(translationEffort, note);
       if (translationEffort.Parent != null)
         foreach (var label in translationEffort.Parent.Controls.OfType<Label>()) settingsToolTips.SetToolTip(label, note);
+      UpdateFastState();
+    }
+
+    private void UpdateFastState()
+    {
+      if (translationFast == null || translationModel == null || translationEffort == null) return;
+      var choice = translationModel.SelectedItem as ModelChoice;
+      var effort = translationEffort.SelectedItem as EffortChoice;
+      var modelId = !string.IsNullOrEmpty(effort?.ModelId) ? effort.ModelId : choice?.Id;
+      var available = hasModelCatalog && !translationUseManualModel.Checked && !translationCustomArguments.Checked &&
+        choice != null && !choice.Default && ResolveFastId(choice, effort, modelId) != null;
+      translationFastAvailable = available;
+      if (!available) translationFast.Checked = false;
+      var fastOnly = available && choice.FastOnlyIds.Contains(modelId);
+      if (fastOnly) translationFast.Checked = true;
+      translationFast.Visible = available;
+      translationFast.Enabled = available && !fastOnly;
+      settingsToolTips.SetToolTip(translationFast, fastOnly ? "CLI предлагает только Fast для этой модели и выбранного effort." : available ? "CLI предлагает отдельный вариант Fast для выбранной модели и effort." : "");
+      ReflowModelOptions(translationEffort);
+    }
+
+    private static string ResolveFastId(ModelChoice choice, EffortChoice effort, string modelId)
+    {
+      if (choice == null || string.IsNullOrEmpty(modelId)) return null;
+      if (choice.FastIds.TryGetValue(modelId, out var exact)) return exact;
+      var variants = choice.Efforts.FirstOrDefault(item => item.Id == effort?.Id);
+      if (variants == null) return null;
+      foreach (var alias in variants.ModelIds)
+        if (choice.FastIds.TryGetValue(alias, out var fast)) return fast;
+      return null;
     }
 
     private void UpdateArgumentPreview()
@@ -617,8 +718,15 @@ namespace AnotherMarkdown.Forms
       options.Model = translationUseManualModel.Checked ? translationManualModel.Text.Trim() : choice?.Id ?? "";
       var effort = translationEffort.SelectedItem as EffortChoice;
       options.ReasoningEffort = translationUseManualModel.Checked ? "" : effort?.Id ?? "";
+      if (hasModelCatalog && choice != null && choice.ModelIds.Count > 0 && options.ReasoningEffort.Length > 0 &&
+          !choice.Efforts.Any(item => item.Id == options.ReasoningEffort))
+        options.ReasoningEffort = "";
       if (!translationUseManualModel.Checked && !string.IsNullOrEmpty(effort?.ModelId)) {
         options.Model = effort.ModelId; options.UseDefaultModel = false;
+      }
+      if (translationFastAvailable && translationFast.Checked) {
+        var fastId = ResolveFastId(choice, effort, options.Model);
+        if (fastId != null) options.Model = fastId;
       }
       return options;
     }

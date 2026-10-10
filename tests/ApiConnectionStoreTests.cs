@@ -55,7 +55,9 @@ internal static class ApiConnectionStoreTests
     var key = "SYNTHETIC_API_KEY_ONLY_FOR_STORE_TEST";
     var headerSecret = "SYNTHETIC_HEADER_ONLY_FOR_STORE_TEST";
     var headers = "{\"X-Test-Secret\":\"" + headerSecret + "\"}";
-    var connection = new ApiConnection { Name = "Test connection", ApiKey = key, AdditionalHeadersJson = headers };
+    var connection = new ApiConnection { Name = "Test connection", ApiKey = key, AdditionalHeadersJson = headers,
+      Model = "fixture-model", ReasoningEffort = "high", ReasoningEffortModel = "fixture-model" };
+    connection.ReasoningEffortCatalogKey = SettingsDiscoveryCache.ApiModelKey(connection);
     Check(connection.Id.Length == 32 && connection.Id != new ApiConnection().Id, "new connections have independent IDs");
     Check(connection.Protocol == "chat-completions" && connection.TokenLimitParameter == "max_tokens"
       && connection.MaxOutputTokens == 0 && connection.Temperature == null, "protocol defaults");
@@ -75,7 +77,10 @@ internal static class ApiConnectionStoreTests
     Check(!string.IsNullOrEmpty((string)stored["EncryptedApiKey"]) && !string.IsNullOrEmpty((string)stored["EncryptedHeaders"]), "both secret fields have ciphertext");
     var loaded = ApiConnectionStore.Load(path)[0];
     Check(loaded.ApiKey == key && loaded.AdditionalHeadersJson == headers && loaded.CredentialError == null, "CurrentUser DPAPI roundtrip");
-    Check(loaded.Id == connection.Id && loaded.TokenLimitParameter == "max_tokens", "nonsecret settings roundtrip");
+    Check(loaded.Id == connection.Id && loaded.TokenLimitParameter == "max_tokens" &&
+      loaded.ReasoningEffort == "high" && loaded.ReasoningEffortModel == loaded.Model &&
+      loaded.ReasoningEffortCatalogKey == SettingsDiscoveryCache.ApiModelKey(loaded),
+      "nonsecret settings and the model-specific effort confirmation roundtrip");
 
     var previousDefaults = JsonConvert.DefaultSettings;
     try {

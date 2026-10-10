@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -37,7 +38,7 @@ internal static class SettingsStartupTests
       run = (_, __) => {
         Application.Idle -= run;
         try {
-          PreviewIsLazy(); ConcurrentAndResponsive(); DiscoveryGeometry(); WarmCacheAndLateEdits(); SelectionAndCancellation(); CliProfilesSettings(); Disposal(); RelativeLauncher(); Geometry();
+          NoPaintDiscovery(); StartupPrefetch(); ConcurrentAndResponsive(); DiscoveryGeometry(); ApiAutoDiscovery(); NativeModelPicker(); WarmCacheAndLateEdits(); SelectionAndCancellation(); CliProfilesSettings(); Disposal(); RelativeLauncher(); Geometry();
           Console.WriteLine("PASS settings startup: " + checks + " assertions"); exitCode = 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); }
@@ -119,6 +120,53 @@ internal static class SettingsStartupTests
     }
   }
 
+  // Reproduce a settings window whose child controls cover the entire client.
+  // Do not DrawToBitmap/Update or call base.OnPaint: model loading must not
+  // depend on an artificial paint sent by the screenshot test harness.
+  private sealed class NoPaintSettings : SettingsForm
+  {
+    public NoPaintSettings(Settings settings, SettingsDiscoveryCache cache) : base(settings, cache) { }
+    protected override bool ShowWithoutActivation => true;
+    protected override CreateParams CreateParams { get { var p = base.CreateParams; p.ExStyle |= 0x08000000; return p; } }
+    protected override void OnPaint(PaintEventArgs e) { }
+  }
+
+  private static void NoPaintDiscovery()
+  {
+    using (var backend = new Backend()) {
+      var scan = backend.Scan(); var models = backend.Models();
+      using (var form = new NoPaintSettings(Saved(), backend.Cache)) {
+        form.SelectTranslationTab(); form.Show();
+        Pump(() => scan.Started.Task.IsCompleted && models.Started.Task.IsCompleted);
+        models.Complete(Catalog()); scan.Complete(Installations());
+        Pump(() => Has(form, "Alpha") && Idle(form));
+        Check(Has(form, "Alpha"), "cold CLI model catalog reaches a shown form without any parent paint");
+        form.Close();
+      }
+      using (var form = new NoPaintSettings(Saved(), backend.Cache)) {
+        Check(Has(form, "Alpha") && Find<ComboBox>(form, "translationModel").Items.Count == 3,
+          "warm CLI catalog is fully populated in the constructor before Show or painting");
+      }
+      var settings = Saved(); settings.Translation.ConnectionMode = "api";
+      var profile = new ApiConnection { Endpoint = "https://example.test/v1", Model = "api-model" };
+      settings.Translation.ApiConnections.Add(profile); settings.Translation.SelectedApiConnectionId = profile.Id;
+      var api = backend.ApiModels();
+      using (var form = new NoPaintSettings(settings, backend.Cache)) {
+        form.SelectTranslationTab(); form.Show(); Pump(() => api.Started.Task.IsCompleted);
+        api.Complete(Catalog("api-model", "API model"));
+        Pump(() => Find<ComboBox>(form, "apiModel").Items.Count == 2);
+        Check(Find<ComboBox>(form, "apiModel").Items.Count == 2,
+          "cold API catalog reaches a shown form without any parent paint or manual refresh");
+        form.Close();
+      }
+      using (var form = new NoPaintSettings(settings, backend.Cache)) {
+        Check(Find<ComboBox>(form, "apiModel").Items.Count == 2,
+          "warm API catalog is fully populated in the constructor before Show or painting");
+      }
+      Check(backend.ModelCalls == 1 && backend.ApiModelCalls == 1, "warm constructors make no duplicate backend requests");
+    }
+  }
+
   private sealed class Gate<T> : IDisposable where T : class
   {
     private readonly ManualResetEventSlim release = new ManualResetEventSlim();
@@ -146,8 +194,9 @@ internal static class SettingsStartupTests
     private readonly object gate = new object();
     private readonly Queue<Gate<List<CliInstallation>>> scans = new Queue<Gate<List<CliInstallation>>>();
     private readonly Dictionary<string, Queue<Gate<CliModelCatalog>>> models = new Dictionary<string, Queue<Gate<CliModelCatalog>>>();
+    private readonly Queue<Gate<CliModelCatalog>> apiModels = new Queue<Gate<CliModelCatalog>>();
     private readonly List<IDisposable> owned = new List<IDisposable>();
-    public int InstallationCalls, ModelCalls;
+    public int InstallationCalls, ModelCalls, ApiModelCalls;
     private DateTime now = new DateTime(2030, 1, 1, 0, 0, 0, DateTimeKind.Utc);
     public readonly SettingsDiscoveryCache Cache;
     public Backend()
@@ -156,7 +205,9 @@ internal static class SettingsStartupTests
         Gate<List<CliInstallation>> next; lock (gate) { InstallationCalls++; next = scans.Dequeue(); } return next.Load(token);
       }, (provider, executable, token) => {
         Gate<CliModelCatalog> next; lock (gate) { ModelCalls++; next = models[provider].Dequeue(); } return next.Load(token);
-      }, () => now, TimeSpan.FromMinutes(5));
+      }, () => now, TimeSpan.FromMinutes(5), (profile, timeout, token) => {
+        Gate<CliModelCatalog> next; lock (gate) { ApiModelCalls++; next = apiModels.Dequeue(); } return next.Load(token);
+      });
     }
     public Gate<List<CliInstallation>> Scan(bool block = false, bool ignore = false)
     { var value = new Gate<List<CliInstallation>>(block, ignore); lock (gate) { scans.Enqueue(value); owned.Add(value); } return value; }
@@ -166,6 +217,8 @@ internal static class SettingsStartupTests
       lock (gate) { if (!models.ContainsKey(provider)) models[provider] = new Queue<Gate<CliModelCatalog>>(); models[provider].Enqueue(value); owned.Add(value); }
       return value;
     }
+    public Gate<CliModelCatalog> ApiModels(bool block = false, bool ignore = false)
+    { var value = new Gate<CliModelCatalog>(block, ignore); lock (gate) { apiModels.Enqueue(value); owned.Add(value); } return value; }
     public void Seed(CliModelCatalog catalog = null)
     {
       Scan().Complete(Installations()); Models().Complete(catalog ?? Catalog());
@@ -176,14 +229,18 @@ internal static class SettingsStartupTests
     public void Dispose() { foreach (var value in owned) value.Dispose(); }
   }
 
-  private static void PreviewIsLazy()
+  private static void StartupPrefetch()
   {
-    using (var backend = new Backend())
-    using (var form = new BackgroundSettings(Saved(), backend.Cache)) {
-      Check(backend.InstallationCalls == 0 && backend.ModelCalls == 0, "constructor does not start discovery");
+    using (var backend = new Backend()) {
+      var scan = backend.Scan(true); var models = backend.Models(block: true);
+      using (var form = new BackgroundSettings(Saved(), backend.Cache)) {
       form.Show(); Heartbeats();
-      Check(form.Paints > 0 && backend.InstallationCalls == 0 && backend.ModelCalls == 0, "preview-only opening paints and pumps UI without discovery (paint/scan/model=" + form.Paints + "/" + backend.InstallationCalls + "/" + backend.ModelCalls + ")");
+      Pump(() => scan.Started.Task.IsCompleted && models.Started.Task.IsCompleted);
+      Check(form.Paints > 0 && scan.ThreadId != uiThread && models.ThreadId != uiThread,
+        "opening the dialog starts CLI and model prefetch on workers while preview paints");
+      models.Complete(Catalog()); scan.Complete(Installations()); Heartbeats();
       form.Close();
+      }
     }
   }
 
@@ -193,12 +250,10 @@ internal static class SettingsStartupTests
       var scan = backend.Scan(true); var models = backend.Models(block: true);
       using (var form = new BackgroundSettings(Saved(), backend.Cache)) {
         form.SelectTranslationTab();
-        Check(backend.InstallationCalls == 0 && backend.ModelCalls == 0, "selecting Translation before Show does not discover");
-        var shownObserved = false; var shownWithoutDiscovery = false;
-        form.Shown += (_, __) => { shownWithoutDiscovery = backend.InstallationCalls == 0 && backend.ModelCalls == 0; shownObserved = true; };
+        var shownObserved = false;
+        form.Shown += (_, __) => shownObserved = true;
         form.Show();
         Pump(() => shownObserved);
-        Check(shownWithoutDiscovery, "Shown defers discovery until its event handlers return");
         Pump(() => scan.Started.Task.IsCompleted && models.Started.Task.IsCompleted);
         Heartbeats();
         Check(scan.ThreadId != uiThread && models.ThreadId != uiThread, "synchronous installation and model loaders execute off the UI thread");
@@ -218,8 +273,8 @@ internal static class SettingsStartupTests
   {
     var result = new Dictionary<string, System.Drawing.Rectangle>();
     foreach (var name in new[] { "translationConnectionMode", "translationParallelGroup", "translationParallelRequests", "translationMinimumChunk", "translationCli", "translationExecutable",
-      "translationModelRow", "translationModel", "translationEffort", "translationModelStatus", "translationDefaults", "translationShowButtons", "btnSave", "btnCancel",
-      "apiConnections", "apiModelRow", "apiModel", "apiEffort", "apiActions", "apiStatus", "apiTimeout", "apiShowButtons" }) {
+      "translationModelRow", "translationModel", "translationModelStatus", "translationDefaults", "translationShowButtons", "btnSave", "btnCancel",
+      "apiConnections", "apiModelRow", "apiModel", "apiActions", "apiStatus", "apiTimeout", "apiShowButtons" }) {
       var control = form.Controls.Find(name, true).Single();
       if (control.Visible) result[name] = new System.Drawing.Rectangle(form.PointToClient(control.PointToScreen(System.Drawing.Point.Empty)), control.Size);
     }
@@ -249,9 +304,15 @@ internal static class SettingsStartupTests
         GeometryUnchanged(firstPaint, form, "cold CLI control membership and bounds stay unchanged from the first native paint");
         GeometryUnchanged(shown, form, "starting CLI discovery does not move the shown controls");
         models.Complete(Catalog("unknown-saved", "Supported model")); scan.Complete(Installations()); Pump(() => Idle(form)); Heartbeats();
-        Check(Find<ComboBox>(form, "translationEffort").Enabled && Draft(form).ReasoningEffort == "high",
+         Check(Find<ComboBox>(form, "translationEffort").Visible && Draft(form).ReasoningEffort == "high",
           "delayed catalog makes the saved effort available without delaying the dialog");
-        GeometryUnchanged(shown, form, "supported-effort catalog does not hide rows or move interactive controls");
+        var beforeEffortWidth = shown["translationModel"].Width;
+        var allowedModelBounds = shown["translationModel"];
+        allowedModelBounds.Width = Find<ComboBox>(form, "translationModel").Width;
+        shown["translationModel"] = allowedModelBounds;
+        Check(allowedModelBounds.Width < beforeEffortWidth,
+          "the model field yields horizontal space when supported effort becomes available");
+        GeometryUnchanged(shown, form, "supported effort reflows within its model row without moving other controls");
         var failure = backend.Models(); Find<Button>(form, "translationModelsRefresh").PerformClick(); Pump(() => failure.Started.Task.IsCompleted);
         failure.Fail(new InvalidOperationException(string.Concat(Enumerable.Repeat("Long metadata failure details. ", 20))));
         Pump(() => Idle(form)); Heartbeats();
@@ -262,10 +323,11 @@ internal static class SettingsStartupTests
     using (var backend = new Backend()) {
       var settings = Saved(); settings.Translation.ConnectionMode = "api";
       settings.Translation.ApiConnections.Add(new ApiConnection { Endpoint = "https://example.test/v1", Model = "fixture-model" });
+      var api = backend.ApiModels(block: true);
       using (var form = new BackgroundSettings(settings, backend.Cache)) {
         Dictionary<string, System.Drawing.Rectangle> firstPaint = null, shown = null;
         form.FirstPaint = () => firstPaint = VisibleGeometry(form); form.Shown += (_, __) => shown = VisibleGeometry(form);
-        form.SelectTranslationTab(); form.Show(); Pump(() => firstPaint != null && shown != null); Heartbeats();
+        form.SelectTranslationTab(); form.Show(); Pump(() => firstPaint != null && shown != null && api.Started.Task.IsCompleted); Heartbeats();
         GeometryUnchanged(firstPaint, form, "API controls stay in their first native paint positions after Shown");
         var message = string.Concat(Enumerable.Repeat("Synthetic API status details. ", 20));
         // Exercise a delayed status update on the same UI dispatcher as API results, without network or credentials.
@@ -273,8 +335,187 @@ internal static class SettingsStartupTests
         Pump(() => Find<Label>(form, "apiStatus").Text == message); Heartbeats();
         GeometryUnchanged(shown, form, "long asynchronous API status does not recompose the shown fields or footer");
         Check(backend.InstallationCalls == 0 && backend.ModelCalls == 0 && Find<Button>(form, "btnSave").Enabled,
-          "stable API opening remains responsive and performs no CLI discovery"); form.Close();
+          "stable API opening remains responsive and performs no CLI discovery");
+        api.Complete(Catalog("fixture-model", "Fixture API")); form.Close();
       }
+    }
+  }
+
+  private static void ApiAutoDiscovery()
+  {
+    using (var backend = new Backend()) {
+      var settings = Saved(); settings.Translation.ConnectionMode = "api";
+      var first = new ApiConnection { Name = "First", Endpoint = "https://first.example.test/v1", Model = "api-z", ReasoningEffort = "high" };
+      var second = new ApiConnection { Name = "Second", Endpoint = "https://second.example.test/v1", Model = "api-b" };
+      settings.Translation.ApiConnections.Add(first); settings.Translation.ApiConnections.Add(second);
+      settings.Translation.SelectedApiConnectionId = first.Id;
+      var startup = backend.ApiModels(block: true);
+      using (var form = new BackgroundSettings(settings, backend.Cache)) {
+        form.SelectTranslationTab(); form.Show(); Pump(() => startup.Started.Task.IsCompleted); Heartbeats();
+        Check(form.Paints > 0 && Find<Button>(form, "btnSave").Enabled && startup.ThreadId != uiThread,
+          "API model prefetch starts with form construction without blocking paint or Save");
+        var firstCatalog = new CliModelCatalog { Models = new List<CliModel> {
+          new CliModel { Id = "api-z", Name = "Zulu" }, new CliModel { Id = "api-a", Name = "Alpha" }
+        } };
+        startup.Complete(firstCatalog);
+        var model = Find<ComboBox>(form, "apiModel");
+        Pump(() => model.Items.Count == 2 && Field<CancellationTokenSource>(form, "apiCancellation") == null);
+        Check(model.Items[0].ToString() == "Alpha" && (model.SelectedItem as CliModel)?.Id == "api-z" &&
+          Find<Button>(form, "apiRefreshModels").Text == "Обновить",
+          "opening the saved API profile sorts models, restores selection and labels Refresh consistently");
+        var profileName = Find<TextBox>(form, "apiName");
+        var leave = typeof(Control).GetMethod("OnLeave", BindingFlags.Instance | BindingFlags.NonPublic);
+        leave.Invoke(profileName, new object[] { EventArgs.Empty }); Heartbeats();
+        Check(model.Items.Count == 2 && backend.ApiModelCalls == 1 && (model.SelectedItem as CliModel)?.Id == "api-z",
+          "leaving an unchanged API profile name preserves the loaded catalog and selection without a new request");
+        profileName.Text = "Renamed API"; leave.Invoke(profileName, new object[] { EventArgs.Empty }); Heartbeats();
+        Check(model.Items.Count == 2 && Find<ComboBox>(form, "apiConnections").Text == "Renamed API" && backend.ApiModelCalls == 1,
+          "renaming an API profile refreshes only its caption and preserves the current catalog");
+         Check(!Find<ComboBox>(form, "apiEffort").Visible && !Field<Label>(form, "apiEffortLabel").Visible && Draft(form).ActiveApiConnection.ReasoningEffort == "",
+          "API effort is unavailable and a legacy value is cleared when the selected model advertises no levels");
+        var switched = backend.ApiModels();
+        Find<ComboBox>(form, "apiConnections").SelectedItem = Find<ComboBox>(form, "apiConnections").Items.Cast<ApiConnection>().Single(p => p.Id == second.Id);
+        Pump(() => switched.Started.Task.IsCompleted);
+        Check(model.Items.Count == 0 && model.Text == "api-b" && Find<Button>(form, "btnSave").Enabled,
+          "changing API profile clears stale models and keeps the saved model editable during discovery");
+        switched.Complete(Catalog("api-b", "Beta")); Pump(() => (model.SelectedItem as CliModel)?.Id == "api-b");
+        var refresh = backend.ApiModels(); Find<Button>(form, "apiRefreshModels").PerformClick(); Pump(() => refresh.Started.Task.IsCompleted);
+        refresh.Complete(Catalog("api-b", "Refreshed Beta")); Pump(() => model.Items.Count > 0 && model.Items[0].ToString() == "Refreshed Beta");
+        Check(backend.ApiModelCalls == 3, "explicit API Refresh forces a new lookup after automatic profile loading");
+        var preset = backend.ApiModels(); Find<ComboBox>(form, "apiPreset").SelectedIndex = 1;
+        Pump(() => preset.Started.Task.IsCompleted);
+        Check(Find<TextBox>(form, "apiEndpoint").Text == "https://api.openai.com/v1" && model.Items.Count == 0,
+          "choosing an API service with an endpoint starts discovery immediately and clears the prior catalog");
+        preset.Complete(Catalog("gpt-6.1-sol", "GPT-6.1 Sol")); Pump(() => model.Items.Count > 0);
+        model.SelectedItem = model.Items.Cast<CliModel>().Single(item => item.Id == "gpt-6.1-sol");
+        var apiEffort = Find<ComboBox>(form, "apiEffort");
+        apiEffort.SelectedItem = apiEffort.Items.Cast<object>().Single(item => item.ToString() == "high");
+         Check(apiEffort.Visible && Field<Label>(form, "apiEffortLabel").Visible && Draft(form).ActiveApiConnection.ReasoningEffort == "high" &&
+          Draft(form).ActiveApiConnection.ReasoningEffortModel == "gpt-6.1-sol" &&
+          Draft(form).ActiveApiConnection.ReasoningEffortCatalogKey == SettingsDiscoveryCache.ApiModelKey(Draft(form).ActiveApiConnection),
+          "only a catalog-advertised API effort is bound to its selected model");
+        model.SelectedItem = model.Items.Cast<CliModel>().Single(item => item.Id == "gpt-6.1-sol-other");
+         Check(!apiEffort.Visible && apiEffort.Items.Count == 1 && Draft(form).ActiveApiConnection.ReasoningEffort == "",
+          "changing API model clears an effort value that is not supported by the new model");
+        var emptyPicker = backend.ApiModels(); Find<TextBox>(form, "apiEndpoint").Text = "https://third.example.test/v1";
+        Check(model.Items.Count == 0, "editing an endpoint clears a stale API catalog without losing the editable model field");
+        model.DroppedDown = true; Pump(() => emptyPicker.Started.Task.IsCompleted);
+        Heartbeats();
+        Check(!model.DroppedDown && model.Items.Count == 0,
+          "an empty API model popup is closed while asynchronous discovery is pending");
+        emptyPicker.Complete(Catalog("third-model", "Third model")); Pump(() => model.Items.Count > 0);
+        Check(backend.ApiModelCalls == 5, "opening an empty API model picker triggers discovery for the current endpoint");
+        model.DroppedDown = false; Heartbeats();
+
+        var lateEdit = backend.ApiModels(); Find<TextBox>(form, "apiEndpoint").Text = "https://fourth.example.test/v1";
+        leave.Invoke(Find<TextBox>(form, "apiEndpoint"), new object[] { EventArgs.Empty });
+        Pump(() => lateEdit.Started.Task.IsCompleted); Heartbeats();
+        model.Text = "late-model"; Find<NumericUpDown>(form, "apiMaxTokens").Value = 1000;
+        Find<TextBox>(form, "apiParameters").Text = "{\"user\":\"fixture\"}"; Heartbeats();
+        Check(Field<CancellationTokenSource>(form, "apiCancellation") != null && !lateEdit.Canceled.Task.IsCompleted,
+          "editing the selected model and output options does not cancel an independent API model-list request");
+        lateEdit.Complete(Catalog("late-model", "Late model"));
+        Pump(() => model.Items.Count > 0 && Field<CancellationTokenSource>(form, "apiCancellation") == null);
+        Check((model.SelectedItem as CliModel)?.Id == "late-model" && Draft(form).ActiveApiConnection.Model == "late-model",
+          "a late API model-list result preserves the current model rather than its old request snapshot");
+
+        model.DroppedDown = true; Heartbeats();
+        Find<TextBox>(form, "apiEndpoint").Text = "https://fifth.example.test/v1"; Heartbeats();
+        Check(!model.DroppedDown && model.Items.Count == 0 && uiError == null,
+          "changing API identity closes an open native model popup before clearing its selected items");
+        form.Close();
+      }
+    }
+  }
+
+  [DllImport("user32.dll")]
+  private static extern IntPtr SendMessage(IntPtr handle, int message, IntPtr wparam, IntPtr lparam);
+  [DllImport("user32.dll")]
+  private static extern bool PostMessage(IntPtr handle, int message, IntPtr wparam, IntPtr lparam);
+  [DllImport("user32.dll")]
+  private static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")]
+  private static extern bool GetComboBoxInfo(IntPtr handle, ref ComboInfo info);
+  [DllImport("user32.dll")]
+  private static extern bool GetWindowRect(IntPtr handle, out NativeRectangle rectangle);
+  [StructLayout(LayoutKind.Sequential)]
+  private struct NativeRectangle { public int Left, Top, Right, Bottom; }
+  [StructLayout(LayoutKind.Sequential)]
+  private struct ComboInfo {
+    public int Size;
+    public NativeRectangle Item, Button;
+    public int State;
+    public IntPtr Combo, Edit, List;
+  }
+  [StructLayout(LayoutKind.Sequential)]
+  private struct NativeWindowPosition {
+    public IntPtr Window, InsertAfter;
+    public int X, Y, Width, Height;
+    public uint Flags;
+  }
+  private sealed class PopupObserver : NativeWindow, IDisposable
+  {
+    public int ShownCount;
+    public PopupObserver(IntPtr handle) { AssignHandle(handle); }
+    protected override void WndProc(ref Message message)
+    {
+      if (message.Msg == 0x0018 && message.WParam != IntPtr.Zero) ShownCount++;
+      if (message.Msg == 0x0047 && message.LParam != IntPtr.Zero &&
+        (((NativeWindowPosition)Marshal.PtrToStructure(message.LParam, typeof(NativeWindowPosition))).Flags & 0x0040) != 0) ShownCount++;
+      base.WndProc(ref message);
+    }
+    public void Dispose() { ReleaseHandle(); }
+  }
+  private static void NativeModelPicker()
+  {
+    using (var backend = new Backend()) {
+      var settings = Saved(); settings.Translation.ConnectionMode = "api";
+      var profile = new ApiConnection { Name = "Native picker", Endpoint = "https://fixture.example.test/v1", Model = "api-model" };
+      settings.Translation.ApiConnections.Add(profile); settings.Translation.SelectedApiConnectionId = profile.Id;
+      var request = backend.ApiModels();
+      var foreground = GetForegroundWindow();
+      using (var form = new BackgroundSettings(settings, backend.Cache)) {
+        form.SelectTranslationTab(); form.Show(); Pump(() => request.Started.Task.IsCompleted); Heartbeats();
+        var model = Find<ComboBox>(form, "apiModel");
+        var info = new ComboInfo { Size = Marshal.SizeOf(typeof(ComboInfo)) };
+        Check(GetComboBoxInfo(model.Handle, ref info) && info.Edit != IntPtr.Zero && info.List != IntPtr.Zero,
+          "native API picker exposes its edit child and popup for interaction regression checks");
+        var opened = 0; model.DropDown += (_, __) => opened++;
+        using (var popup = new PopupObserver(info.List)) {
+          SendMessage(model.Handle, 0x014f, new IntPtr(1), IntPtr.Zero); Heartbeats();
+          Check(opened == 1 && !model.DroppedDown && popup.ShownCount == 0,
+            "native CB_SHOWDROPDOWN requests an empty API catalog without displaying an empty popup");
+          var point = new IntPtr((model.Width - 8) | (model.Height / 2 << 16));
+          SendMessage(model.Handle, 0x0201, new IntPtr(1), point);
+          SendMessage(model.Handle, 0x0202, IntPtr.Zero, point); Heartbeats();
+          Check(opened == 2 && !model.DroppedDown && popup.ShownCount == 0,
+            "native arrow click requests an empty API catalog without flashing a blank popup");
+          // Posting to the real native EDIT child exercises WinForms keyboard
+          // pretranslation. SendMessage alone bypasses that message-loop path.
+          Check(PostMessage(info.Edit, 0x0100, new IntPtr((int)Keys.F4), new IntPtr(0x003e0001)),
+            "F4 is posted to the native editable model field");
+          Pump(() => opened == 3); Heartbeats();
+          PostMessage(info.Edit, 0x0101, new IntPtr((int)Keys.F4), new IntPtr(unchecked((int)0xc03e0001)));
+          Check(!model.DroppedDown && popup.ShownCount == 0 && backend.ApiModelCalls == 1,
+            "queued native F4 keeps the empty popup hidden and shares the pending catalog request");
+
+          request.Complete(Catalog("api-model", "Model with effort"));
+          Pump(() => model.Items.Count == 2 && Field<CancellationTokenSource>(form, "apiCancellation") == null); Heartbeats();
+          model.DroppedDown = true; Heartbeats();
+          NativeRectangle rectangle;
+          Check(model.DroppedDown && popup.ShownCount > 0 && GetWindowRect(info.List, out rectangle) && rectangle.Right - rectangle.Left == model.Width,
+            "the populated native model popup opens with exactly the field width beside visible effort");
+          model.DroppedDown = false;
+          var narrowWidth = model.Width;
+          model.SelectedItem = model.Items.Cast<CliModel>().Single(item => item.Id == "api-model-other"); Heartbeats();
+          model.DroppedDown = true; Heartbeats();
+          Check(model.Width > narrowWidth && GetWindowRect(info.List, out rectangle) && rectangle.Right - rectangle.Left == model.Width,
+            "the native popup follows the expanded model field after unsupported effort is hidden");
+          model.DroppedDown = false;
+        }
+        form.Close();
+      }
+      Check(foreground == GetForegroundWindow(), "native picker checks preserve the user's foreground window");
     }
   }
 
@@ -283,9 +524,9 @@ internal static class SettingsStartupTests
     using (var backend = new Backend()) {
       backend.Seed();
       using (var form = new BackgroundSettings(Saved(), backend.Cache)) {
-        Check(Has(form, "Alpha") && Draft(form).Model == "saved-a" && Draft(form).ReasoningEffort == "low",
-          "warm-cache constructor initializes parallel controls before restoring cached model and effort");
         form.SelectTranslationTab(); form.Show(); Heartbeats(); Pump(() => Idle(form));
+        Check(Has(form, "Alpha") && Draft(form).Model == "saved-a" && Draft(form).ReasoningEffort == "low",
+          "warm catalog is applied after first paint without changing saved model or effort");
         Check(backend.InstallationCalls == 1 && backend.ModelCalls == 1, "fresh cached opening makes no new backend requests");
         var refresh = backend.Models(); Find<Button>(form, "translationModelsRefresh").PerformClick(); Pump(() => refresh.Started.Task.IsCompleted);
         Check(Find<Button>(form, "btnSave").Enabled && Find<ComboBox>(form, "translationModel").Enabled && Find<ComboBox>(form, "translationEffort").Enabled,
@@ -301,8 +542,8 @@ internal static class SettingsStartupTests
       backend.Expire(); var staleScan = backend.Scan(); var staleModels = backend.Models();
       var original = Saved();
       using (var form = new BackgroundSettings(original, backend.Cache)) {
-        Check(Has(form, "Fresh Alpha"), "expired catalog is shown immediately while a background refresh is pending");
         form.SelectTranslationTab(); form.Show(); Pump(() => staleScan.Started.Task.IsCompleted && staleModels.Started.Task.IsCompleted);
+        Check(Draft(form).Model == "saved-a", "expired catalog refresh preserves the saved model during loading");
         Field<CheckBox>(form, "translationUseManualModel").Checked = true; Find<TextBox>(form, "translationManualModel").Text = "manual-user-model";
         Field<CheckBox>(form, "translationCustomArguments").Checked = true; Find<TextBox>(form, "translationArguments").Text = "--user-kept";
         Find<NumericUpDown>(form, "translationParallelRequests").Value = 6; Find<NumericUpDown>(form, "translationMinimumChunk").Value = 3700; Find<NumericUpDown>(form, "translationTimeout").Value = 47;
@@ -333,12 +574,15 @@ internal static class SettingsStartupTests
       var oldScan = backend.Scan(ignore: true); var oldModels = backend.Models(ignore: true); var newModels = backend.Models("cursor");
       using (var form = new BackgroundSettings(Saved(), backend.Cache)) {
         form.SelectTranslationTab(); form.Show(); Pump(() => oldScan.Started.Task.IsCompleted && oldModels.Started.Task.IsCompleted);
+        Pump(() => Field<Task>(form, "modelDiscoveryTask") != null);
         var oldTask = Field<Task>(form, "modelDiscoveryTask");
+        oldScan.Complete(Installations());
+        Pump(() => Find<ComboBox>(form, "translationCli").Items.Cast<CliInstallation>().Any(value => value.ProviderId == "cursor"));
         var picker = Find<ComboBox>(form, "translationCli"); picker.SelectedItem = picker.Items.Cast<CliInstallation>().Single(value => value.ProviderId == "cursor");
-        Pump(() => oldScan.Canceled.Task.IsCompleted && oldModels.Canceled.Task.IsCompleted && newModels.Started.Task.IsCompleted && oldTask.IsCompleted);
-        Check(true, "changing CLI cancels both old scan and old catalog subscriptions");
+        Pump(() => newModels.Started.Task.IsCompleted && oldTask.IsCompleted);
+        Check(Draft(form).ProviderId == "cursor", "changing CLI discards the old catalog view without blocking the new lookup");
         newModels.Complete(Catalog("new-b", "Fresh Beta")); Pump(() => Idle(form), "new CLI catalog");
-        oldModels.Complete(Catalog(name: "STALE Alpha")); oldScan.Complete(new List<CliInstallation> { Installations()[0] }); Heartbeats();
+        oldModels.Complete(Catalog(name: "STALE Alpha")); Heartbeats();
         Check(Draft(form).ProviderId == "cursor" && Draft(form).Executable == executableB && Has(form, "Fresh Beta") && !Has(form, "STALE Alpha"),
           "late results cannot replace the selected CLI or its catalog");
         var pending = backend.Models("cursor", ignore: true); Find<Button>(form, "translationModelsRefresh").PerformClick(); Pump(() => pending.Started.Task.IsCompleted, "API switch setup");
@@ -469,6 +713,7 @@ internal static class SettingsStartupTests
       var scan = backend.Scan(ignore: true); var models = backend.Models(ignore: true);
       var form = new BackgroundSettings(Saved(), backend.Cache); form.SelectTranslationTab(); form.Show();
       Pump(() => scan.Started.Task.IsCompleted && models.Started.Task.IsCompleted);
+      Pump(() => Field<Task>(form, "modelDiscoveryTask") != null);
       var pending = Field<Task>(form, "modelDiscoveryTask"); form.Dispose();
       Pump(() => scan.Canceled.Task.IsCompleted && models.Canceled.Task.IsCompleted && pending.IsCompleted);
       scan.Complete(Installations()); models.Complete(Catalog()); Heartbeats();
@@ -514,6 +759,8 @@ internal static class SettingsStartupTests
           Check(VisibleFully(control) && (name != "translationModel" || control.Width >= control.Font.Height * 3),
             "compact CLI control remains usable and reachable at 640x480 with a large font: " + name);
         }
+        var help = Find<Label>(form, "translationParallelHelp"); page.ScrollControlIntoView(help); Application.DoEvents();
+        Check(VisibleFully(help), "the final threading help remains reachable after font and narrow-window reflow updates the scroll range");
         form.Close();
       }
     }

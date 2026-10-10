@@ -49,12 +49,12 @@ namespace AnotherMarkdown.Forms
       settingsTabs.TabPages.AddRange(new[] { previewPage, translationPage });
       root.Controls.Add(settingsTabs, 0, 1);
       var general = HoldInitialLayout(new SettingsLayoutPanel {
-        Name = "previewLayout", Dock = System.Windows.Forms.DockStyle.Fill, ColumnCount = 4, RowCount = 7, AutoScroll = true
+        Name = "previewLayout", Dock = System.Windows.Forms.DockStyle.Fill, ColumnCount = 4, RowCount = 7, AutoScroll = true, Padding = new System.Windows.Forms.Padding(8)
       });
-      general.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 150));
+      general.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, SettingsLabelWidth));
       general.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100));
       general.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 42));
-      general.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 100));
+      general.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, SettingsActionWidth));
       for (var row = 0; row < 6; row++) general.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
       general.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100));
       previewPage.Controls.Add(general);
@@ -106,14 +106,14 @@ namespace AnotherMarkdown.Forms
     }
 
     private static System.Windows.Forms.TextBox MakeSettingsTextBox(string name, string caption, int tabIndex) =>
-      new System.Windows.Forms.TextBox { Name = name, AccessibleName = caption, Dock = System.Windows.Forms.DockStyle.Fill, TabIndex = tabIndex, Margin = new System.Windows.Forms.Padding(3, 5, 3, 8) };
+      new System.Windows.Forms.TextBox { Name = name, AccessibleName = caption, Dock = System.Windows.Forms.DockStyle.Fill, TabIndex = tabIndex, Margin = SettingsFieldMargin };
 
     private static System.Windows.Forms.Label MakeSettingsLabel(string caption) =>
-      new System.Windows.Forms.Label { Text = caption, AutoSize = true, Margin = new System.Windows.Forms.Padding(3, 8, 3, 8) };
+      new System.Windows.Forms.Label { Text = caption, AutoSize = true, Margin = new System.Windows.Forms.Padding(3, 6, 3, 5) };
 
     private static System.Windows.Forms.Button MakeSettingsButton(string name, string text, int tabIndex, System.EventHandler click)
     {
-      var button = new System.Windows.Forms.Button { Name = name, Text = text, Dock = System.Windows.Forms.DockStyle.Top, Height = 28, TabIndex = tabIndex };
+      var button = new System.Windows.Forms.Button { Name = name, Text = text, Dock = System.Windows.Forms.DockStyle.Top, Height = 26, TabIndex = tabIndex, Margin = SettingsFieldMargin };
       button.Click += click;
       return button;
     }

@@ -22,7 +22,12 @@ namespace AnotherMarkdown.Forms
     private ApiConnection activeApiDraft;
     private bool updatingApi, apiKeyEdited, apiHeadersEdited;
     private CancellationTokenSource apiCancellation;
+    private bool apiQueryIsTranslation;
     private int apiGeneration;
+    private bool apiDiscoveryQueued;
+    private bool openApiModelsWhenReady;
+    private bool translationScrollLayoutQueued;
+    private CliModelCatalog apiCatalog;
     private string apiConfigurationError;
     private ComboBox apiProxyMode, apiProxyProtocol;
     private TextBox apiProxyAddress, apiProxyUsername, apiProxyPassword;
@@ -37,35 +42,67 @@ namespace AnotherMarkdown.Forms
       public override string ToString() => Title;
     }
 
+    private sealed class ApiEffortChoice
+    {
+      public string Id, Title;
+      public override string ToString() => Title;
+    }
+
     private void InitializeApiSettings(TableLayoutPanel cliLayout)
     {
       apiDrafts = translationDraft.ApiConnections.Select(c => c.Copy()).ToList();
       foreach (var profile in apiDrafts) InitializeApiPreferences(profile, TranslationOptions);
       apiConfigurationError = translationDraft.ApiConfigurationError;
       var root = HoldInitialLayout(new SettingsLayoutPanel { Name = "translationConnections", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 1, RowCount = 4 });
+      var previousContentSize = Size.Empty;
+      root.SizeChanged += (_, __) => {
+        if (root.Size == previousContentSize) return;
+        previousContentSize = root.Size;
+        QueueTranslationScrollLayout();
+      };
       root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
       for (var i = 0; i < 4; i++) root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       var modeRow = HoldInitialLayout(new SettingsLayoutPanel { AutoSize = true, Dock = DockStyle.Top, ColumnCount = 2, Padding = new Padding(8, 8, 8, 0) });
-      modeRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120)); modeRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-      connectionMode = new ComboBox { Name = "translationConnectionMode", AccessibleName = "Способ подключения", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+      modeRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, SettingsLabelWidth)); modeRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+      connectionMode = new SettingsComboBox { Name = "translationConnectionMode", AccessibleName = "Способ подключения", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, Margin = SettingsFieldMargin };
       connectionMode.Items.AddRange(new object[] { "CLI — установленная программа", "API — HTTP-эндпойнт" });
       modeRow.Controls.Add(MakeSettingsLabel("Подключение"), 0, 0); modeRow.Controls.Add(connectionMode, 1, 0);
       translationPage.Controls.Remove(cliLayout);
-      root.Controls.Add(modeRow, 0, 0); root.Controls.Add(CreateParallelRequestsSettings(), 0, 1); root.Controls.Add(cliLayout, 0, 2);
+      var threadingGroup = CreateParallelRequestsSettings();
+      root.Controls.Add(modeRow, 0, 0); root.Controls.Add(threadingGroup, 0, 1); root.Controls.Add(cliLayout, 0, 2);
       apiLayout = HoldInitialLayout(new SettingsLayoutPanel { Name = "apiLayout", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 3, RowCount = 15, Padding = new Padding(8) });
-      apiLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120)); apiLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); apiLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+      apiLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, SettingsLabelWidth)); apiLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); apiLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, SettingsActionWidth));
       for (var i = 0; i < 15; i++) apiLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       root.Controls.Add(apiLayout, 0, 3); translationPage.Controls.Add(root);
+      Action arrangeSections = () => {
+        root.SuspendLayout();
+        try {
+          if (IsApiMode) {
+            // Keep connection and action buttons visible before the optional
+            // threading group; the group remains reachable by scrolling.
+            root.SetCellPosition(cliLayout, new TableLayoutPanelCellPosition(0, 3));
+            root.SetCellPosition(apiLayout, new TableLayoutPanelCellPosition(0, 1));
+            root.SetCellPosition(threadingGroup, new TableLayoutPanelCellPosition(0, 2));
+          }
+          else {
+            root.SetCellPosition(apiLayout, new TableLayoutPanelCellPosition(0, 3));
+            root.SetCellPosition(cliLayout, new TableLayoutPanelCellPosition(0, 1));
+            root.SetCellPosition(threadingGroup, new TableLayoutPanelCellPosition(0, 2));
+          }
+        }
+        finally { root.ResumeLayout(true); }
+      };
 
-      apiConnections = new ComboBox { Name = "apiConnections", AccessibleName = "Сохранённое подключение API", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
-      var profileActions = HoldInitialLayout(new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false });
-      var add = new Button { Name = "apiAdd", Text = "+", Width = 36, Height = 27, AccessibleName = "Добавить подключение API" };
-      apiRemove = new Button { Name = "apiRemove", Text = "−", Width = 36, Height = 27, AccessibleName = "Удалить подключение API" };
-      profileActions.Controls.Add(add); profileActions.Controls.Add(apiRemove);
+      apiConnections = new SettingsComboBox { Name = "apiConnections", AccessibleName = "Сохранённое подключение API", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+      var profileActions = HoldInitialLayout(new SettingsLayoutPanel { AutoSize = true, Dock = DockStyle.Top, ColumnCount = 2, RowCount = 1 });
+      profileActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); profileActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+      var add = new Button { Name = "apiAdd", Text = "+", Dock = DockStyle.Top, Height = 27, AccessibleName = "Добавить подключение API", Margin = new Padding(0, 0, 3, 0) };
+      apiRemove = new Button { Name = "apiRemove", Text = "−", Dock = DockStyle.Top, Height = 27, AccessibleName = "Удалить подключение API", Margin = new Padding(3, 0, 0, 0) };
+      profileActions.Controls.Add(add, 0, 0); profileActions.Controls.Add(apiRemove, 1, 0);
       AddTranslationRow(apiLayout, 0, "Сохранено", apiConnections, profileActions);
       apiName = MakeSettingsTextBox("apiName", "Название подключения API", 1);
       AddTranslationRow(apiLayout, 1, "Название", apiName, new Label());
-      apiPreset = new ComboBox { Name = "apiPreset", AccessibleName = "Настройки сервиса API", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+      apiPreset = new SettingsComboBox { Name = "apiPreset", AccessibleName = "Настройки сервиса API", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
       apiPreset.Items.AddRange(new object[] {
         new ApiChoice { Id = "custom", Title = "Своя настройка" },
         new ApiChoice { Id = "openai", Title = "OpenAI", Endpoint = "https://api.openai.com/v1", Protocol = "responses", TokenParameter = "max_completion_tokens" },
@@ -77,7 +114,7 @@ namespace AnotherMarkdown.Forms
         new ApiChoice { Id = "lmstudio", Title = "LM Studio (локально)", Endpoint = "http://localhost:1234/v1", Protocol = "chat-completions" }
       });
       AddTranslationRow(apiLayout, 2, "Сервис", apiPreset, new Label());
-      apiProtocol = new ComboBox { Name = "apiProtocol", AccessibleName = "Протокол API", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+      apiProtocol = new SettingsComboBox { Name = "apiProtocol", AccessibleName = "Протокол API", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
       apiProtocol.Items.AddRange(new object[] {
         new ApiChoice { Id = "chat-completions", Title = "OpenAI-совместимый · Chat Completions" },
         new ApiChoice { Id = "responses", Title = "OpenAI Responses" },
@@ -91,11 +128,11 @@ namespace AnotherMarkdown.Forms
       var reveal = new CheckBox { Text = "Показать", AutoSize = true, Margin = new Padding(3, 8, 3, 3) };
       reveal.CheckedChanged += (_, __) => apiKey.UseSystemPasswordChar = !reveal.Checked;
       AddTranslationRow(apiLayout, 5, "Ключ API", apiKey, reveal);
-      apiModel = new ComboBox { Name = "apiModel", AccessibleName = "Модель API", DropDownStyle = ComboBoxStyle.DropDown, Dock = DockStyle.Fill };
-      apiRefresh = new Button { Name = "apiRefreshModels", Text = "Модели", AutoSize = true, Dock = DockStyle.Top };
-      apiEffort = new ComboBox { Name = "apiEffort", AccessibleName = "Effort API (если поддерживается моделью)", DropDownStyle = ComboBoxStyle.DropDown, Dock = DockStyle.Fill, DropDownWidth = 220 };
-      apiEffort.Items.AddRange(new object[] { "", "none", "minimal", "low", "medium", "high", "xhigh", "max" });
-      AddModelEffortRow(apiLayout, 6, "apiModelRow", apiModel, apiEffort, apiRefresh);
+      apiModel = new SettingsComboBox { Name = "apiModel", AccessibleName = "Модель API", DropDownStyle = ComboBoxStyle.DropDown, Dock = DockStyle.Fill, DeferEmptyList = true };
+      apiRefresh = new Button { Name = "apiRefreshModels", Text = "Обновить", AutoSize = true, Dock = DockStyle.Top };
+      apiEffort = new SettingsComboBox { Name = "apiEffort", AccessibleName = "Уровень рассуждений API", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill, Enabled = false };
+      apiEffort.Visible = false;
+      apiEffortLabel = AddModelEffortRow(apiLayout, 6, "apiModelRow", apiModel, apiEffort, apiRefresh);
       InitializeApiProxySettings();
       var actions = HoldInitialLayout(new FlowLayoutPanel { Name = "apiActions", AutoSize = true, Dock = DockStyle.Fill, WrapContents = true });
       apiTest = new Button { Name = "apiTest", Text = "Проверить подключение", AutoSize = true };
@@ -107,11 +144,11 @@ namespace AnotherMarkdown.Forms
       apiStatus = CreateSettingsStatus("apiStatus", "");
       apiLayout.Controls.Add(apiStatus, 0, 10); apiLayout.SetColumnSpan(apiStatus, 3);
 
-      var advanced = HoldInitialLayout(new SettingsLayoutPanel { Name = "apiAdvancedLayout", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 2, Visible = false });
-      advanced.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 145)); advanced.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+      var advanced = HoldInitialLayout(new SettingsLayoutPanel { Name = "apiAdvancedLayout", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 2, Visible = false, Margin = new Padding(0) });
+      advanced.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, SettingsLabelWidth)); advanced.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
       apiLayout.Controls.Add(advanced, 0, 11); apiLayout.SetColumnSpan(advanced, 3);
       apiMaxTokens = new NumericUpDown { Name = "apiMaxTokens", AccessibleName = "Лимит ответа: 0 — по умолчанию сервиса", Minimum = 0, Maximum = 2000000, Value = 0, Width = 150 };
-      apiTokenParameter = new ComboBox { Name = "apiTokenParameter", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+      apiTokenParameter = new SettingsComboBox { Name = "apiTokenParameter", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
       apiTokenParameter.Items.AddRange(new object[] { "max_tokens", "max_completion_tokens" });
       var temperatureRow = HoldInitialLayout(new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill });
       apiUseTemperature = new CheckBox { Name = "apiUseTemperature", Text = "Передавать", AutoSize = true };
@@ -126,32 +163,52 @@ namespace AnotherMarkdown.Forms
       var captions = new[] { "Лимит ответа, токенов", "Поле лимита (Chat)", "Temperature", "Заголовок ключа", "Префикс ключа", "Параметры JSON", "Заголовки JSON" };
       for (var i = 0; i < captions.Length; i++) { advanced.RowStyles.Add(new RowStyle(SizeType.AutoSize)); advanced.Controls.Add(MakeSettingsLabel(captions[i]), 0, i); advanced.Controls.Add(advancedControls[i], 1, i); advancedControls[i].Margin = new Padding(3, 4, 3, 6); }
       advancedToggle.CheckedChanged += (_, __) => advanced.Visible = advancedToggle.Checked;
-      var advancedHelp = new Label { AutoSize = true, Dock = DockStyle.Fill, Text = "Лимит ответа 0 — по умолчанию сервиса; Anthropic требует явный лимит. Пустой effort, выключенная temperature и пустой заголовок ключа сохраняют настройки протокола. Поддержка параметров зависит от модели. Дополнительные заголовки шифруются вместе с ключом." };
+      var advancedHelp = new Label { AutoSize = true, Dock = DockStyle.Fill, Text = "Лимит ответа 0 — по умолчанию сервиса; Anthropic требует явный лимит. Effort доступен только если API сообщает уровни выбранной модели. Значение передаётся в поле запроса, указанном в подсказке Effort. Дополнительные заголовки шифруются вместе с ключом." };
       advanced.Controls.Add(advancedHelp, 0, 7); advanced.SetColumnSpan(advancedHelp, 2);
       apiTimeout = new NumericUpDown { Name = "apiTimeout", Minimum = 10, Maximum = 3600, Value = translationDraft.TimeoutSeconds, Width = 130 };
-      AddTranslationRow(apiLayout, 12, "Тайм-аут на запрос, сек.", apiTimeout, new Label());
+      AddTranslationRow(apiLayout, 12, "Тайм-аут, сек.", apiTimeout, new Label());
       apiShowButtons = new CheckBox { Name = "apiShowButtons", Text = "Показывать кнопки перевода в панели", Checked = translationDraft.ShowButtons, AutoSize = true };
       apiLayout.Controls.Add(apiShowButtons, 0, 13); apiLayout.SetColumnSpan(apiShowButtons, 3);
-      var help = new Label { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 8, 3, 8), Text = "Укажите URL API, ключ и модель. Пустой effort — настройки сервиса; поддержка зависит от модели. «Модели» загружает список, «Проверить» отправляет короткий запрос. Ключи защищены Windows. Перевод отображается только в предпросмотре." };
+      var help = new Label { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(3, 8, 3, 8), Text = "Укажите URL API, ключ и модель. Модели загружаются при открытии и смене подключения. Effort доступен только при наличии уровней для выбранной модели в ответе API. «Проверить» отправляет короткий запрос. Ключи защищены Windows. Перевод отображается только в предпросмотре." };
       apiLayout.Controls.Add(help, 0, 14); apiLayout.SetColumnSpan(help, 3);
       apiLayout.SizeChanged += (_, __) => { var width = Math.Max(200, apiLayout.ClientSize.Width - 24); help.MaximumSize = advancedHelp.MaximumSize = new Size(width, 0); };
 
       apiConnections.SelectedIndexChanged += (_, __) => {
         if (updatingApi || ReferenceEquals(activeApiDraft, apiConnections.SelectedItem)) return;
-        CaptureApiControls(activeApiDraft); CancelApiDiscovery();
-        activeApiDraft = apiConnections.SelectedItem as ApiConnection; FillApiControls();
+        CaptureApiControls(activeApiDraft); CancelApiDiscovery(); openApiModelsWhenReady = false;
+        activeApiDraft = apiConnections.SelectedItem as ApiConnection; FillApiControls(); QueueApiDiscovery();
       };
       add.Click += (_, __) => { CaptureApiControls(activeApiDraft); CancelApiDiscovery(); var profile = new ApiConnection { Name = "Подключение " + (apiDrafts.Count + 1) }; InitializeApiPreferences(profile, ReadTranslationDraft()); apiDrafts.Add(profile); RefillApiProfiles(profile.Id); };
       apiRemove.Click += (_, __) => { if (activeApiDraft == null) return; CancelApiDiscovery(); apiDrafts.Remove(activeApiDraft); activeApiDraft = null; RefillApiProfiles(apiDrafts.FirstOrDefault()?.Id); };
-      apiName.Leave += (_, __) => { if (activeApiDraft != null) { CaptureApiControls(activeApiDraft); RefillApiProfiles(activeApiDraft.Id); } };
+      apiName.Leave += (_, __) => RefreshApiProfileName();
       apiPreset.SelectedIndexChanged += (_, __) => ApplyApiPreset();
-      apiEndpoint.TextChanged += (_, __) => ApiAddressChanged();
-      apiProtocol.SelectedIndexChanged += (_, __) => { UpdateApiTemperatureLimit(); ApiAddressChanged(); };
-      apiKey.TextChanged += (_, __) => { if (!updatingApi) { apiKeyEdited = true; ApiAddressChanged(); } };
-      apiHeaders.TextChanged += (_, __) => { if (!updatingApi) { apiHeadersEdited = true; ApiAddressChanged(); } };
-      foreach (var text in new TextBox[] { apiAuthHeader, apiAuthPrefix, apiParameters }) text.TextChanged += (_, __) => ApiAddressChanged();
-      apiEffort.TextChanged += (_, __) => ApiAddressChanged();
-      apiModel.TextChanged += (_, __) => ApiAddressChanged();
+      apiEndpoint.TextChanged += (_, __) => ApiCatalogIdentityChanged(true);
+      apiEndpoint.Leave += (_, __) => QueueApiDiscovery();
+      apiKey.Leave += (_, __) => QueueApiDiscovery();
+      apiProtocol.SelectedIndexChanged += (_, __) => { UpdateApiTemperatureLimit(); ApiCatalogIdentityChanged(true); };
+      apiKey.TextChanged += (_, __) => { if (!updatingApi) { apiKeyEdited = true; ApiCatalogIdentityChanged(); } };
+      apiHeaders.TextChanged += (_, __) => { if (!updatingApi) { apiHeadersEdited = true; ApiCatalogIdentityChanged(); } };
+      foreach (var text in new TextBox[] { apiAuthHeader, apiAuthPrefix }) text.TextChanged += (_, __) => ApiCatalogIdentityChanged();
+      apiParameters.TextChanged += (_, __) => ApiAddressChanged();
+      apiEffort.TextChanged += (_, __) => {
+        if (updatingApi) return;
+        ApiAddressChanged();
+        if (apiCancellation == null) apiStatus.Text = "Effort передаётся как " + ApiEffortOptions.For(CurrentApiChoice()).WireField +
+          "; пустое значение оставляет решение сервису.";
+      };
+      apiModel.TextChanged += (_, __) => { if (!updatingApi) { ApiAddressChanged(); UpdateApiEfforts(""); } };
+      apiModel.SelectedIndexChanged += (_, __) => { if (!updatingApi) UpdateApiEfforts(""); };
+      apiModel.DropDown += (_, __) => {
+        if (apiModel.Items.Count > 0 || activeApiDraft == null) return;
+        openApiModelsWhenReady = true;
+        // CBN_DROPDOWN is raised before the native popup opens. Closing it in
+        // this callback is overwritten by WinForms after the callback returns.
+        BeginInvoke(new Action(() => {
+          if (IsDisposed || Disposing) return;
+          if (apiModel.Items.Count == 0) apiModel.DroppedDown = false;
+          QueueApiDiscovery();
+        }));
+      };
       apiTokenParameter.SelectedIndexChanged += (_, __) => ApiAddressChanged();
       apiMaxTokens.ValueChanged += (_, __) => ApiAddressChanged();
       apiTemperature.ValueChanged += (_, __) => ApiAddressChanged();
@@ -159,12 +216,15 @@ namespace AnotherMarkdown.Forms
       clearSecrets.Click += (_, __) => {
         if (activeApiDraft == null) return;
         CancelApiDiscovery(); activeApiDraft.ClearCredentials(); updatingApi = true;
+        var selectedModel = apiModel.SelectedItem is CliModel selected ? selected.Id : apiModel.Text;
+        apiCatalog = null; ClearApiModelItems(); apiModel.Text = selectedModel;
         apiKey.Text = ""; apiHeaders.Text = "{}"; apiKeyEdited = apiHeadersEdited = false;
         apiProxyUsername.Text = apiProxyPassword.Text = "";
         apiProxyUsernameEdited = apiProxyPasswordEdited = false;
+        UpdateApiEfforts("");
         updatingApi = false; apiStatus.Text = "Ключ, дополнительные заголовки и данные входа прокси очищены. Изменение вступит в силу после сохранения.";
       };
-      apiRefresh.Click += async (_, __) => await QueryApiAsync(false);
+      apiRefresh.Click += async (_, __) => await QueryApiAsync(false, true);
       apiTest.Click += async (_, __) => await QueryApiAsync(true);
       connectionMode.SelectedIndexChanged += (_, __) => {
         if (updatingApi || displayedApiMode == IsApiMode) return;
@@ -172,11 +232,13 @@ namespace AnotherMarkdown.Forms
         CancelModelDiscovery(); CancelCliDiscovery(); cliDiscoveryStarted = false; CancelApiDiscovery();
         displayedApiMode = IsApiMode;
         cliLayout.Visible = !IsApiMode; apiLayout.Visible = IsApiMode;
+        arrangeSections();
         if (IsApiMode) {
           if (apiDrafts.Count == 0) {
             var profile = new ApiConnection(); InitializeApiPreferences(profile, translationDraft); apiDrafts.Add(profile); RefillApiProfiles(profile.Id);
           }
           else FillApiControls();
+          QueueApiDiscovery();
         }
         else { SetParallelControls(translationDraft.ParallelRequests, translationDraft.MinimumChunkCharacters); QueueCliDiscovery(); }
       };
@@ -186,6 +248,7 @@ namespace AnotherMarkdown.Forms
       displayedApiMode = IsApiMode;
       updatingApi = false;
       cliLayout.Visible = !IsApiMode; apiLayout.Visible = IsApiMode;
+      arrangeSections();
       RefillApiProfiles(translationDraft.SelectedApiConnectionId);
     }
 
@@ -197,20 +260,30 @@ namespace AnotherMarkdown.Forms
       profile.ShowButtons = profile.ShowButtons ?? fallback.ShowButtons;
     }
 
+    private void QueueTranslationScrollLayout()
+    {
+      if (!IsHandleCreated || IsDisposed || Disposing || translationScrollLayoutQueued) return;
+      translationScrollLayoutQueued = true;
+      BeginInvoke(new Action(() => {
+        translationScrollLayoutQueued = false;
+        if (!IsDisposed && !Disposing) translationPage.PerformLayout();
+      }));
+    }
+
     private void InitializeApiProxySettings()
     {
-      apiProxyMode = new ComboBox { Name = "apiProxyMode", AccessibleName = "Режим прокси API", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+      apiProxyMode = new SettingsComboBox { Name = "apiProxyMode", AccessibleName = "Режим прокси API", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
       apiProxyMode.Items.AddRange(new object[] {
         new ApiChoice { Id = "system", Title = "Системный прокси Windows" },
         new ApiChoice { Id = "direct", Title = "Без прокси — прямое соединение" },
         new ApiChoice { Id = "custom", Title = "Свой прокси" }
       });
       AddTranslationRow(apiLayout, 7, "Прокси", apiProxyMode, new Label());
-      apiProxyLayout = HoldInitialLayout(new SettingsLayoutPanel { Name = "apiProxyLayout", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 2 });
-      apiProxyLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120));
+      apiProxyLayout = HoldInitialLayout(new SettingsLayoutPanel { Name = "apiProxyLayout", AutoSize = true, Dock = DockStyle.Top, ColumnCount = 2, Margin = new Padding(0) });
+      apiProxyLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, SettingsLabelWidth));
       apiProxyLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
       apiLayout.Controls.Add(apiProxyLayout, 0, 8); apiLayout.SetColumnSpan(apiProxyLayout, 3);
-      apiProxyProtocol = new ComboBox { Name = "apiProxyProtocol", AccessibleName = "Тип прокси", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+      apiProxyProtocol = new SettingsComboBox { Name = "apiProxyProtocol", AccessibleName = "Тип прокси", DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
       apiProxyProtocol.Items.AddRange(new object[] {
         new ApiChoice { Id = "http", Title = "HTTP" },
         new ApiChoice { Id = "socks5h", Title = "SOCKS5 — DNS через прокси" },
@@ -235,24 +308,24 @@ namespace AnotherMarkdown.Forms
         Text = "Адрес: сервер:порт или полный URL прокси. SOCKS5 использует системный curl.exe; DNS можно передать прокси. Вход Windows доступен для HTTP. HTTP-прокси для API на localhost не поддерживается — выберите прямое соединение или SOCKS5. Логин и пароль защищены Windows." };
       apiProxyLayout.Controls.Add(help, 0, 5); apiProxyLayout.SetColumnSpan(help, 2);
       apiProxyLayout.SizeChanged += (_, __) => help.MaximumSize = new Size(Math.Max(200, apiProxyLayout.ClientSize.Width - 12), 0);
-      apiProxyMode.SelectedIndexChanged += (_, __) => { UpdateApiProxyControls(); ApiAddressChanged(); };
-      apiProxyUseDefaultCredentials.CheckedChanged += (_, __) => { UpdateApiProxyControls(); ApiAddressChanged(); };
+      apiProxyMode.SelectedIndexChanged += (_, __) => { UpdateApiProxyControls(); ApiCatalogIdentityChanged(); };
+      apiProxyUseDefaultCredentials.CheckedChanged += (_, __) => { UpdateApiProxyControls(); ApiCatalogIdentityChanged(); };
       apiProxyAddress.TextChanged += (_, __) => {
         if (!updatingApi) {
           var scheme = ProxyAddressScheme();
           var choice = apiProxyProtocol.Items.Cast<ApiChoice>().FirstOrDefault(p => p.Id == scheme);
           if (choice != null) { updatingApi = true; apiProxyProtocol.SelectedItem = choice; updatingApi = false; }
-          UpdateApiProxyControls(); ApiAddressChanged();
+          UpdateApiProxyControls(); ApiCatalogIdentityChanged();
         }
       };
       apiProxyProtocol.SelectedIndexChanged += (_, __) => {
         if (updatingApi) return;
         var text = apiProxyAddress.Text.Trim(); var separator = text.IndexOf("://", StringComparison.Ordinal);
         if (separator >= 0) apiProxyAddress.Text = (apiProxyProtocol.SelectedItem as ApiChoice)?.Id + text.Substring(separator);
-        UpdateApiProxyControls(); ApiAddressChanged();
+        UpdateApiProxyControls(); ApiCatalogIdentityChanged();
       };
-      apiProxyUsername.TextChanged += (_, __) => { if (!updatingApi) { apiProxyUsernameEdited = true; ApiAddressChanged(); } };
-      apiProxyPassword.TextChanged += (_, __) => { if (!updatingApi) { apiProxyPasswordEdited = true; ApiAddressChanged(); } };
+      apiProxyUsername.TextChanged += (_, __) => { if (!updatingApi) { apiProxyUsernameEdited = true; ApiCatalogIdentityChanged(); } };
+      apiProxyPassword.TextChanged += (_, __) => { if (!updatingApi) { apiProxyPasswordEdited = true; ApiCatalogIdentityChanged(); } };
     }
 
     private void UpdateApiProxyControls()
@@ -284,7 +357,31 @@ namespace AnotherMarkdown.Forms
       apiConnections.Items.Clear(); apiConnections.Items.AddRange(apiDrafts.ToArray());
       apiConnections.SelectedItem = apiDrafts.FirstOrDefault(c => c.Id == id) ?? apiDrafts.FirstOrDefault();
       activeApiDraft = apiConnections.SelectedItem as ApiConnection;
-      updatingApi = false; FillApiControls();
+      updatingApi = false; FillApiControls(); QueueApiDiscovery();
+    }
+
+    private void RefreshApiProfileName()
+    {
+      if (updatingApi || activeApiDraft == null) return;
+      CaptureApiControls(activeApiDraft);
+      var index = apiConnections.SelectedIndex;
+      if (index < 0) return;
+      // Updating one display caption must not clear the selected model catalog
+      // or overwrite controls while discovery is still in flight.
+      updatingApi = true;
+      try { apiConnections.Items[index] = activeApiDraft; }
+      finally { updatingApi = false; }
+    }
+
+    private void ClearApiModelItems()
+    {
+      // An open native ComboBox can still report an old selected index after
+      // Items.Clear. Close it before replacing the collection to avoid a native
+      // CBN_SELCHANGE callback reading an index which no longer exists.
+      apiModel.DroppedDown = false;
+      apiModel.BeginUpdate();
+      try { apiModel.Items.Clear(); }
+      finally { apiModel.EndUpdate(); }
     }
 
     private void FillApiControls()
@@ -294,7 +391,7 @@ namespace AnotherMarkdown.Forms
       apiName.Text = value.Name; apiEndpoint.Text = value.Endpoint; apiKey.Text = value.ApiKey;
       apiProtocol.SelectedItem = apiProtocol.Items.Cast<ApiChoice>().FirstOrDefault(p => p.Id == value.Protocol);
       UpdateApiTemperatureLimit();
-      apiPreset.SelectedIndex = 0; apiModel.Items.Clear(); apiModel.Text = value.Model; apiEffort.Text = value.ReasoningEffort;
+      apiPreset.SelectedIndex = 0; apiCatalog = null; ClearApiModelItems(); apiModel.Text = value.Model;
       apiTimeout.Value = Math.Max(10, Math.Min(3600, value.TimeoutSeconds ?? TranslationOptions.TimeoutSeconds));
       apiShowButtons.Checked = value.ShowButtons ?? TranslationOptions.ShowButtons;
       if (displayedApiMode) SetParallelControls(value.ParallelRequests ?? TranslationOptions.ParallelRequests, value.MinimumChunkCharacters ?? TranslationOptions.MinimumChunkCharacters);
@@ -318,8 +415,10 @@ namespace AnotherMarkdown.Forms
       apiProxyUsernameEdited = apiProxyPasswordEdited = false;
       apiKeyEdited = apiHeadersEdited = false;
       apiRemove.Enabled = activeApiDraft != null;
-      foreach (var control in new Control[] { apiName, apiEndpoint, apiKey, apiProtocol, apiPreset, apiModel, apiEffort, apiRefresh, apiTest }) control.Enabled = activeApiDraft != null;
+      foreach (var control in new Control[] { apiName, apiEndpoint, apiKey, apiProtocol, apiPreset, apiModel, apiRefresh, apiTest }) control.Enabled = activeApiDraft != null;
       apiProxyMode.Enabled = activeApiDraft != null; UpdateApiProxyControls();
+      UpdateApiEfforts(value.ReasoningEffortModel == value.Model &&
+        value.ReasoningEffortCatalogKey == SettingsDiscoveryCache.ApiModelKey(value) ? value.ReasoningEffort : "");
       apiStatus.Text = apiConfigurationError ?? value.CredentialError ?? "Укажите адрес и модель. Затем запросите модели или проверьте подключение.";
       updatingApi = false;
     }
@@ -330,7 +429,13 @@ namespace AnotherMarkdown.Forms
       value.Name = apiName.Text.Trim(); if (value.Name.Length == 0) value.Name = "API";
       value.Endpoint = apiEndpoint.Text.Trim(); value.Protocol = (apiProtocol.SelectedItem as ApiChoice)?.Id ?? "chat-completions";
       value.Model = apiModel.SelectedItem is CliModel model ? model.Id : apiModel.Text.Trim();
-      value.ReasoningEffort = apiEffort.Text.Trim(); value.MaxOutputTokens = (int)apiMaxTokens.Value;
+      // Until a catalog has arrived, this selector is intentionally hidden.
+      // Preserve the saved choice and its proof of model/catalog identity;
+      // failed or pending discovery must never erase another profile on Save.
+      if (apiCatalog != null)
+        value.ReasoningEffort = apiEffort.Enabled && apiEffort.SelectedItem is ApiEffortChoice effort
+          ? effort.Id : "";
+      value.MaxOutputTokens = (int)apiMaxTokens.Value;
       value.TimeoutSeconds = (int)apiTimeout.Value; value.ShowButtons = apiShowButtons.Checked;
       if (displayedApiMode) {
         value.ParallelRequests = (int)translationParallelRequests.Value;
@@ -349,6 +454,10 @@ namespace AnotherMarkdown.Forms
       value.ProxyUseDefaultCredentials = apiProxyUseDefaultCredentials.Checked;
       if (apiProxyUsernameEdited) value.ProxyUsername = apiProxyUsername.Text;
       if (apiProxyPasswordEdited) value.ProxyPassword = apiProxyPassword.Text;
+      if (apiCatalog != null) {
+        value.ReasoningEffortModel = value.ReasoningEffort.Length == 0 ? "" : value.Model;
+        value.ReasoningEffortCatalogKey = value.ReasoningEffort.Length == 0 ? "" : SettingsDiscoveryCache.ApiModelKey(value);
+      }
     }
 
     private void ReadApiSettings(TranslationOptions options)
@@ -374,17 +483,33 @@ namespace AnotherMarkdown.Forms
       apiName.Text = preset.Title; apiEndpoint.Text = preset.Endpoint;
       apiProtocol.SelectedItem = apiProtocol.Items.Cast<ApiChoice>().First(p => p.Id == preset.Protocol);
       apiTokenParameter.SelectedItem = preset.TokenParameter ?? "max_tokens";
-      apiKey.Text = ""; apiModel.Items.Clear(); apiModel.Text = "";
-      apiEffort.Text = ""; apiHeaders.Text = "{}"; apiParameters.Text = "{}"; apiAuthHeader.Text = apiAuthPrefix.Text = "";
+      apiKey.Text = ""; apiCatalog = null; ClearApiModelItems(); apiModel.Text = "";
+      UpdateApiEfforts(""); apiHeaders.Text = "{}"; apiParameters.Text = "{}"; apiAuthHeader.Text = apiAuthPrefix.Text = "";
       apiUseTemperature.Checked = false; apiMaxTokens.Value = preset.Protocol == "anthropic" ? 8192 : 0;
       apiKeyEdited = apiHeadersEdited = true; updatingApi = false;
-      apiStatus.Text = "Настройки сервиса подставлены. Укажите ключ и модель этого подключения.";
+      apiStatus.Text = "Настройки сервиса подставлены. Загружаем доступные модели…";
+      QueueApiDiscovery();
     }
 
     private void ApiAddressChanged()
     {
       if (updatingApi) return;
-      CancelApiDiscovery(); apiStatus.Text = "Настройки подключения изменены. Повторите запрос моделей или проверку.";
+      // Model/effort/output settings affect a translation test, not GET /models.
+      // Let catalog discovery complete while the user edits these controls.
+      if (apiQueryIsTranslation) CancelApiDiscovery();
+      if (apiCancellation == null) apiStatus.Text = "Параметры перевода изменены. Можно проверить подключение.";
+    }
+
+    private void ApiCatalogIdentityChanged(bool resetEffort = false)
+    {
+      if (updatingApi) return;
+      CancelApiDiscovery();
+      var selected = apiModel?.SelectedItem is CliModel model ? model.Id : apiModel?.Text;
+      updatingApi = true;
+      try { apiCatalog = null; if (apiModel != null) { ClearApiModelItems(); apiModel.Text = selected ?? ""; } }
+      finally { updatingApi = false; }
+      UpdateApiEfforts(resetEffort ? "" : null);
+      apiStatus.Text = "Настройки подключения изменены. Обновите список моделей или проверьте подключение.";
     }
 
     private void UpdateApiTemperatureLimit()
@@ -392,13 +517,14 @@ namespace AnotherMarkdown.Forms
       apiTemperature.Maximum = (apiProtocol.SelectedItem as ApiChoice)?.Id == "anthropic" ? 1 : 2;
     }
 
-    private async Task QueryApiAsync(bool translate)
+    private async Task QueryApiAsync(bool translate, bool refresh = false)
     {
       if (activeApiDraft == null) return;
-      CancelApiDiscovery(); var generation = apiGeneration;
-      var cancellation = new CancellationTokenSource(); apiCancellation = cancellation;
+      var reopenModels = openApiModelsWhenReady;
+      CancelApiDiscovery(); openApiModelsWhenReady = reopenModels; var generation = apiGeneration;
+      var cancellation = new CancellationTokenSource(); apiCancellation = cancellation; apiQueryIsTranslation = translate;
       var snapshot = activeApiDraft.Copy(); CaptureApiControls(snapshot);
-      apiRefresh.Enabled = apiTest.Enabled = apiModel.Enabled = btnSave.Enabled = false;
+      apiRefresh.Enabled = apiTest.Enabled = false;
       apiStatus.Text = translate ? "Проверяем перевод короткого примера…" : "Запрашиваем модели API…";
       try {
         var translator = new ApiTranslator();
@@ -407,18 +533,25 @@ namespace AnotherMarkdown.Forms
           if (!cancellation.IsCancellationRequested && generation == apiGeneration && !IsDisposed) apiStatus.Text = "Короткий тест перевода выполнен: модель вернула ответ.";
         }
         else {
-          var catalog = await translator.LoadModelsAsync(snapshot, Math.Min(30, (int)apiTimeout.Value), cancellation.Token);
+          var timeout = Math.Min(30, (int)apiTimeout.Value);
+          var catalog = await Task.Run(() => settingsDiscovery.LoadApiModelsAsync(snapshot, timeout, refresh, cancellation.Token), cancellation.Token);
           if (cancellation.IsCancellationRequested || generation != apiGeneration || IsDisposed) return;
-          FillApiModels(catalog, snapshot.Model);
+          // The model field stays editable during discovery. Restore its current
+          // value, rather than reverting a late edit to the request snapshot.
+          var selectedModel = apiModel.SelectedItem is CliModel model ? model.Id : apiModel.Text.Trim();
+          FillApiModels(catalog, selectedModel);
           apiStatus.Text = "Моделей получено: " + catalog.Models.Count + ". Если нужной нет в списке, введите её ID.";
+          if (openApiModelsWhenReady && catalog.Models.Count > 0 && apiModel.ContainsFocus) apiModel.DroppedDown = true;
+          openApiModelsWhenReady = false;
         }
       }
       catch (OperationCanceledException) { }
       catch (Exception error) {
         if (generation == apiGeneration && !IsDisposed && !cancellation.IsCancellationRequested) apiStatus.Text = error.Message;
+        openApiModelsWhenReady = false;
       }
       finally {
-        if (ReferenceEquals(apiCancellation, cancellation)) { apiCancellation = null; if (!IsDisposed) apiRefresh.Enabled = apiTest.Enabled = apiModel.Enabled = btnSave.Enabled = true; }
+        if (ReferenceEquals(apiCancellation, cancellation)) { apiCancellation = null; apiQueryIsTranslation = false; if (!IsDisposed) apiRefresh.Enabled = apiTest.Enabled = true; }
         cancellation.Dispose();
       }
     }
@@ -428,19 +561,84 @@ namespace AnotherMarkdown.Forms
       var wasUpdating = updatingApi;
       updatingApi = true;
       try {
-        apiModel.Items.Clear();
+        apiCatalog = catalog;
+        openApiModelsWhenReady |= apiModel.DroppedDown;
+        ClearApiModelItems();
+        apiModel.BeginUpdate();
+        try {
         apiModel.Items.AddRange(catalog.Models.OrderBy(m => CliModel.CleanDisplayName(string.IsNullOrWhiteSpace(m.Name) ? m.Id : m.Name), StringComparer.OrdinalIgnoreCase)
           .ThenBy(m => m.Id, StringComparer.OrdinalIgnoreCase).ToArray());
         apiModel.SelectedItem = catalog.Models.FirstOrDefault(m => m.Id == selectedModel);
         if (apiModel.SelectedItem == null) apiModel.Text = selectedModel;
+        }
+        finally { apiModel.EndUpdate(); }
+        var selectedEffort = apiEffort.Enabled && apiEffort.SelectedItem is ApiEffortChoice selected ? selected.Id
+          : activeApiDraft?.ReasoningEffortModel == selectedModel &&
+            activeApiDraft?.ReasoningEffortCatalogKey == SettingsDiscoveryCache.ApiModelKey(activeApiDraft) ? activeApiDraft?.ReasoningEffort : "";
+        UpdateApiEfforts(selectedEffort);
       }
       finally { updatingApi = wasUpdating; }
     }
 
+    private ApiConnection CurrentApiChoice()
+    {
+      var choice = activeApiDraft?.Copy() ?? new ApiConnection();
+      choice.Endpoint = apiEndpoint?.Text ?? choice.Endpoint;
+      choice.Protocol = (apiProtocol?.SelectedItem as ApiChoice)?.Id ?? choice.Protocol;
+      choice.Model = apiModel?.SelectedItem is CliModel model ? model.Id : apiModel?.Text?.Trim() ?? choice.Model;
+      return choice;
+    }
+
+    private void UpdateApiEfforts(string preferred = null)
+    {
+      if (apiEffort == null || apiModel == null) return;
+      var connection = CurrentApiChoice();
+      var model = apiModel.SelectedItem as CliModel ?? apiCatalog?.Models.FirstOrDefault(item => item.Id == connection.Model);
+      var choices = ApiEffortOptions.For(connection, model);
+      var selected = preferred ?? (apiEffort.SelectedItem is ApiEffortChoice old ? old.Id : "");
+      var wasUpdating = updatingApi;
+      updatingApi = true; apiEffort.BeginUpdate();
+      try {
+        apiEffort.Items.Clear();
+        var fallback = new ApiEffortChoice { Id = "", Title = "По умолчанию API" };
+        apiEffort.Items.Add(fallback);
+        foreach (var level in choices.Values) apiEffort.Items.Add(new ApiEffortChoice { Id = level, Title = level == "xhigh" ? "Extra High (xhigh)" : level });
+        var known = apiEffort.Items.Cast<ApiEffortChoice>().FirstOrDefault(item => item.Id == selected);
+        apiEffort.SelectedItem = known ?? fallback;
+        var available = activeApiDraft != null && choices.Values.Length > 0;
+        apiEffort.Enabled = available;
+        apiEffort.Visible = available;
+        apiEffortLabel.Visible = available;
+        ReflowModelOptions(apiEffort);
+      }
+      finally { apiEffort.EndUpdate(); updatingApi = wasUpdating; }
+      var note = "Если effort не указан, поле " + choices.WireField + " не отправляется. " + choices.Note;
+      if (!string.IsNullOrEmpty(selected) && !choices.Values.Contains(selected, StringComparer.OrdinalIgnoreCase))
+        note += " Сохранённое значение «" + selected + "» не подтверждено и не будет использовано после сохранения.";
+      apiEffort.AccessibleDescription = note;
+      settingsToolTips.SetToolTip(apiEffort, note);
+      if (!updatingApi && apiStatus != null && apiCancellation == null) apiStatus.Text = note;
+    }
+
     private void CancelApiDiscovery()
     {
-      apiGeneration++; var cancellation = apiCancellation; apiCancellation = null; cancellation?.Cancel();
-      if (apiRefresh != null && !IsDisposed) { apiRefresh.Enabled = apiTest.Enabled = apiModel.Enabled = activeApiDraft != null; btnSave.Enabled = true; }
+      apiGeneration++; apiDiscoveryQueued = false; openApiModelsWhenReady = false; apiQueryIsTranslation = false;
+      var cancellation = apiCancellation; apiCancellation = null; cancellation?.Cancel();
+      if (apiRefresh != null && !IsDisposed) { apiRefresh.Enabled = apiTest.Enabled = activeApiDraft != null; }
+    }
+
+    private void QueueApiDiscovery()
+    {
+      if (!settingsShown || IsDisposed || Disposing || !IsApiMode ||
+          settingsTabs.SelectedTab != translationPage || activeApiDraft == null ||
+          string.IsNullOrWhiteSpace(apiEndpoint.Text) || apiDiscoveryQueued || apiCancellation != null) return;
+      apiDiscoveryQueued = true;
+      BeginInvoke(new Action(async () => {
+        if (!apiDiscoveryQueued) return;
+        apiDiscoveryQueued = false;
+        if (!IsDisposed && !Disposing && IsApiMode && settingsTabs.SelectedTab == translationPage && activeApiDraft != null)
+          await QueryApiAsync(false);
+      }));
     }
   }
 }

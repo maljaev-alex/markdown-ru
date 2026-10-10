@@ -47,10 +47,13 @@ namespace AnotherMarkdown.Forms
         UpdateTranslationButtons();
         await RenderPreviewAsync();
       };
-      cancelButton.Click += (_, __) => {
+      cancelButton.Click += async (_, __) => {
         CancelTranslation();
+        var showingTranslation = IsTranslationPreview;
+        IsTranslationPreview = false;
         translationStatus.Text = "Перевод отменён";
         UpdateTranslationButtons();
+        if (showingTranslation) await RenderPreviewAsync();
       };
       translationSettingsButton.Click += (_, __) => TranslationSettingsRequested?.Invoke(this, EventArgs.Empty);
       UpdateTranslationButtons();
@@ -118,7 +121,10 @@ namespace AnotherMarkdown.Forms
       var progress = new Progress<TranslationProgress>(value => {
         if (!acceptingProgress || _disposed || !ReferenceEquals(translationCancellation, cancellation) || cancellation.IsCancellationRequested || sourceText != text || sourcePath != path) return;
         completedParts = Math.Max(completedParts, value.Completed);
-        translationStatus.Text = value.Total > 1 ? "Перевод… " + completedParts + " из " + value.Total + " частей · " + modelLabel : "Перевод… " + modelLabel;
+        translationStatus.Text = value.RetryPart > 0
+          ? "Повтор части " + value.RetryPart + " · попытка " + value.RetryAttempt + " из " + value.RetryMaxAttempts
+            + (value.Total > 1 ? " · готово " + completedParts + " из " + value.Total : "") + " · " + modelLabel
+          : value.Total > 1 ? "Перевод… " + completedParts + " из " + value.Total + " частей · " + modelLabel : "Перевод… " + modelLabel;
       });
       try {
         var cached = translationCache.TryGet(key, out var result);

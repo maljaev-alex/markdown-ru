@@ -145,9 +145,8 @@ namespace AnotherMarkdown.Translation
     {
       if (string.IsNullOrWhiteSpace(markdown)) throw new ArgumentException("Документ пуст.");
       if (markdown.Length > 1000000) throw new ArgumentException("Документ превышает 1 млн символов. Разделите его на части.");
-      var protection = new MarkdownCodeProtection(markdown);
-      var translated = await TranslatePromptAsync(protection.Prompt(CliTranslator.CreatePrompt), connection, timeoutSeconds, token).ConfigureAwait(false);
-      return protection.Restore(translated);
+      return await ProtectedTranslation.RunAsync(markdown, CliTranslator.CreatePrompt,
+        (prompt, attemptToken) => TranslatePromptAsync(prompt, connection, timeoutSeconds, attemptToken), token).ConfigureAwait(false);
     }
 
     internal async Task<string> TranslatePromptAsync(string prompt, ApiConnection connection, int timeoutSeconds, CancellationToken token)
@@ -193,7 +192,13 @@ namespace AnotherMarkdown.Translation
               if (known.Count > 20000) throw new InvalidOperationException("Список моделей API слишком большой.");
               var name = Text(entry[prepared.Protocol == "gemini" ? "displayName" : "display_name"]) ?? id;
               var selected = SameModel(id, prepared.Model, prepared.Protocol);
-              catalog.Models.Add(new CliModel { Id = id, Name = name, IsDefault = selected });
+              var levels = entry["supported_reasoning_efforts"] as JArray ?? entry["reasoning_efforts"] as JArray;
+              catalog.Models.Add(new CliModel { Id = id, Name = name, IsDefault = selected,
+                ReasoningEfforts = levels?.Where(level => level.Type == JTokenType.String)
+                  .Select(level => Text(level)?.Trim().ToLowerInvariant())
+                  .Where(level => new[] { "none", "minimal", "low", "medium", "high", "xhigh", "max" }.Contains(level))
+                  .Distinct(StringComparer.Ordinal).Select(level => new CliReasoningEffort { Id = level }).ToList()
+                  ?? new List<CliReasoningEffort>() });
               if (selected) catalog.DefaultModelId = id;
             }
             if (prepared.Protocol == "gemini") cursor = Text(root["nextPageToken"]);
@@ -230,7 +235,9 @@ namespace AnotherMarkdown.Translation
         throw new ArgumentException("Укажите абсолютный HTTP(S) URL API без логина, пароля и фрагмента.");
       var prepared = new PreparedConnection {
         Protocol = protocol, Endpoint = endpoint, Model = (connection.Model ?? "").Trim(),
-        Effort = (connection.ReasoningEffort ?? "").Trim().ToLowerInvariant(), ApiKey = connection.ApiKey ?? "",
+        Effort = string.Equals(connection.ReasoningEffortModel, connection.Model, StringComparison.Ordinal) &&
+          string.Equals(connection.ReasoningEffortCatalogKey, SettingsDiscoveryCache.ApiModelKey(connection), StringComparison.Ordinal)
+          ? (connection.ReasoningEffort ?? "").Trim().ToLowerInvariant() : "", ApiKey = connection.ApiKey ?? "",
         AuthHeader = (connection.AuthHeader ?? "").Trim(), AuthPrefix = connection.AuthPrefix ?? "",
         Headers = ReadObject(connection.AdditionalHeadersJson, "Дополнительные заголовки"),
         Parameters = ReadObject(connection.AdditionalParametersJson, "Дополнительные параметры"),

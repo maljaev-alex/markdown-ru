@@ -364,6 +364,16 @@ internal static class ParallelTranslationTests
     return prompt.Substring(start, end - start);
   }
   private static int Delay(string target) => target.Contains("BLOCK_00") ? 550 : 120;
+  private static string FakeTranslation(string prompt, string target)
+  {
+    var translated = target.Replace("SOURCE_", "RU_");
+    var match = Regex.Match(prompt, @"(?m)^ANNOTATIONS_(?<id>PROTECTED_CONTEXT_[a-f0-9]{32})\n");
+    if (!match.Success) return translated;
+    var start = match.Index + match.Length; var end = prompt.IndexOf("\nEND_ANNOTATIONS_" + match.Groups["id"].Value, start, StringComparison.Ordinal);
+    var annotations = JArray.Parse(prompt.Substring(start, end - start));
+    foreach (var annotation in annotations) annotation["text"] = ((string)annotation["text"]).Replace("SOURCE_", "RU_").Replace("English example", "RU example");
+    return new JObject { ["markdown"] = translated, ["annotations"] = annotations }.ToString(Formatting.None);
+  }
   private static void Log(JObject value)
   {
     var directory = Environment.GetEnvironmentVariable("PARALLEL_TRANSLATION_FIXTURE_LOG");
@@ -372,7 +382,7 @@ internal static class ParallelTranslationTests
   private static int FakeEcho(string[] args)
   {
     var started = DateTime.UtcNow.Ticks; var prompt = Console.In.ReadToEnd(); var target = Target(prompt, out var context);
-    Thread.Sleep(Delay(target)); var result = target.Replace("SOURCE_", "RU_");
+    Thread.Sleep(Delay(target)); var result = FakeTranslation(prompt, target);
     var output = Array.IndexOf(args, "--output-last-message");
     if (output >= 0) File.WriteAllText(args[output + 1], result, Utf8); else Console.Write(result);
     Log(new JObject { ["kind"] = "translation", ["target"] = target, ["context"] = context, ["start"] = started, ["end"] = DateTime.UtcNow.Ticks,
@@ -441,8 +451,8 @@ internal static class ParallelTranslationTests
 
   private static async Task ProtectedCodeIntegration()
   {
-    var source = "# Intro\n\nSOURCE_read `SOURCE_literal`.[^n]\n\n## Example\n\nSOURCE_explain.\n\n```markdown\n# SOURCE_example\n```\n\n## Notes\n\n[^n]: SOURCE_note with `SOURCE_footnote`.\n";
-    var expected = source.Replace("SOURCE_read", "RU_read").Replace("SOURCE_explain", "RU_explain").Replace("SOURCE_note", "RU_note");
+    var source = "# Intro\n\nSOURCE_read `SOURCE_literal`.[^n]\n\n## Example\n\nSOURCE_explain.\n\n```markdown\n# English example\n```\n\n## Notes\n\n[^n]: SOURCE_note with `SOURCE_footnote`.\n";
+    var expected = source.Replace("SOURCE_read", "RU_read").Replace("SOURCE_explain", "RU_explain").Replace("SOURCE_note", "RU_note").Replace("English example", "RU example");
     var cli = CliOptions(8); cli.MinimumChunkCharacters = 0;
     Check(MarkdownTranslationPlan.Create(source, 8, 0).Count == 3, "global reference index cannot merge independent sections into one source container");
     var actualCli = await Within(new CliTranslator().TranslateAsync(source, cli, CancellationToken.None));
@@ -498,7 +508,7 @@ internal static class ParallelTranslationTests
           var count = int.Parse(lengthLine.Substring(lengthLine.IndexOf(':') + 1)); if (count < 0 || count > 2000000) throw new Exception("Fixture request body exceeds its bound.");
           var json = JObject.Parse(Utf8.GetString(await ReadExactly(stream, count, stop.Token)));
           var prompt = (string)json["messages"]?[0]?["content"]; var target = Target(prompt, out var context); await Task.Delay(Delay(target), stop.Token);
-          var body = Utf8.GetBytes(new JObject { ["choices"] = new JArray(new JObject { ["message"] = new JObject { ["role"] = "assistant", ["content"] = target.Replace("SOURCE_", "RU_") }, ["finish_reason"] = "stop" }) }.ToString(Formatting.None));
+          var body = Utf8.GetBytes(new JObject { ["choices"] = new JArray(new JObject { ["message"] = new JObject { ["role"] = "assistant", ["content"] = FakeTranslation(prompt, target) }, ["finish_reason"] = "stop" }) }.ToString(Formatting.None));
           var response = Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + body.Length + "\r\nConnection: close\r\n\r\n");
           var start = lines[0].Split(' ');
           lock (records) records.Add(new JObject { ["target"] = target, ["context"] = context, ["model"] = json["model"], ["method"] = start[0], ["path"] = start[1], ["start"] = started, ["end"] = DateTime.UtcNow.Ticks });

@@ -26,6 +26,7 @@ namespace AnotherMarkdown.Translation
     private readonly Dictionary<int, Block> previousBlocks = new Dictionary<int, Block>();
     private readonly HashSet<int> safeStarts = new HashSet<int>();
     private readonly string source;
+    internal readonly string ParseSource;
     private readonly List<int> lineStarts = new List<int> { 0 };
     internal IEnumerable<MarkdownObject> Nodes => Document.Descendants().Concat(SourceFootnotes.SelectMany(n =>
       new[] { (MarkdownObject)n }.Concat(n.Descendants()))).Distinct();
@@ -40,6 +41,7 @@ namespace AnotherMarkdown.Translation
       }
       Offset = markdown.StartsWith("\uFEFF", StringComparison.Ordinal) ? 1 : 0;
       var parseSource = Offset == 0 ? markdown : markdown.Substring(Offset);
+      ParseSource = parseSource;
       HasFrontMatter = LooksLikeFrontMatter(parseSource);
       Document = Markdown.Parse(parseSource, HasFrontMatter ? YamlPipeline : Pipeline);
       Block previous = null; var protectedThrough = -1;

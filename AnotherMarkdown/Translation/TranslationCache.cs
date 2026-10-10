@@ -15,7 +15,7 @@ namespace AnotherMarkdown.Translation
     {
       var api = options.ActiveApiConnection;
       var fields = options.UseApi
-        ? new[] { CliTranslator.PromptVersion, "api", api?.Endpoint, api?.Protocol, api?.Model, api?.ReasoningEffort, api?.MaxOutputTokens.ToString(CultureInfo.InvariantCulture), api?.TokenLimitParameter, api?.Temperature?.ToString(CultureInfo.InvariantCulture), api?.AdditionalParametersJson, api?.AdditionalHeadersJson, api?.AuthHeader, api?.AuthPrefix, api?.ApiKey,
+        ? new[] { CliTranslator.PromptVersion, "api", api?.Endpoint, api?.Protocol, api?.Model, api?.ReasoningEffort, api?.ReasoningEffortModel, api?.ReasoningEffortCatalogKey, api?.MaxOutputTokens.ToString(CultureInfo.InvariantCulture), api?.TokenLimitParameter, api?.Temperature?.ToString(CultureInfo.InvariantCulture), api?.AdditionalParametersJson, api?.AdditionalHeadersJson, api?.AuthHeader, api?.AuthPrefix, api?.ApiKey,
           options.ParallelRequests.ToString(CultureInfo.InvariantCulture), options.MinimumChunkCharacters.ToString(CultureInfo.InvariantCulture), api?.ProxyMode, api?.ProxyAddress, api?.ProxyUseDefaultCredentials.ToString(),
           HashFields(new[] { api?.ProxyUsername, api?.ProxyPassword,
             api?.PreserveEncryptedProxyUsername == true ? api.EncryptedProxyUsername : "",
