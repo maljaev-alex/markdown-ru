@@ -42,6 +42,7 @@
     <Reference Include="System.Windows.Forms" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="EditorMessage.cs" />
     <Compile Include="Events\DocumentChangedEvent.cs" />
     <Compile Include="Events\FirstLineChangedEvent.cs" />
     <Compile Include="IEventDispatcher.cs" />

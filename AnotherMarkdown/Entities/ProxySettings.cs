@@ -10,9 +10,10 @@ namespace AnotherMarkdown.Entities
     public string CssFileName => _s.CssFileName;
     public string CssDarkModeFileName => _s.CssDarkModeFileName;
     public int ZoomLevel => _s.ZoomLevel;
+    public bool PreserveEditorLineBreaks => _s.PreserveEditorLineBreaks;
     public bool IsDarkModeEnabled => _s.IsDarkModeEnabled;
     public bool ShowToolbar => _s.ShowToolbar;
-    public bool ShowStatusbar => _s.ShowStatusbar;
+    public bool ShowLinkAddresses => _s.ShowStatusbar; // Keep the existing INI preference.
     public string DefaultAssetPath => _s.DefaultAssetPath;
     public string DefaultCssFile => _s.DefaultCssFile;
     public string DefaultDarkModeCssFile => _s.DefaultDarkModeCssFile;

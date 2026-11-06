@@ -35,6 +35,16 @@ namespace Kbg.NppPluginNET.PluginInfrastructure
     [DllImport("user32")]
     public static extern IntPtr SendMessage(IntPtr hWnd, UInt32 Msg, IntPtr wParam, IntPtr lParam);
 
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
+      int x, int y, int width, int height, uint flags);
+
     /// <summary>
     /// You should try to avoid calling this method in your plugin code. Rather use one of the gateways such as  <see
     /// cref="ScintillaGateway"/> or <see cref="NotepadPPGateway"/>.   If gateways are missing or incomplete, please

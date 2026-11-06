@@ -48,6 +48,11 @@ internal static class SettingsTests
         customArguments.Checked = false;
         Check((string)Find<ComboBox>(form, "translationOutput").SelectedItem == "text" && Find<TextBox>(form, "translationArguments").Text.Contains("exec --skip-git-repo-check"), "leaving custom arguments restores the matching adapter format and preview");
         var tabs = Find<TabControl>(form, "settingsTabs");
+        Check(tabs.SelectedIndex == 0 && tabs.SelectedTab.Name == "previewPage", "settings open on the first preview page");
+        Check(Find<ComboBox>(form, "cbTheme").SelectedIndex == 0, "theme defaults to following Notepad++");
+        Check(!Find<CheckBox>(form, "cbPreserveEditorLineBreaks").Checked, "editor line-break preservation defaults off");
+        Find<CheckBox>(form, "cbPreserveEditorLineBreaks").Checked = true;
+        Find<ComboBox>(form, "cbTheme").SelectedIndex = 2;
         form.SelectTranslationTab();
         Check(tabs.SelectedTab.Name == "translationPage", "translation tab is a native tab page");
         Find<TextBox>(form, "tbCssFile").Text = "changed.css";
@@ -58,6 +63,8 @@ internal static class SettingsTests
         Check(form.DialogResult == DialogResult.OK && form.CssFileName == "changed.css" && form.CssDarkModeFileName == "dark.css" && form.ZoomLevel == 175 && form.ShowToolbar, "save captures edited preview controls");
         Check(settings.CssFileName == null && settings.ZoomLevel == 9000 && !settings.ShowToolbar, "dialog edits do not mutate supplied settings before acceptance");
         Check(!form.TranslationOptions.ShowButtons, "translation visibility persists");
+        Check(form.Theme == "dark" && settings.Theme == "auto", "theme selection is captured only on saving the dialog");
+        Check(form.PreserveEditorLineBreaks && !settings.PreserveEditorLineBreaks, "line-break selection is captured only on saving the dialog");
       }
       Console.WriteLine("PASS settings: " + passed + " assertions");
       return 0;

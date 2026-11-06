@@ -13,6 +13,9 @@ internal static class TranslationTests
   private static int passed;
   private static string executable;
 
+  [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+  private static extern uint GetOEMCP();
+
   private static int Main(string[] args)
   {
     Console.InputEncoding = new UTF8Encoding(false);
@@ -100,6 +103,14 @@ internal static class TranslationTests
   {
     var mode = args[1];
     if (mode == "early") { Console.Error.Write("EARLY_EXIT"); return 67; }
+    if (mode == "legacy-error" || mode == "legacy-noise") {
+      var diagnostic = Encoding.ASCII.GetBytes("DIAGNOSTIC: ? EXPECTED_LEGACY_ERROR");
+      diagnostic[12] = 0x8d;
+      Console.OpenStandardError().Write(diagnostic, 0, diagnostic.Length);
+      if (mode == "legacy-error") return 31;
+    }
+    if (mode == "invalid-stdout") { Console.OpenStandardOutput().WriteByte(0x8d); return 0; }
+    if (mode == "utf8-error") { Console.Error.Write("\u041e\u0448\u0438\u0431\u043a\u0430 UTF8_ERROR"); return 31; }
     if (mode == "sleep") { Thread.Sleep(60000); return 0; }
     if (mode == "tree") {
       var child = Process.Start(new ProcessStartInfo(executable, "fake sleep") { UseShellExecute = false, CreateNoWindow = true });
@@ -390,6 +401,11 @@ internal static class TranslationTests
     var standard = await Translate(Options("fake stdout"));
     Check(standard.StartsWith("# Привет") && standard.Contains("`WorkPackage.allowed_to`"), "UTF-8 stdin/stdout and untrusted document envelope");
     Check(await Translate(Options("fake file {output}")) == standard, "output file ignores noisy stdout and strips BOM");
+    Check(await Translate(Options("fake legacy-noise")) == standard, "legacy-encoded stderr does not abort a valid UTF-8 translation");
+    await Throws<InvalidOperationException>(() => Translate(Options("fake legacy-error")), "EXPECTED_LEGACY_ERROR", "legacy stderr preserves CLI failure instead of a decoder exception");
+    await Throws<InvalidOperationException>(() => Translate(Options("fake legacy-error")), Encoding.GetEncoding((int)GetOEMCP()).GetString(new byte[] { 0x8d }), "OEM diagnostics remain readable");
+    await Throws<InvalidOperationException>(() => Translate(Options("fake utf8-error")), "\u041e\u0448\u0438\u0431\u043a\u0430 UTF8_ERROR", "UTF-8 diagnostics remain readable");
+    await Throws<DecoderFallbackException>(() => Translate(Options("fake invalid-stdout")), "", "translation stdout still requires valid UTF-8");
     var quoted = Options("fake args {model}");
     quoted.Model = "model with \"quotes\" and trailing slash\\";
     Check(await new CliTranslator().TranslateAsync("Argument transport fixture", quoted, CancellationToken.None) == quoted.Model, "Windows argument quoting round-trip");

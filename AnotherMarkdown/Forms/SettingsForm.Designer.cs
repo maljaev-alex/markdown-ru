@@ -47,15 +47,16 @@ namespace AnotherMarkdown.Forms
       previewPage = HoldInitialLayout(new System.Windows.Forms.TabPage("Просмотр") { Name = "previewPage", Padding = new System.Windows.Forms.Padding(8), AutoScroll = true });
       translationPage = HoldInitialLayout(new System.Windows.Forms.TabPage("Перевод") { Name = "translationPage", Padding = new System.Windows.Forms.Padding(8) });
       settingsTabs.TabPages.AddRange(new[] { previewPage, translationPage });
+      settingsTabs.SelectedIndex = 0;
       root.Controls.Add(settingsTabs, 0, 1);
       var general = HoldInitialLayout(new SettingsLayoutPanel {
-        Name = "previewLayout", Dock = System.Windows.Forms.DockStyle.Fill, ColumnCount = 4, RowCount = 7, AutoScroll = true, Padding = new System.Windows.Forms.Padding(8)
+        Name = "previewLayout", Dock = System.Windows.Forms.DockStyle.Fill, ColumnCount = 4, RowCount = 9, AutoScroll = true, Padding = new System.Windows.Forms.Padding(8)
       });
       general.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, SettingsLabelWidth));
       general.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100));
       general.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 42));
       general.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, SettingsActionWidth));
-      for (var row = 0; row < 6; row++) general.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+      for (var row = 0; row < 8; row++) general.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
       general.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100));
       previewPage.Controls.Add(general);
       tbAssetsPath = MakeSettingsTextBox("tbAssetsPath", "Каталог ресурсов", 0);
@@ -70,25 +71,36 @@ namespace AnotherMarkdown.Forms
       AddPreviewRow(general, 0, "Каталог ресурсов", tbAssetsPath, btnChooseAssetsDir, btnDefaultAssetDir);
       AddPreviewRow(general, 1, "CSS", tbCssFile, btnChooseCss, btnDefaultCss);
       AddPreviewRow(general, 2, "CSS тёмной темы", tbDarkmodeCssFile, btnChooseDarkmodeCss, btnDefaultDarkmodeCss);
+      cbTheme = new System.Windows.Forms.ComboBox {
+        Name = "cbTheme", AccessibleName = "Тема", DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList,
+        Dock = System.Windows.Forms.DockStyle.Fill, TabIndex = 9, Margin = SettingsFieldMargin
+      };
+      cbTheme.Items.AddRange(new object[] { "Как в Notepad++", "Светлая", "Тёмная" });
+      general.Controls.Add(MakeSettingsLabel("Тема"), 0, 3);
+      general.Controls.Add(cbTheme, 1, 3); general.SetColumnSpan(cbTheme, 3);
       trackBar1 = new System.Windows.Forms.TrackBar {
         Name = "trackBar1", AccessibleName = "Масштаб", Minimum = 80, Maximum = 800,
-        Value = 100, TickStyle = System.Windows.Forms.TickStyle.None, Dock = System.Windows.Forms.DockStyle.Fill, TabIndex = 9
+        Value = 100, TickStyle = System.Windows.Forms.TickStyle.None, Dock = System.Windows.Forms.DockStyle.Fill, TabIndex = 10
       };
       trackBar1.ValueChanged += trackBar1_ValueChanged;
       lblZoomValue = new System.Windows.Forms.Label { AutoSize = true, Text = "100%", Margin = new System.Windows.Forms.Padding(3, 10, 3, 3) };
-      general.Controls.Add(MakeSettingsLabel("Масштаб"), 0, 3);
-      general.Controls.Add(trackBar1, 1, 3); general.SetColumnSpan(trackBar1, 2);
-      general.Controls.Add(lblZoomValue, 3, 3);
-      cbShowToolbar = new System.Windows.Forms.CheckBox { Name = "cbShowToolbar", Text = "Показывать панель инструментов", AutoSize = true, TabIndex = 10 };
-      cbShowStatusbar = new System.Windows.Forms.CheckBox { Name = "cbShowStatusbar", Text = "Показывать адреса ссылок в строке состояния", AutoSize = true, TabIndex = 11 };
-      general.Controls.Add(cbShowToolbar, 1, 4); general.SetColumnSpan(cbShowToolbar, 3);
-      general.Controls.Add(cbShowStatusbar, 1, 5); general.SetColumnSpan(cbShowStatusbar, 3);
+      general.Controls.Add(MakeSettingsLabel("Масштаб"), 0, 4);
+      general.Controls.Add(trackBar1, 1, 4); general.SetColumnSpan(trackBar1, 2);
+      general.Controls.Add(lblZoomValue, 3, 4);
+      cbShowToolbar = new System.Windows.Forms.CheckBox { Name = "cbShowToolbar", Text = "Показывать панель инструментов", AutoSize = true, TabIndex = 11 };
+      cbShowStatusbar = new System.Windows.Forms.CheckBox { Name = "cbShowStatusbar", Text = "Показывать адреса ссылок", AutoSize = true, TabIndex = 12 };
+      general.Controls.Add(cbShowToolbar, 1, 5); general.SetColumnSpan(cbShowToolbar, 3);
+      general.Controls.Add(cbShowStatusbar, 1, 6); general.SetColumnSpan(cbShowStatusbar, 3);
+      cbPreserveEditorLineBreaks = new System.Windows.Forms.CheckBox {
+        Name = "cbPreserveEditorLineBreaks", Text = "Сохранять переносы строк в редакторе", AutoSize = true, TabIndex = 13
+      };
+      general.Controls.Add(cbPreserveEditorLineBreaks, 1, 7); general.SetColumnSpan(cbPreserveEditorLineBreaks, 3);
       MarkdownPlugins = new System.Windows.Forms.CheckedListBox {
         Name = "MarkdownPlugins", AccessibleName = "Расширения Markdown", Dock = System.Windows.Forms.DockStyle.Fill,
-        CheckOnClick = true, IntegralHeight = false, TabIndex = 12
+        CheckOnClick = true, IntegralHeight = false, TabIndex = 14
       };
-      general.Controls.Add(MakeSettingsLabel("Расширения Markdown"), 0, 6);
-      general.Controls.Add(MarkdownPlugins, 1, 6); general.SetColumnSpan(MarkdownPlugins, 3);
+      general.Controls.Add(MakeSettingsLabel("Расширения Markdown"), 0, 8);
+      general.Controls.Add(MarkdownPlugins, 1, 8); general.SetColumnSpan(MarkdownPlugins, 3);
       var footer = HoldInitialLayout(new System.Windows.Forms.FlowLayoutPanel {
         Dock = System.Windows.Forms.DockStyle.Fill, AutoSize = true,
         FlowDirection = System.Windows.Forms.FlowDirection.RightToLeft, Padding = new System.Windows.Forms.Padding(0, 8, 0, 0)
@@ -131,6 +143,8 @@ namespace AnotherMarkdown.Forms
     private System.Windows.Forms.Button btnChooseCss, btnDefaultCss, btnChooseDarkmodeCss, btnDefaultDarkmodeCss;
     private System.Windows.Forms.TextBox tbAssetsPath, tbCssFile, tbDarkmodeCssFile;
     private System.Windows.Forms.TrackBar trackBar1;
+    private System.Windows.Forms.ComboBox cbTheme;
+    private System.Windows.Forms.CheckBox cbPreserveEditorLineBreaks;
     private System.Windows.Forms.Label lblZoomValue;
     private System.Windows.Forms.CheckBox cbShowToolbar, cbShowStatusbar;
     private System.Windows.Forms.CheckedListBox MarkdownPlugins;

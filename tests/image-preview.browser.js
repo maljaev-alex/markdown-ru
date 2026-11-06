@@ -1,0 +1,35 @@
+(async function () {
+  let checks = 0;
+  const check = (condition, label) => { if (!condition) throw new Error(label); checks++; };
+  const dialog = document.querySelector(".am-image-dialog");
+  const stage = dialog.querySelector(".am-image-stage");
+  const image = stage.querySelector("img");
+  const percent = dialog.querySelector("output");
+  const action = name => dialog.querySelector('[data-action="' + name + '"]').click();
+  check(dialog.matches(":modal") && dialog.classList.contains("am-image-window"), "viewer fills the separate native window");
+  check(image.naturalWidth === 1600, "viewer retains the original source resolution");
+  check(dialog.querySelector('[data-action="fit"]').getAttribute("aria-pressed") === "true", "new images open in fit mode by default");
+  check(image.getBoundingClientRect().width <= stage.clientWidth + 1 && image.getBoundingClientRect().height <= stage.clientHeight + 1, "initial image fits the window in both dimensions");
+  action("actual");
+  check(percent.textContent === "100%" && Math.round(image.getBoundingClientRect().width) === 1600, "100 percent remains available at the original image resolution");
+  action("in");
+  check(percent.textContent === "125%", "plus enlarges the image");
+  action("out");
+  check(percent.textContent === "100%", "minus reduces the image");
+  action("fit");
+  check(image.getBoundingClientRect().width <= stage.clientWidth + 1 && image.getBoundingClientRect().height <= stage.clientHeight + 1, "fit displays the full image in the window");
+  check(dialog.querySelector('[data-action="fit"]').getAttribute("aria-pressed") === "true", "fit mode is accessible");
+  action("actual");
+  check(percent.textContent === "100%", "100 percent restores original resolution");
+  const rect = stage.getBoundingClientRect();
+  const wheel = new WheelEvent("wheel", { deltaY: -100, clientX: rect.left + 150, clientY: rect.top + 150, bubbles: true, cancelable: true });
+  stage.dispatchEvent(wheel);
+  check(percent.textContent === "120%" && wheel.defaultPrevented, "wheel zooms without scrolling the owner document");
+  dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "0", bubbles: true, cancelable: true }));
+  check(percent.textContent === "100%", "keyboard zero restores original resolution");
+  dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "+", bubbles: true, cancelable: true }));
+  check(percent.textContent === "125%", "keyboard plus enlarges the image");
+  stage.scrollLeft = 0;
+  stage.scrollTop = 0;
+  return { checks, stage: { x: rect.left + 230, y: rect.top + 200 } };
+})()

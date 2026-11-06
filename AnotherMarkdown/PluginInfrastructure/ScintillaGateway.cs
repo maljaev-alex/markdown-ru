@@ -2102,7 +2102,7 @@ namespace Kbg.NppPluginNET.PluginInfrastructure
       byte[] textBuffer = new byte[length];
       fixed (byte* textPtr = textBuffer) {
         Win32.SendMessage(scintilla, SciMsg.SCI_GETTEXT, (IntPtr) length, (IntPtr) textPtr);
-        return Encoding.UTF8.GetString(textBuffer).TrimEnd('\0');
+        return AnotherMarkdown.Editing.SourceTextEdit.EncodingFor(GetCodePage()).GetString(textBuffer).TrimEnd('\0');
       }
     }
 
@@ -2239,7 +2239,7 @@ namespace Kbg.NppPluginNET.PluginInfrastructure
     /// </summary>
     public unsafe int ReplaceTarget(int length, string text)
     {
-      fixed (byte* textPtr = Encoding.UTF8.GetBytes(text)) {
+      fixed (byte* textPtr = AnotherMarkdown.Editing.SourceTextEdit.EncodingFor(GetCodePage()).GetBytes(text)) {
         return (int)Win32.SendMessage(scintilla, SciMsg.SCI_REPLACETARGET, (IntPtr) length, (IntPtr) textPtr);
       }
     }

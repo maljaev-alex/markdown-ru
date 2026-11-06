@@ -2,7 +2,8 @@
 param(
     [string]$CacheRoot = '',
     [string]$OutputDirectory = '',
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$KeepStage
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
@@ -69,6 +70,21 @@ foreach ($assembly in $markdownAssemblies) {
 $ref = Join-Path $references 'build\.NETFramework\v4.7.2'
 $csc = Join-Path (Split-Path $msbuild -Parent) 'Roslyn\csc.exe'
 if (-not $SkipTests) {
+    $historyTests = Join-Path $CacheRoot 'FileVisitHistoryTests.exe'
+    & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe "/out:$historyTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" (Join-Path $projectRoot 'AnotherMarkdown\FileVisitHistory.cs') (Join-Path $projectRoot 'tests\FileVisitHistoryTests.cs')
+    if ($LASTEXITCODE -ne 0) { throw 'History test compilation failed.' }
+    & $historyTests
+    if ($LASTEXITCODE -ne 0) { throw 'History tests failed.' }
+    $pathTests = Join-Path $CacheRoot 'LocalFilePathTests.exe'
+    & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe "/out:$pathTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Web.dll" (Join-Path $projectRoot 'Webview2Viewer\Web\HttpUtility2.cs') (Join-Path $projectRoot 'tests\LocalFilePathTests.cs')
+    if ($LASTEXITCODE -ne 0) { throw 'Local file path test compilation failed.' }
+    & $pathTests
+    if ($LASTEXITCODE -ne 0) { throw 'Local file path tests failed.' }
+    $linkTests = Join-Path $CacheRoot 'LocalFileLinkTests.exe'
+    & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe "/out:$linkTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Web.dll" (Join-Path $projectRoot 'PanelCommon\Events\NavigateToEvent.cs') (Join-Path $projectRoot 'Webview2Viewer\Web\HttpUtility2.cs') (Join-Path $projectRoot 'Webview2Viewer\Web\LocalFileLink.cs') (Join-Path $projectRoot 'tests\LocalFileLinkTests.cs')
+    if ($LASTEXITCODE -ne 0) { throw 'Local file link test compilation failed.' }
+    & $linkTests
+    if ($LASTEXITCODE -ne 0) { throw 'Local file link tests failed.' }
     $tests = Join-Path $CacheRoot 'TranslationTests.exe'
     $sources = @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'AnotherMarkdown\Translation') -Filter '*.cs' | ForEach-Object FullName)
     $sources += Join-Path $projectRoot 'tests\TranslationTests.cs'
@@ -113,11 +129,12 @@ if (-not $SkipTests) {
     if ($LASTEXITCODE -ne 0) { throw 'Settings startup test compilation failed.' }
     & $startupTests
     if ($LASTEXITCODE -ne 0) { throw 'Settings startup tests failed.' }
-    foreach ($pluginTestName in @('IniSettingsTests', 'PreviewProgressTests')) {
+    foreach ($pluginTestName in @('IniSettingsTests', 'PreviewProgressTests', 'DockingFocusTests', 'EditingTests', 'EditorDraftTests', 'NavigationTests', 'SyncedSourceCaretTests')) {
         $pluginTests = Join-Path $buildDirectory ($pluginTestName + '.exe')
-        & $csc "/r:$ref\System.Numerics.dll" @markdownReferences /nologo /noconfig /nostdlib /langversion:7.3 /target:exe /platform:x64 "/out:$pluginTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$ref\System.Drawing.dll" "/r:$buildDirectory\AnotherMarkdown.dll" (Join-Path $projectRoot ('tests\' + $pluginTestName + '.cs'))
+        & $csc "/r:$ref\System.Numerics.dll" @markdownReferences /nologo /noconfig /nostdlib /langversion:7.3 /target:exe /platform:x64 "/out:$pluginTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$ref\System.Drawing.dll" "/r:$buildDirectory\AnotherMarkdown.dll" "/r:$buildDirectory\PanelCommon.dll" (Join-Path $projectRoot ('tests\' + $pluginTestName + '.cs'))
         if ($LASTEXITCODE -ne 0) { throw "$pluginTestName compilation failed." }
-        & $pluginTests
+        if ($pluginTestName -eq 'EditingTests') { & $pluginTests (Join-Path $CacheRoot 'editing-tests') }
+        else { & $pluginTests }
         if ($LASTEXITCODE -ne 0) { throw "$pluginTestName failed." }
     }
 }
@@ -139,24 +156,61 @@ try {
     New-Item -ItemType Directory -Path $licenseDirectory -Force | Out-Null
     Get-ChildItem -LiteralPath (Join-Path $projectRoot 'licenses') -File | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $licenseDirectory -Force }
     Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\loader.js') -Destination (Join-Path $stage 'assets\loader.js') -Force
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\image-preview.js') -Destination (Join-Path $stage 'assets\image-preview.js') -Force
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\image-preview.css') -Destination (Join-Path $stage 'assets\image-preview.css') -Force
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\editor') -Destination (Join-Path $stage 'assets\editor') -Recurse
     Copy-Item -LiteralPath (Join-Path $projectRoot 'assets\markdown\md.extensions.json') -Destination (Join-Path $stage 'assets\markdown\md.extensions.json') -Force
+    foreach ($style in @('style.css', 'style-dark.css')) {
+        Copy-Item -LiteralPath (Join-Path $projectRoot ('assets\markdown\' + $style)) -Destination (Join-Path $stage ('assets\markdown\' + $style)) -Force
+    }
     Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\translation-ru.md') -Destination (Join-Path $stage 'TRANSLATION-RU.md')
     Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination (Join-Path $stage 'README.md') -Force
     Copy-Item -LiteralPath (Join-Path $projectRoot 'CHANGELOG.md') -Destination (Join-Path $stage 'CHANGELOG.md') -Force
+    $helpDirectory = Join-Path $stage 'help'
+    New-Item -ItemType Directory -Path $helpDirectory -Force | Out-Null
+    Get-ChildItem -LiteralPath (Join-Path $projectRoot 'help') -File | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $helpDirectory -Force }
     $guideDirectory = Join-Path $stage 'docs'
     New-Item -ItemType Directory -Path $guideDirectory -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\translation-ru.md') -Destination $guideDirectory -Force
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\visual-editor.md') -Destination $guideDirectory -Force
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'editor') -Destination $stage -Recurse
+    $editorBuildDirectory = Join-Path $stage 'build_tools'
+    New-Item -ItemType Directory -Path $editorBuildDirectory -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'build_tools\build-editor.cjs') -Destination $editorBuildDirectory
+    $editorTestDirectory = Join-Path $stage 'tests'
+    New-Item -ItemType Directory -Path $editorTestDirectory -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'tests\visual-editor.browser.cjs') -Destination $editorTestDirectory
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'tests\navigation.browser.cjs') -Destination $editorTestDirectory
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'tests\link-addresses.browser.cjs') -Destination $editorTestDirectory
     $brandDirectory = Join-Path $stage 'assets\branding'
     New-Item -ItemType Directory -Path $brandDirectory -Force | Out-Null
     Copy-Item -Path (Join-Path $projectRoot 'AnotherMarkdown\Resources\translate-ru.*') -Destination $brandDirectory -Force
-    $archive = Join-Path $OutputDirectory 'AnotherMarkdown-0.1.12-ru.21-x64.zip'
+    if (-not $SkipTests) {
+        $placementTests = Join-Path $buildDirectory 'ImageWindowPlacementTests.exe'
+        & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe /platform:x64 "/out:$placementTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$ref\System.Drawing.dll" "/r:$buildDirectory\Newtonsoft.Json.dll" (Join-Path $projectRoot 'Webview2Viewer\ImageWindowPlacement.cs') (Join-Path $projectRoot 'tests\ImageWindowPlacementTests.cs')
+        if ($LASTEXITCODE -ne 0) { throw 'Image placement test compilation failed.' }
+        & $placementTests (Join-Path $CacheRoot 'image-placement-tests')
+        if ($LASTEXITCODE -ne 0) { throw 'Image placement tests failed.' }
+        $imageTests = Join-Path $buildDirectory 'ImagePreviewTests.exe'
+        & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe /platform:x64 "/out:$imageTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$ref\System.Drawing.dll" "/r:$buildDirectory\Webview2Viewer.dll" "/r:$buildDirectory\PanelCommon.dll" "/r:$buildDirectory\Microsoft.Web.WebView2.Core.dll" "/r:$buildDirectory\Microsoft.Web.WebView2.WinForms.dll" "/r:$buildDirectory\Newtonsoft.Json.dll" (Join-Path $projectRoot 'tests\ImagePreviewTests.cs')
+        if ($LASTEXITCODE -ne 0) { throw 'Image preview test compilation failed.' }
+        & $imageTests (Join-Path $stage 'assets') (Join-Path $projectRoot 'tests\image-preview.browser.js') (Join-Path $CacheRoot 'image-preview-tests')
+        if ($LASTEXITCODE -ne 0) { throw 'Image preview tests failed.' }
+        $editorTests = Join-Path $buildDirectory 'EditorIntegrationTests.exe'
+        & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe /platform:x64 "/out:$editorTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$ref\System.Drawing.dll" "/r:$buildDirectory\Webview2Viewer.dll" "/r:$buildDirectory\PanelCommon.dll" "/r:$buildDirectory\Microsoft.Web.WebView2.Core.dll" "/r:$buildDirectory\Microsoft.Web.WebView2.WinForms.dll" "/r:$buildDirectory\Newtonsoft.Json.dll" (Join-Path $projectRoot 'tests\EditorIntegrationTests.cs')
+        if ($LASTEXITCODE -ne 0) { throw 'Editor integration test compilation failed.' }
+        & $editorTests (Join-Path $stage 'assets') (Join-Path $CacheRoot 'editor-integration-tests')
+        if ($LASTEXITCODE -ne 0) { throw 'Editor integration tests failed.' }
+    }
+    $archive = Join-Path $OutputDirectory 'AnotherMarkdown-0.1.12-ru.37-x64.zip'
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -Force
     Write-Output "Package: $archive"
     Get-FileHash -LiteralPath $archive -Algorithm SHA256
 }
 finally {
     $resolvedStage = [IO.Path]::GetFullPath($stage)
-    if ($resolvedStage.StartsWith($CacheRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
-        Remove-Item -LiteralPath $resolvedStage -Recurse -Force
+    if ($KeepStage) { Write-Output "Stage: $resolvedStage" }
+    elseif ($resolvedStage.StartsWith($CacheRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        Remove-Item -LiteralPath $resolvedStage -Recurse
     }
 }

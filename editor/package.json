@@ -1,0 +1,17 @@
+{
+  "name": "anothermarkdown-visual-editor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local Markdown/GFM editor for the Notepad++ WebView2 panel",
+  "dependencies": {
+    "ckeditor5": "48.0.0",
+    "diff": "8.0.2",
+    "markdown-it": "14.1.0",
+    "node-diff3": "3.2.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "playwright-core": "1.64.1"
+  }
+}

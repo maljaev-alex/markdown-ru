@@ -140,7 +140,10 @@ internal static class DiscoveryCacheTests
     }
     await Within(Task.Run(async () => {
       for (var i = 0; i < 500; i++) {
-        if (File.Exists(path) && File.ReadAllText(path, Encoding.UTF8).Contains("api-1") && File.ReadAllText(path, Encoding.UTF8).Contains("cli-1")) return true;
+        string content = null;
+        try { if (File.Exists(path)) content = File.ReadAllText(path, Encoding.UTF8); }
+        catch (IOException) { /* A background atomic replacement can briefly hold the file on Windows. */ }
+        if (content != null && content.Contains("api-1") && content.Contains("cli-1")) return true;
         await Task.Delay(10);
       }
       throw new TimeoutException("Persistent model cache was not written.");

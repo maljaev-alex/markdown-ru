@@ -1,0 +1,51 @@
+:root { --am-background: #fff; --am-text: #333; --am-heading: #111; --am-muted: #555; --am-border: #ccc; --am-panel: #f5f5f5; --am-hover: #e7e7e7; --am-link: #0366d6; --am-error: #ad331e; }
+html.am-theme-dark {
+  color-scheme: dark;
+  --am-background: #1e1e1e; --am-text: #cfcfcf; --am-heading: #fff; --am-muted: #bcbcbc; --am-border: #444; --am-panel: #272727; --am-hover: #383838; --am-link: #4a9eff; --am-error: #ff9585;
+  --ck-color-base-background: #1e1e1e; --ck-color-base-foreground: #272727; --ck-color-toolbar-background: #1e1e1e; --ck-color-text: #cfcfcf;
+  --ck-color-base-border: #444; --ck-color-toolbar-border: #444; --ck-color-focus-border: #4a9eff;
+  --ck-color-button-default-hover-background: #383838; --ck-color-button-default-active-background: #444;
+  --ck-color-split-button-hover-background: var(--am-hover); --ck-color-split-button-hover-border: #666;
+  --ck-color-button-on-background: #293e5b; --ck-color-button-on-hover-background: #344e70; --ck-color-button-on-color: #fff;
+  --ck-color-input-background: #272727; --ck-color-input-text: #cfcfcf; --ck-color-panel-background: #272727; --ck-color-dropdown-panel-background: #272727;
+  --ck-color-list-background: #272727; --ck-color-list-button-hover-background: #383838; --ck-color-labeled-field-label-background: #272727;
+  --ck-content-font-color: #cfcfcf; --ck-content-code-block-background: #272727; --ck-content-code-block-border-color: #444;
+}
+html.am-editing, html.am-editing body { margin: 0; padding: 0; min-width: 0; max-width: none; height: 100%; overflow: hidden; background: var(--am-background); }
+.am-editor-shell { display: flex; flex-direction: column; height: 100vh; color: var(--am-text); background: var(--am-background); font: 14px/1.6 "Segoe UI", sans-serif; }
+.am-editor-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--am-border); background: var(--am-background); }
+.am-button { font: inherit; cursor: pointer; border: 1px solid var(--am-border); border-radius: 4px; background: var(--am-background); color: var(--am-text); padding: 4px 11px; }
+.am-button:hover { background: var(--am-hover); }
+.am-button:focus-visible { outline: 2px solid #4a9eff; outline-offset: 2px; }
+.am-button:disabled { opacity: .5; cursor: default; }
+.am-editor-status { flex: 1; min-width: 150px; color: var(--am-muted); font-size: 12px; }
+.am-editor-status.am-error { color: var(--am-error); }
+.am-editor-toolbar { flex: none; z-index: 2; }
+.am-editor-toolbar .ck.ck-toolbar { border-left: 0; border-right: 0; border-top: 0; border-radius: 0; }
+.am-editor-surface { flex: 1; min-height: 0; overflow: auto; }
+.am-editor-surface .ck-editor__editable { box-sizing: border-box; min-height: 100%; padding: 30px; border: 0; box-shadow: none !important; outline: 0; }
+.am-editor-surface .ck-content { color: var(--am-text); background: var(--am-background); }
+.am-editor-surface .ck-content :is(h1, h2, h3, h4, h5, h6) { color: var(--am-heading); }
+.am-editor-surface .ck-content :is(p, li, td, th, blockquote) { color: inherit; }
+.am-editor-surface .ck-content a { color: var(--am-link); }
+.am-editor-surface .ck-content :is(code, pre) { color: var(--am-text); background: var(--am-panel); border-color: var(--am-border); }
+.am-editor-surface .ck-content :is(table, th, td) { border-color: var(--am-border); }
+.am-editor-surface .ck-content th { background: var(--am-panel); }
+.am-editor-surface .ck-content img { max-width: 100%; }
+.am-raw-block { border: 1px dashed var(--am-border); background: var(--am-panel); padding: 8px 12px; border-radius: 5px; margin: 12px 0; }
+.am-raw-label { font: 12px "Segoe UI", sans-serif; color: var(--am-muted); }
+.am-raw-block pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; font-size: 12px; }
+.am-preview-mode { height: auto; }
+[hidden] { display: none !important; }
+.am-conflicts { max-width: 1000px; width: calc(100vw - 64px); max-height: 85vh; border: 1px solid var(--am-border); border-radius: 8px; color: var(--am-text); background: var(--am-background); font: 14px "Segoe UI", sans-serif; }
+.am-conflicts::backdrop { background: #0008; }
+.am-conflicts h2 { font-size: 17px; line-height: 1.5; color: var(--am-heading); }
+.am-conflict { padding: 10px 0; border-bottom: 1px solid var(--am-border); }
+.am-conflict-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.am-conflict pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--am-panel); color: var(--am-text); padding: 8px; }
+.am-conflict-result { box-sizing: border-box; width: 100%; min-height: 85px; font: 13px/1.5 Consolas, monospace; background: var(--am-background); color: var(--am-text); }
+.am-conflict-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 12px; position: sticky; bottom: 0; background: var(--am-background); }
+.am-synced-caret { position: fixed; width: 2px; background: #2463d1; pointer-events: none; z-index: 2; }
+.am-theme-dark .am-synced-caret { background: #8fbaff; }
+::highlight(am-synced-selection) { background: #b5d4fb; color: #101010; }
+.am-theme-dark ::highlight(am-synced-selection) { background: #315a8a; color: #fff; }

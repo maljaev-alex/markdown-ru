@@ -17,13 +17,10 @@ namespace AnotherMarkdown.Forms
       this.toolStripContainer1 = new System.Windows.Forms.ToolStripContainer();
       this.panel1 = new System.Windows.Forms.Panel();
       this.tbPreview = new System.Windows.Forms.ToolStrip();
-      this.statusStrip2 = new System.Windows.Forms.StatusStrip();
-      this.toolStripStatusLabel1 = new System.Windows.Forms.ToolStripStatusLabel();
       this.panelPreview.SuspendLayout();
       this.toolStripContainer1.ContentPanel.SuspendLayout();
       this.toolStripContainer1.TopToolStripPanel.SuspendLayout();
       this.toolStripContainer1.SuspendLayout();
-      this.statusStrip2.SuspendLayout();
       this.SuspendLayout();
       // 
       // panelPreview
@@ -76,29 +73,11 @@ namespace AnotherMarkdown.Forms
       this.tbPreview.Stretch = true;
       this.tbPreview.TabIndex = 0;
       // 
-      // statusStrip2
-      // 
-      this.statusStrip2.ImageScalingSize = new System.Drawing.Size(20, 20);
-      this.statusStrip2.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
-            this.toolStripStatusLabel1});
-      this.statusStrip2.Location = new System.Drawing.Point(0, 578);
-      this.statusStrip2.Name = "statusStrip2";
-      this.statusStrip2.Size = new System.Drawing.Size(813, 24);
-      this.statusStrip2.TabIndex = 2;
-      this.statusStrip2.Text = "statusStrip2";
-      this.statusStrip2.Visible = false;
-      // 
-      // toolStripStatusLabel1
-      // 
-      this.toolStripStatusLabel1.Name = "toolStripStatusLabel1";
-      this.toolStripStatusLabel1.Size = new System.Drawing.Size(0, 18);
-      // 
       // MarkdownPreviewForm
       // 
       this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Inherit;
       this.ClientSize = new System.Drawing.Size(813, 602);
       this.Controls.Add(this.panelPreview);
-      this.Controls.Add(this.statusStrip2);
       this.Font = new System.Drawing.Font("Segoe UI", 7.8F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
       this.Margin = new System.Windows.Forms.Padding(3, 4, 3, 4);
       this.Name = "MarkdownPreviewForm";
@@ -109,8 +88,6 @@ namespace AnotherMarkdown.Forms
       this.toolStripContainer1.TopToolStripPanel.PerformLayout();
       this.toolStripContainer1.ResumeLayout(false);
       this.toolStripContainer1.PerformLayout();
-      this.statusStrip2.ResumeLayout(false);
-      this.statusStrip2.PerformLayout();
       this.ResumeLayout(false);
       this.PerformLayout();
 
@@ -124,7 +101,5 @@ namespace AnotherMarkdown.Forms
     private System.Windows.Forms.Panel panelPreview;
     private System.Windows.Forms.ToolStripContainer toolStripContainer1;
     private System.Windows.Forms.ToolStrip tbPreview;
-    private System.Windows.Forms.StatusStrip statusStrip2;
-    private System.Windows.Forms.ToolStripStatusLabel toolStripStatusLabel1;
   }
 }

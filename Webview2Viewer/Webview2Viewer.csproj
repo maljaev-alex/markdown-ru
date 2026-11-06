@@ -64,11 +64,15 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Web\HttpUtility2.cs" />
+    <Compile Include="Web\LocalFileLink.cs" />
     <Compile Include="Web\IWebService.cs" />
     <Compile Include="Web\ApiService.cs" />
     <Compile Include="Web\Dto\WebEventDto.cs" />
     <Compile Include="Web\WebResource.cs" />
     <Compile Include="Webview2WebbrowserControl.cs" />
+    <Compile Include="Webview2WebbrowserControl.Editing.cs" />
+    <Compile Include="ImagePreviewWindow.cs" />
+    <Compile Include="ImageWindowPlacement.cs" />
     <Compile Include="Web\LocalFileService.cs" />
   </ItemGroup>
   <ItemGroup>

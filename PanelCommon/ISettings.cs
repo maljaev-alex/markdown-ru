@@ -8,6 +8,8 @@
     string CssFileName { get; }
     string CssDarkModeFileName { get; }
     int ZoomLevel { get; }
+    bool ShowLinkAddresses { get; }
+    bool PreserveEditorLineBreaks { get; }
     bool IsDarkModeEnabled { get; }
     string DefaultAssetPath { get; }
     string DefaultCssFile { get; }

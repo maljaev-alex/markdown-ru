@@ -6,6 +6,7 @@ using System.Windows.Forms;
 using AnotherMarkdown.Entities;
 using Kbg.NppPluginNET.PluginInfrastructure;
 using Webview2Viewer;
+using PanelCommon;
 
 namespace AnotherMarkdown.Forms
 {
@@ -25,9 +26,11 @@ namespace AnotherMarkdown.Forms
     {
       OnEvent = new EventDispatcher();
       InitializeComponent();
+      _focusGuard = new DockingFocusGuard(this);
       Text = PluginBranding.Name;
       Icon = PluginIcon.ApplicationIcon();
       InitializeTranslation(settings);
+      InitializeEditorToolbar();
 
       if (renderContent != null) {
         _renderContent = renderContent;
@@ -35,15 +38,15 @@ namespace AnotherMarkdown.Forms
       }
 
       var webView = new Webview2WebbrowserControl();
+      webView.EditorRequestHandler = HandleEditorRequest;
+      webView.EditorUiChanged = UpdateEditorToolbar;
+      webView.EditorNavigationChanged = state => NavigationChanged?.Invoke(state);
       webView.Initialize(new ProxySettings(settings, () => IsTranslationPreview), OnEvent);
 
       panel1.Controls.Clear();
       webView.AddToHost(panel1);
       panel1.Visible = true;
 
-      webView.StatusTextChangedAction = (status) => {
-        toolStripStatusLabel1.Text = status;
-      };
       _webView = webView;
       _renderContent = webView.SetContentAsync;
     }
@@ -54,18 +57,14 @@ namespace AnotherMarkdown.Forms
       var isDarkModeEnabled = settings.IsDarkModeEnabled;
       if (isDarkModeEnabled) {
         tbPreview.BackColor = Color.Black;
-        statusStrip2.BackColor = Color.Black;
-        toolStripStatusLabel1.ForeColor = Color.White;
       }
       else {
         tbPreview.BackColor = SystemColors.Control;
-        statusStrip2.BackColor = SystemColors.Control;
-        toolStripStatusLabel1.ForeColor = SystemColors.ControlText;
       }
 
       tbPreview.ForeColor = isDarkModeEnabled ? Color.White : SystemColors.ControlText;
+      if (editorUi != null) UpdateEditorToolbar(editorUi);
       tbPreview.Visible = settings.ShowToolbar || settings.Translation.ShowButtons;
-      statusStrip2.Visible = settings.ShowStatusbar;
     }
 
     public async Task RenderMarkdown(string currentText, string filepath, bool force = false)
@@ -73,6 +72,9 @@ namespace AnotherMarkdown.Forms
       if (force) forceRender = true;
       await UpdateSourceAsync(currentText, filepath);
     }
+
+    public Action<EditorNavigation> NavigationChanged { get; set; }
+    public Task SyncNavigationAsync(EditorNavigation state) => _webView?.RunNavigationAsync(state) ?? Task.CompletedTask;
 
     public async Task ScrollToElementWithLineNo(int lineNo)
     {
@@ -88,10 +90,11 @@ namespace AnotherMarkdown.Forms
         if (nmdr.hwndFrom == PluginBase.nppData._nppHandle) {
           switch ((DockMgrMsg) (nmdr.code & 0xFFFFU)) {
             case DockMgrMsg.DMN_DOCK: {
+              _focusGuard.Enabled = false;
               break;
             }
             case DockMgrMsg.DMN_FLOAT: {
-              RemoveControlParent(this);
+              _focusGuard.Enabled = true;
               break;
             }
             case DockMgrMsg.DMN_CLOSE: {
@@ -105,36 +108,6 @@ namespace AnotherMarkdown.Forms
     }
 
     /// <summary>
-    /// Sets the <see cref="Win32.WS_EX_CONTROLPARENT"/> extended attribute on <paramref name="parent"/> and any child
-    /// controls, following @mahee96's advice on the archived Plugin.Net issue tracker. 
-    /// <para><seealso href="https://github.com/kbilsted/NotepadPlusPlusPluginPack.Net/issues/17#issuecomment-683455467"/></para>
-    /// <para><seealso href="https://github.com/mohzy83/NppMarkdownPanel/issues/106"/></para>
-    /// <para><seealso href="https://github.com/BdR76/CSVLint/pull/88"/></para>
-    /// </summary>
-    /// <param name="parent">
-    /// A WinForm that's been registered with Npp's Docking Manager by sending <see cref="NppMsg.NPPM_DMMREGASDCKDLG"/>.
-    /// </param>
-    private void RemoveControlParent(Control parent)
-    {
-      if (parent.HasChildren) {
-        long extAttrs = (Environment.Is64BitProcess)
-          ? (long) Win32.GetWindowLongPtr(parent.Handle, Win32.GWL_EXSTYLE)
-          : (long) Win32.GetWindowLong(parent.Handle, Win32.GWL_EXSTYLE);
-
-        if (Win32.WS_EX_CONTROLPARENT == (extAttrs & Win32.WS_EX_CONTROLPARENT)) {
-          var newAttrs = new IntPtr(extAttrs & ~Win32.WS_EX_CONTROLPARENT);
-
-          _ = (Environment.Is64BitProcess)
-            ? (long) Win32.SetWindowLongPtr(parent.Handle, Win32.GWL_EXSTYLE, newAttrs)
-            : (long) Win32.SetWindowLong(parent.Handle, Win32.GWL_EXSTYLE, newAttrs);
-        }
-        foreach (Control c in parent.Controls) {
-          RemoveControlParent(c);
-        }
-      }
-    }
-
-    /// <summary>
     /// Clean up any resources being used.
     /// </summary>
     /// <param name="disposing">true if managed resources should be disposed; otherwise, false.</param>
@@ -142,6 +115,7 @@ namespace AnotherMarkdown.Forms
     {
       if (disposing) {
         _disposed = true;
+        _focusGuard.Dispose();
         CancelTranslation();
         if (_webView != null) {
           _webView.Dispose();
@@ -155,6 +129,7 @@ namespace AnotherMarkdown.Forms
       base.Dispose(disposing);
     }
     private Webview2WebbrowserControl _webView;
+    private readonly DockingFocusGuard _focusGuard;
     private readonly Func<string, string, bool, Task> _renderContent;
     private bool _disposed;
   }

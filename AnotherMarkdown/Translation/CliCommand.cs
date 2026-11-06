@@ -100,6 +100,9 @@ namespace AnotherMarkdown.Translation
     [DllImport("kernel32.dll")]
     private static extern IntPtr LocalFree(IntPtr memory);
 
+    [DllImport("kernel32.dll")]
+    private static extern uint GetOEMCP();
+
     public static Task<CliCommandResult> RunAsync(string executable, string arguments, string input,
       int timeoutSeconds, CancellationToken cancellation, string workingDirectory = null, string providerId = null,
       int maximumOutputCharacters = 8000000, bool detectOutputEncoding = true, int maximumStandardOutputBytes = 0) =>
@@ -125,7 +128,7 @@ namespace AnotherMarkdown.Translation
                   ? ReadAsync(process.StandardOutput, timeout.Token, () => StopOwnedProcess(process, job), maximumOutputCharacters) : null;
                 var stdoutBytes = maximumStandardOutputBytes == 0 ? null
                   : ReadBytesAsync(process.StandardOutput.BaseStream, timeout.Token, () => StopOwnedProcess(process, job), maximumStandardOutputBytes);
-                var stderr = ReadAsync(process.StandardError, timeout.Token, () => StopOwnedProcess(process, job), maximumOutputCharacters);
+                var stderr = ReadDiagnosticAsync(process.StandardError, timeout.Token, () => StopOwnedProcess(process, job), maximumOutputCharacters);
                 Exception inputError = null;
                 try {
                   var bytes = Utf8.GetBytes(input ?? "");
@@ -176,13 +179,40 @@ namespace AnotherMarkdown.Translation
       catch { abort(); throw; }
     }
 
-    private static async Task<byte[]> ReadBytesAsync(Stream stream, CancellationToken cancellation, Action abort, int maximumBytes)
+    private static async Task<string> ReadDiagnosticAsync(StreamReader reader, CancellationToken cancellation, Action abort, int maximumCharacters)
+    {
+      try {
+        // Windows launchers can emit OEM diagnostics alongside a UTF-8 response.
+        // Decode stderr independently; translation stdout remains strict UTF-8.
+        var bytes = await ReadBytesAsync(reader.BaseStream, cancellation, abort, checked(maximumCharacters * 4 + 4), maximumCharacters).ConfigureAwait(false);
+        string text;
+        try {
+          using (var input = new StreamReader(new MemoryStream(bytes, false), Utf8, true)) text = input.ReadToEnd();
+        }
+        catch (DecoderFallbackException) { text = Encoding.GetEncoding((int)GetOEMCP()).GetString(bytes); }
+        if (text.Length > maximumCharacters) throw OutputLimitExceeded(maximumCharacters);
+        return text;
+      }
+      catch { abort(); throw; }
+    }
+
+    private static InvalidOperationException OutputLimitExceeded(int maximumCharacters) => new InvalidOperationException(maximumCharacters == 8000000
+      ? "Ответ CLI превысил ограничение 8 млн символов." : "Ответ CLI превысил допустимый размер.");
+
+    private static async Task<byte[]> ReadBytesAsync(Stream stream, CancellationToken cancellation, Action abort, int maximumBytes, int maximumCharacters = 0)
     {
       try {
         using (var result = new MemoryStream()) {
           var buffer = new byte[8192]; int count;
+          var decoder = maximumCharacters == 0 ? null : new UTF8Encoding(false, false).GetDecoder();
+          var characters = 0;
+          var textBuffer = decoder == null ? null : new char[8194];
           while ((count = await WithCancellationAsync(stream.ReadAsync(buffer, 0, buffer.Length, cancellation), cancellation).ConfigureAwait(false)) != 0) {
             if (result.Length + count > maximumBytes) throw new InvalidOperationException("Ответ CLI превысил допустимый размер.");
+            if (decoder != null) {
+              characters += decoder.GetChars(buffer, 0, count, textBuffer, 0, false);
+              if (characters > maximumCharacters) throw OutputLimitExceeded(maximumCharacters);
+            }
             result.Write(buffer, 0, count);
           }
           return result.ToArray();

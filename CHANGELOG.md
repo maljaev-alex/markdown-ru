@@ -1,5 +1,90 @@
 ## Version History
 
+### Markdown RU 0.1.12-ru.37 (2026-11-07)
+
+This release includes the local ru.22–ru.36 iterations listed below: the visual Markdown editor, two-way navigation, image viewer, local file links, file history and display settings.
+
+* Publish a complete Russian user guide covering the current UI, editing and saving, navigation, images, translation, all 28 Markdown extensions, settings, limits and build instructions. Refresh the detailed translation guide to the release version.
+* Persist the enabled preview independently of temporary hiding on non-Markdown files. Restore on NPPN_READY after the session loads, or when returning to Markdown.
+* Save manual open/close immediately, preserve the choice during shutdown, and resume normal behavior after a canceled exit.
+
+### Markdown RU 0.1.12-ru.36 (included in ru.37)
+
+* Center the requested source line after opening a local file link. Keep it visible when hiding the Markdown dock or showing a horizontal scrollbar, and focus the text editor for non-Markdown targets.
+
+### Markdown RU 0.1.12-ru.35 (included in ru.37)
+
+* Hide the Markdown panel on other file types and restore it on Markdown tabs when previously enabled. Preserve manual closing and visual drafts.
+* Add native Back/Forward toolbar buttons with light/dark icons and availability states. Track visited buffer IDs, skip closed tabs and clear forward history after a new visit.
+
+### Markdown RU 0.1.12-ru.34 (included in ru.37)
+
+* Open local file links of any extension in Notepad++, including BSL, JSON and XML. Support one-based :line and :line:column suffixes, encoded filenames, relative links and file URLs.
+* Handle CKEditor Ctrl+click, its link balloon and preview clicks through the same native file-open route. Recognize drive paths and file URLs without replacing them with #; retain the original Markdown and keep script/data protocols blocked.
+* Show readable local paths in the green address indicator, including Cyrillic and source positions. Add native WebView2 click and link-target regressions.
+
+### Markdown RU 0.1.12-ru.33 (included in ru.37)
+
+* Fix immediate hovered-link visibility: WebView2 only applies native status-bar changes on the next navigation. Keep its native overlay disabled and show a page-owned, noninteractive URL indicator controlled by the existing setting.
+* Update preview, WYSIWYG and legacy rendering without reloading the document. Test actual pointer hover and visible URL content during setting toggles, rather than just reading the native property.
+
+### Markdown RU 0.1.12-ru.32 (included in ru.37)
+
+* Rename the setting to «Показывать адреса ссылок» and remove the empty native preview status strip. Use the recovered height for document content.
+* Apply the existing ShowStatusbar INI preference to WebView2's native hovered-link URL overlay, initially and on settings updates in preview and WYSIWYG. Preserve the upper synchronization status.
+
+### Markdown RU 0.1.12-ru.31 (included in ru.37)
+
+* Add «Сохранять переносы строк в редакторе» on the first settings page, persisted as PreserveEditorLineBreaks. Default to reflowing Markdown soft wraps across the editor width; optionally retain source line breaks.
+* Keep source spelling and CRLF when switching the option. Preserve explicit Markdown hard breaks and emit standard GFM breaks for Shift+Enter in either mode. Verify layout, persistence, navigation and the native WebView2 settings bridge.
+
+### Markdown RU 0.1.12-ru.30 (included in ru.37)
+
+* Place «Просмотр» before «Редактирование» in the mode toolbar.
+
+### Markdown RU 0.1.12-ru.29 (included in ru.37)
+
+* Rename the mode buttons to «Редактирование» and «Просмотр» in both the native toolbar and the web editor.
+
+### Markdown RU 0.1.12-ru.28 (included in ru.37)
+
+* Keep the synchronized source caret visible while preview or WYSIWYG owns keyboard focus. Draw a passive, click-through marker using the source theme and native text coordinates; do not alter Scintilla focus or undo history.
+* Hide the marker for native source focus, hidden/folded text, a closed panel, another document or translated draft. Add native visibility, geometry and focus regressions.
+
+### Markdown RU 0.1.12-ru.27 (included in ru.37)
+
+* Synchronize caret, directed text selection and scrolling between the Notepad++ buffer and both preview and WYSIWYG. Keep focus in the active pane and display passive selection/caret markers in the rendered document.
+* Map UTF-16 positions through Markdown block spans, hidden syntax and Scintilla byte offsets. Guard navigation by document session and text revision, suppress programmatic echoes, and apply the visual caret together with text edits.
+* Enable independent cursor/selection and scroll switches by default. Keep translated drafts isolated. Add browser, native navigation, INI persistence and real WebView2 regressions.
+
+### Markdown RU 0.1.12-ru.26 (included in ru.37)
+
+* Apply dark-theme hover and divider colors to split buttons. The Code Block action and language arrow no longer inherit a near-white background when hovering either half or opening the language menu.
+
+### Markdown RU 0.1.12-ru.25 (included in ru.37)
+
+* Move Code Block and Horizontal Line onto the main editor toolbar. Remove the More submenu and wrap toolbar items in narrow panels instead of hiding them in an overflow menu.
+
+### Markdown RU 0.1.12-ru.24 (included in ru.37)
+
+* Preserve the spelling of edited Markdown by projecting text changes onto source spans and validating their meaning through the editor. Retain list markers, spacing, emphasis delimiters, reference links and table padding during text edits; retain canonical Markdown as the fallback for structural changes.
+* Right-align synchronization status and remove the redundant Save action for original documents. Keep native Notepad++ saving and Save As for translated drafts.
+* Synchronize the native Markdown toolbar button and menu check with panel visibility, including closing a floating panel.
+* Add regressions for Cyrillic list edits, varied Markdown syntax, concurrent edits within one list, task checkboxes and the real WebView2 bridge.
+
+### Markdown RU 0.1.12-ru.23 (included in ru.37)
+
+* Open documents in preview by default; expose Edit and Preview in the same native toolbar as translation, Settings, Save and synchronization status. Hide formatting controls until editing is selected.
+* Restore the original preview styling and readable light/dark editor text, headings and tables. Add persistent automatic, light and dark theme selection on the first Settings page.
+* Rename the toolbar settings action to Settings and open the first page. Cover mode switching, stale toolbar commands, theme persistence and native WebView2 contrast in regression checks.
+
+### Markdown RU 0.1.12-ru.22 (included in ru.37)
+
+* Add a Russian CKEditor 5 toolbar with Markdown + GFM output, live two-way synchronization with the Notepad++ buffer, native saving, images and read-only handling. Do not generate raw HTML for formatting. Preserve unchanged source blocks, EOLs, reference definitions and opaque unsupported syntax.
+* Compare the document identity and base text before each write. Merge independent edits using a three-way diff, retain pending drafts across tab switches and show overlapping edits for explicit resolution. Keep programmatic loading out of Undo history and preserve Unicode byte boundaries in Scintilla edits.
+* Keep translated text in a separate editable draft. Export it only through Save As to a different file; rebase Markdown links and materialize pasted images on export. Retain per-document drafts while switching tabs and offer an explicit retranslation action.
+* Include browser regressions, real WebView2 bridge checks and native tests for encoding, translation drafts and export. Ship the CKEditor license, integration source and pinned frontend build dependencies.
+
 ### Markdown RU 0.1.12-ru.21 (2026-10-10)
 
 * Populate model lists independently of the parent window's paint events. Apply ready CLI/API catalogs before showing Settings, preload the persistent cache on a background worker at plugin initialization, and remove the temporary saved-model caption.

@@ -20,6 +20,8 @@ namespace AnotherMarkdown.Forms
     public string AssetsPath { get; set; }
     public string CssFileName { get; set; }
     public string CssDarkModeFileName { get; set; }
+    public bool PreserveEditorLineBreaks { get; private set; }
+    public string Theme { get; private set; }
     public bool ShowToolbar { get; set; }
     public bool ShowStatusbar { get; set; }
 
@@ -129,6 +131,8 @@ namespace AnotherMarkdown.Forms
       ShowStatusbar = settings.ShowStatusbar;
 
       InitializeComponent();
+      Theme = settings.Theme;
+      cbTheme.SelectedIndex = settings.Theme == "light" ? 1 : settings.Theme == "dark" ? 2 : 0;
       InitializeTranslationSettings(settings);
       ApplyReadyModelCatalog();
       ConfigurePickerHints(this);
@@ -140,6 +144,8 @@ namespace AnotherMarkdown.Forms
       tbDarkmodeCssFile.Text = CssDarkModeFileName;
       cbShowToolbar.Checked = ShowToolbar;
       cbShowStatusbar.Checked = ShowStatusbar;
+      cbPreserveEditorLineBreaks.Checked = settings.PreserveEditorLineBreaks;
+      PreserveEditorLineBreaks = settings.PreserveEditorLineBreaks;
 
       _originalPlugins = settings.EnabledMarkdownPlugins ?? new string[0];
       try {
@@ -283,9 +289,11 @@ namespace AnotherMarkdown.Forms
         AssetsPath = assetsPath;
         CssFileName = tbCssFile.Text.Trim();
         CssDarkModeFileName = tbDarkmodeCssFile.Text.Trim();
+        Theme = cbTheme.SelectedIndex == 1 ? "light" : cbTheme.SelectedIndex == 2 ? "dark" : "auto";
         ZoomLevel = trackBar1.Value;
         ShowToolbar = cbShowToolbar.Checked;
         ShowStatusbar = cbShowStatusbar.Checked;
+        PreserveEditorLineBreaks = cbPreserveEditorLineBreaks.Checked;
         List<string> plugins = new List<string>();
         foreach(MarkdownPlugin item in MarkdownPlugins.CheckedItems) {
           plugins.Add(item.Id);

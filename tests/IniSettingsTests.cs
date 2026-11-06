@@ -22,6 +22,41 @@ internal static class IniSettingsTests
     checks++; Console.WriteLine("PASS " + label);
   }
 
+  private static void PreviewVisibilityPersistence(string directory)
+  {
+    var file = Path.Combine(directory, "preview-visibility.ini");
+    var type = typeof(MarkdownPanelController);
+    var controller = (MarkdownPanelController)FormatterServices.GetUninitializedObject(type);
+    Action<string, object> set = (name, value) => type.GetField(name, BindingFlags.NonPublic | BindingFlags.Instance).SetValue(controller, value);
+    Func<bool> enabled = () => (bool)type.GetField("_previewEnabled", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(controller);
+    set("_iniFilePath", file);
+    var load = type.GetMethod("LoadSettingsFromIni", BindingFlags.NonPublic | BindingFlags.Instance);
+    var remember = type.GetMethod("RememberPreviewEnabled", BindingFlags.NonPublic | BindingFlags.Instance);
+    var save = type.GetMethod("SaveSettings", BindingFlags.NonPublic | BindingFlags.Instance);
+    set("_settings", load.Invoke(controller, null));
+    Check(!enabled(), "preview stays closed for a legacy INI without a saved choice");
+    set("_startupReady", true);
+    remember.Invoke(controller, new object[] { true });
+    Check(Win32.GetPrivateProfileInt("Options", "PreviewEnabled", 0, file) == 1, "opening preview persists its enabled state immediately");
+    set("_isPanelVisible", false); set("_panelAutoHidden", true);
+    Check((bool)save.Invoke(controller, new object[] { false }), "auto-hidden preview settings save");
+    set("_settings", load.Invoke(controller, null));
+    Check(enabled(), "auto-hiding on another file type preserves the restart preference");
+    set("_shuttingDown", true);
+    remember.Invoke(controller, new object[] { false });
+    Check(enabled(), "shutdown teardown cannot replace an enabled preview with closed");
+    Check((bool)save.Invoke(controller, new object[] { false }), "shutdown persists the saved intent");
+    set("_settings", load.Invoke(controller, null));
+    Check(enabled(), "restart retains the enabled preview after teardown");
+    set("_shuttingDown", false);
+    remember.Invoke(controller, new object[] { false });
+    set("_settings", load.Invoke(controller, null));
+    Check(!enabled(), "manual close after canceled shutdown persists across restart");
+    set("_startupReady", false);
+    remember.Invoke(controller, new object[] { true });
+    Check(!enabled(), "startup docking notifications cannot rewrite the saved choice");
+  }
+
   private static void CliProfilePersistence(string directory)
   {
     var file = Path.Combine(directory, "cli-profiles.ini");
@@ -42,16 +77,30 @@ internal static class IniSettingsTests
     Win32.WriteIniValue("Translation", "ProviderId", "custom", file);
     Win32.WriteIniValue("Translation", "Model", "legacy-model", file);
     var legacy = reload();
+    Check(!legacy.PreserveEditorLineBreaks, "source line wraps reflow by default");
+    Check(legacy.SyncViewWithCaretPosition && legacy.SyncViewWithFirstVisibleLine, "new navigation defaults enable cursor, selection and scroll together");
     Check(legacy.Translation.CliConnections.Count == 1 && legacy.Translation.CliConnections[0].Model == "legacy-model"
       && !legacy.Translation.UseManualModel, "legacy INI selection migrates into one CLI profile with a backward-compatible manual-model default");
     Check(!File.Exists(file + ".cli.json"), "opening legacy settings does not save migrated drafts before the user saves");
     var other = active.Copy(); other.ProviderId = "cursor"; other.Model = "model-b"; other.TimeoutSeconds = 333; other.ParallelRequests = 7; other.MinimumChunkCharacters = 0;
     var otherPath = active.Copy(); otherPath.Executable = @"D:\SyntheticTools\other\custom.exe"; otherPath.Model = "model-c";
-    var settings = new Settings { EnabledMarkdownPlugins = new string[0], ZoomLevel = 160 };
+    var settings = new Settings { EnabledMarkdownPlugins = new string[0], ZoomLevel = 160, Theme = "dark", PreserveEditorLineBreaks = true };
     active.ApplyTo(settings.Translation);
     settings.Translation.CliConnections.Add(other); settings.Translation.CliConnections.Add(otherPath);
     select(settings); Check(persist(), "controller saves the active CLI selection and all inactive provider/path drafts");
     var restored = reload(); var profiles = restored.Translation.CliConnections;
+    Check(restored.PreserveEditorLineBreaks, "preserve editor line breaks survives INI reload");
+    restored.PreserveEditorLineBreaks = false;
+    Check(restored.SyncViewWithCaretPosition && restored.SyncViewWithFirstVisibleLine, "both navigation switches survive INI reload independently");
+    restored.SyncViewWithCaretPosition = false; restored.SyncViewWithFirstVisibleLine = true;
+    select(restored); Check(persist(), "navigation settings save");
+    Check(!reload().PreserveEditorLineBreaks, "disabled editor line-break preservation survives INI reload");
+    Check(!reload().SyncViewWithCaretPosition && reload().SyncViewWithFirstVisibleLine, "disabling selection sync keeps scroll sync enabled");
+    Check(restored.Theme == "dark" && restored.IsDarkModeEnabled && restored.ResolveDarkMode(false), "explicit dark theme survives INI reload independently of Notepad++");
+    restored.Theme = "light";
+    Check(!restored.ResolveDarkMode(true), "explicit light theme overrides dark Notepad++");
+    restored.Theme = "auto";
+    Check(restored.ResolveDarkMode(true) && !restored.ResolveDarkMode(false), "automatic theme follows Notepad++");
     Check(profiles.Count == 3 && profiles.Any(c => c.ProviderId == "cursor" && c.Model == "model-b" && c.TimeoutSeconds == 333 && c.ParallelRequests == 7 && c.MinimumChunkCharacters == 0)
       && profiles.Any(c => c.Executable == otherPath.Executable && c.Model == "model-c"), "controller restart retains independent providers and executable paths");
     var actual = CliConnectionSettings.Capture(restored.Translation);
@@ -275,6 +324,7 @@ internal static class IniSettingsTests
       reloaded.LoadApiConnections(file + ".api.json");
       Check(savedPreviewOnly && reloaded.ActiveApiConnection.Id == secondProfile.Id, "preview-only save after a transient API load failure retains the selected second endpoint across restart");
       Check(File.ReadAllBytes(file + ".api.json").SequenceEqual(beforeFailedLoad) && Win32.ReadIniValue("Options", "ZoomLevel", file) == "180", "preview-only recovery save preserves the original API catalog bytes and saves zoom");
+      PreviewVisibilityPersistence(directory);
       CliProfilePersistence(directory);
       Console.WriteLine("PASS INI: " + checks + " assertions"); return 0;
     }

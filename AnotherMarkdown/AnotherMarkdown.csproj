@@ -145,6 +145,8 @@
     <Compile Include="Forms\AboutForm.Designer.cs">
       <DependentUpon>AboutForm.cs</DependentUpon>
     </Compile>
+    <Compile Include="Forms\DockingFocusGuard.cs" />
+    <Compile Include="Forms\SyncedSourceCaret.cs" />
     <Compile Include="Forms\MarkdownPreviewForm.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -158,6 +160,14 @@
       <DependentUpon>SettingsForm.cs</DependentUpon>
     </Compile>
     <Compile Include="MarkdownPanelController.cs" />
+    <Compile Include="Forms\MarkdownPreviewForm.Editing.cs" />
+    <Compile Include="Editing\SourceTextEdit.cs" />
+    <Compile Include="Editing\ImageAsset.cs" />
+    <Compile Include="Editing\TranslationExport.cs" />
+    <Compile Include="MarkdownPanelController.Editing.cs" />
+    <Compile Include="MarkdownPanelController.Navigation.cs" />
+    <Compile Include="MarkdownPanelController.History.cs" />
+    <Compile Include="FileVisitHistory.cs" />
     <Compile Include="PluginInfrastructure\ClikeStringArray.cs" />
     <Compile Include="PluginInfrastructure\DllExport\DllExportAttribute.cs" />
     <Compile Include="PluginInfrastructure\Win32.cs" />

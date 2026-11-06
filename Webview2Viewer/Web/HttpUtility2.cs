@@ -1,4 +1,5 @@
-﻿using System.IO;
+﻿using System;
+using System.IO;
 using System.Text.RegularExpressions;
 using System.Web;
 
@@ -26,9 +27,8 @@ namespace Webview2Viewer.Web
 
     public static string UrlPathEncode(string path)
     {
-      path = HttpUtility.UrlPathEncode(path);
-      path = path.Replace("+", "%2B");
-      return path;
+      // Encode each filesystem segment so #, % and ? cannot become URL syntax.
+      return string.Join("/", Array.ConvertAll(path.Split('/'), Uri.EscapeDataString));
     }
   }
 }

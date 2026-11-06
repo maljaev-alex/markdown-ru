@@ -16,18 +16,22 @@ using WebView2 = Microsoft.Web.WebView2.WinForms.WebView2;
 
 namespace Webview2Viewer
 {
-  public class Webview2WebbrowserControl : IDisposable
+  public partial class Webview2WebbrowserControl : IDisposable
   {
-    public Action<string> StatusTextChangedAction { get; set; }
+
     public Action RenderingDoneAction { get; set; }
 
-    public Webview2WebbrowserControl()
+    public Webview2WebbrowserControl() : this(null) { }
+
+    internal Webview2WebbrowserControl(string imagePlacementFile)
     {
+      _imagePlacementFile = imagePlacementFile ?? ImageWindowPlacement.DefaultFile;
       _webView = null;
     }
 
     public void Dispose()
     {
+      _imageWindow?.Dispose();
       _webView?.Dispose();
       _webView = null;
     }
@@ -60,8 +64,40 @@ namespace Webview2Viewer
       webView.Dock = DockStyle.Fill;
       webView.TabIndex = 0;
       webView.NavigationStarting += OnWebBrowser_NavigationStarting;
+      webView.CoreWebView2.NewWindowRequested += (_, args) => {
+        args.Handled = true;
+        OpenLink(args.Uri);
+      };
       webView.ZoomFactor = ConvertToZoomFactor(_settings.ZoomLevel);
+      webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
       webView.CoreWebView2.WebResourceRequested += CoreWebView2_WebResourceRequested;
+      webView.CoreWebView2.WebMessageReceived += (sender, args) => {
+        var message = JToken.Parse(args.WebMessageAsJson) as JObject;
+        if (HandleEditorMessage(webView, args, message)) return;
+        if ((string)message?["type"] == "am.openLink") {
+          if (args.Source != "about:blank" && !args.Source.StartsWith("data:text/html", StringComparison.OrdinalIgnoreCase)) return;
+          var address = (string)message["href"];
+          if (Uri.TryCreate(address, UriKind.Absolute, out var target) && LocalFileLink.IsLocal(target)) OpenLink(address);
+          return;
+        }
+        if ((string)message?["type"] != "am.openImage") return;
+        var imageUrl = (string)message["src"];
+        if (!Uri.TryCreate(imageUrl, UriKind.Absolute, out var uri)
+          || !(uri.Scheme == "http" || uri.Scheme == "https" || imageUrl.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))) return;
+        var title = (string)message["title"];
+        if (string.IsNullOrWhiteSpace(title)) title = "\u0418\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435";
+        webView.BeginInvoke(new Action(() => {
+          if (webView.IsDisposed) return;
+          _imageWindow?.Close();
+          var owner = ImagePreviewWindow.OwnerHandle(webView);
+          var background = webView.FindForm()?.Opacity == 0;
+          var window = new ImagePreviewWindow(webEnvironment, _assetPath, imageUrl, title, owner,
+            request => CoreWebView2_WebResourceRequested(webView, request), background, _imagePlacementFile);
+          _imageWindow = window;
+          window.FormClosed += (_, e) => { if (ReferenceEquals(_imageWindow, window)) _imageWindow = null; };
+          window.Show(new WindowOwner(owner));
+        }));
+      };
 
       var fs = new LocalFileService(webEnvironment, "local.example", _on);
       AddWebService(webView, fs);
@@ -106,9 +142,10 @@ namespace Webview2Viewer
 
     public async Task SetContentAsync(string content, string documentPath, bool readOnlyPreview = false)
     {
-      await _webView;
+      var readyView = await _webView;
+      readyView.CoreWebView2.Settings.IsStatusBarEnabled = false;
       var fs = _webServices.OfType<LocalFileService>().First();
-      fs.ReadOnly = readOnlyPreview;
+      fs.ReadOnly = readOnlyPreview || (EditorSnapshot != null && IsMarkdownPath(documentPath));
 
       var assetsPath = (!string.IsNullOrEmpty(_settings.AssetsPath) && Directory.Exists(_settings.AssetsPath))
         ? _settings.AssetsPath
@@ -119,8 +156,9 @@ namespace Webview2Viewer
         cssFile = _settings.IsDarkModeEnabled ? _settings.DefaultDarkModeCssFile : _settings.DefaultCssFile;
       }
       var lineMark = (_settings.SyncViewWithFirstVisibleLine || _settings.SyncViewWithCaretPosition);
-      var reload = (_documentPath != documentPath);
-      reload = reload || (_readOnlyPreview != readOnlyPreview);
+      var editing = EditorSnapshot != null && IsMarkdownPath(documentPath);
+      var keepEditor = editing && IsMarkdownPath(_documentPath);
+      var reload = !keepEditor && (_documentPath != documentPath || _readOnlyPreview != readOnlyPreview);
       reload = reload || (_assetPath != assetsPath);
       reload = reload || (_cssFile != cssFile);
       reload = reload || (_lineMark != lineMark);
@@ -139,8 +177,17 @@ namespace Webview2Viewer
       content = content.Replace(replaceFileMapping, $"http://{fs.Hostname}");
       fs.SetContent(documentPath, content);
 
+      if (editing) PrepareEditorSnapshot(EditorSnapshot);
+
       if (!reload) {
-        await ExecuteWebviewActionAsync((webView) => webView.ExecuteScriptAsync("window.contentChanged();"));
+        await ExecuteWebviewActionAsync(webView => webView.ExecuteScriptAsync(
+          "window.amSetShowLinkAddresses?.(" + (_settings.ShowLinkAddresses ? "true" : "false") + ");"));
+        _documentPath = documentPath;
+        _readOnlyPreview = readOnlyPreview;
+        var update = editing
+          ? "window.__amSnapshot = " + JsonConvert.SerializeObject(EditorSnapshot, editorJson) + "; window.amReceiveSnapshot?.(window.__amSnapshot);"
+          : "window.contentChanged?.();";
+        await ExecuteWebviewActionAsync((webView) => webView.ExecuteScriptAsync(update));
         return;
       }
 
@@ -173,8 +220,11 @@ namespace Webview2Viewer
       loader = loader.Replace("__BASE_URL__", HttpUtility2.PathToUri(baseDir));
       var options = new JObject {
         ["document"] = "http://local.example" + fs.DocumentUri,
+        ["showLinkAddresses"] = _settings.ShowLinkAddresses,
         ["readOnlyPreview"] = readOnlyPreview
       };
+      if (editing) options["editorSnapshot"] = JToken.FromObject(EditorSnapshot, JsonSerializer.Create(editorJson));
+      options["nativeEditorToolbar"] = EditorUiChanged != null;
 
       if (IsMarkdownPath(documentPath)) {
         options["css"] = cssFile;
@@ -186,7 +236,7 @@ namespace Webview2Viewer
         options["md.extensions"] = JToken.FromObject(_settings.EnabledMarkdownPlugins);
       }
 
-      loader = loader.Replace("__OPTIONS__", JsonConvert.SerializeObject(options));
+      loader = loader.Replace("__OPTIONS__", JsonConvert.SerializeObject(options, editorJson));
 
       await ExecuteWebviewActionAsync((webView) => webView.NavigateToString(loader));
       await SetZoomLevel(_settings.ZoomLevel);
@@ -214,20 +264,22 @@ namespace Webview2Viewer
       }
       else if (!e.Uri.ToString().StartsWith("data:")) {
         e.Cancel = true;
-        var p = new Process();
-        var navUri = new Uri(e.Uri);
-        if (navUri.DnsSafeHost == "local.example") {
-          if (_on.Navigate != null && IsMarkdownPath(navUri.AbsolutePath)) {
-            var path = HttpUtility2.UriToPath(navUri.AbsolutePath);
-            if (File.Exists(path)) {
-              _on.Navigate(this, new NavigateToEvent { Filename = path });
-            }
-          }
-          return;
-        }
-        p.StartInfo = new ProcessStartInfo(e.Uri);
-        p.Start();
+        OpenLink(e.Uri);
       }
+    }
+
+    private void OpenLink(string address)
+    {
+      if (!Uri.TryCreate(address, UriKind.Absolute, out var uri)) return;
+      if (LocalFileLink.IsLocal(uri)) {
+        if (LocalFileLink.TryParse(uri, out var target) && File.Exists(target.Filename))
+          _on.Navigate?.Invoke(this, target);
+        return;
+      }
+      // Internal pages and script/data URLs must never reach the shell.
+      if (uri.Scheme != "http" && uri.Scheme != "https" && uri.Scheme != "ftp" &&
+          uri.Scheme != "ftps" && uri.Scheme != "mailto") return;
+      Process.Start(new ProcessStartInfo(address) { UseShellExecute = true });
     }
 
     private void ExecuteWebviewAction(Func<WebView2, Task> action)
@@ -288,6 +340,13 @@ namespace Webview2Viewer
     const string CONFIG_FOLDER_NAME = "AnotherMarkdown";
 
     private Task<WebView2> _webView;
+    private ImagePreviewWindow _imageWindow;
+    private readonly string _imagePlacementFile;
+    private sealed class WindowOwner : IWin32Window
+    {
+      public WindowOwner(IntPtr handle) { Handle = handle; }
+      public IntPtr Handle { get; }
+    }
     private object _webViewInitLock = new object();
     private string _cssFile;
     private string _assetPath;

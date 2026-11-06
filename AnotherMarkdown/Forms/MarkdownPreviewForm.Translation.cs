@@ -16,7 +16,7 @@ namespace AnotherMarkdown.Forms
     private readonly SemaphoreSlim renderGate = new SemaphoreSlim(1, 1);
     private TranslationOptions translationOptions;
     private CancellationTokenSource translationCancellation;
-    private ToolStripButton translateButton, originalButton, cancelButton, translationSettingsButton;
+    private ToolStripButton translateButton, originalButton, cancelButton, translationSettingsButton, retranslateButton;
     private ToolStripLabel translationStatus;
     private ToolStripLabel translationIndicator;
     private System.Windows.Forms.Timer translationAnimation;
@@ -30,16 +30,22 @@ namespace AnotherMarkdown.Forms
       translationOptions = settings.Translation.Copy();
       translateButton = new ToolStripButton("Перевести") { DisplayStyle = ToolStripItemDisplayStyle.Text, ToolTipText = "Перевести документ на русский через выбранное подключение" };
       originalButton = new ToolStripButton("Оригинал") { DisplayStyle = ToolStripItemDisplayStyle.Text, Enabled = false };
+      retranslateButton = new ToolStripButton("Перевести заново") { DisplayStyle = ToolStripItemDisplayStyle.Text };
       cancelButton = new ToolStripButton("Отмена") { DisplayStyle = ToolStripItemDisplayStyle.Text, Visible = false };
-      translationSettingsButton = new ToolStripButton("Настройки перевода") { DisplayStyle = ToolStripItemDisplayStyle.Text };
+      translationSettingsButton = new ToolStripButton("Настройки") { DisplayStyle = ToolStripItemDisplayStyle.Text };
       translationStatus = new ToolStripLabel();
       translationIndicator = new ToolStripLabel("◐") { Name = "translationIndicator", AccessibleName = "Выполняется перевод", Visible = false, ToolTipText = "Ожидание ответа модели" };
       if (components == null) components = new System.ComponentModel.Container();
       translationAnimation = new System.Windows.Forms.Timer(components) { Interval = 100 };
       translationAnimation.Tick += (_, __) => { translationAnimationFrame = (translationAnimationFrame + 1) % 4; translationIndicator.Text = "◐◓◑◒"[translationAnimationFrame].ToString(); };
       tbPreview.GripStyle = ToolStripGripStyle.Hidden;
-      tbPreview.Items.AddRange(new ToolStripItem[] { translateButton, translationIndicator, originalButton, cancelButton, translationSettingsButton, translationStatus });
+      tbPreview.Items.AddRange(new ToolStripItem[] { translateButton, translationIndicator, originalButton, retranslateButton, cancelButton, translationSettingsButton, translationStatus });
       translateButton.Click += async (_, __) => await TranslateCurrentAsync();
+      retranslateButton.Click += async (_, __) => {
+        if (MessageBox.Show(this, "Заменить черновик новым переводом? Сначала сохрани нужные правки через «Сохранить как…».",
+          "Перевести заново", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+          await RunTranslationAsync(true);
+      };
       originalButton.Click += async (_, __) => {
         CancelTranslation();
         IsTranslationPreview = false;
@@ -55,7 +61,15 @@ namespace AnotherMarkdown.Forms
         UpdateTranslationButtons();
         if (showingTranslation) await RenderPreviewAsync();
       };
-      translationSettingsButton.Click += (_, __) => TranslationSettingsRequested?.Invoke(this, EventArgs.Empty);
+      translationSettingsButton.Click += (_, __) => {
+        if (!translationSettingsButton.Enabled) return;
+        translationSettingsButton.Enabled = false;
+        // Return from UI Automation's Invoke before starting a modal message loop.
+        BeginInvoke(new Action(() => {
+          try { if (!_disposed) TranslationSettingsRequested?.Invoke(this, EventArgs.Empty); }
+          finally { if (!_disposed) translationSettingsButton.Enabled = true; }
+        }));
+      };
       UpdateTranslationButtons();
     }
 
@@ -64,7 +78,6 @@ namespace AnotherMarkdown.Forms
       if (!settings.Translation.ShowButtons || TranslationCache.Key("", translationOptions) != TranslationCache.Key("", settings.Translation)) {
         CancelTranslation();
         IsTranslationPreview = false;
-        translatedText = null;
         translationStatus.Text = "";
       }
       translationOptions = settings.Translation.Copy();
@@ -76,11 +89,13 @@ namespace AnotherMarkdown.Forms
     {
       if (sourceText != text || sourcePath != path) {
         CancelTranslation();
+        var differentFile = sourcePath != path;
         sourceText = text;
         sourcePath = path;
-        translatedText = null;
-        IsTranslationPreview = false;
-        translationStatus.Text = "";
+        editorRevision++;
+        if (sourceIdentity == null) sourceIdentity = Guid.NewGuid().ToString("N");
+        if (differentFile && !managedSourceIdentity) { translatedText = null; IsTranslationPreview = false; }
+        translationStatus.Text = IsTranslationPreview ? "Исходник изменён · перевод редактируется отдельно" : "";
         UpdateTranslationButtons();
       }
       await RenderPreviewAsync();
@@ -96,6 +111,8 @@ namespace AnotherMarkdown.Forms
         var path = sourcePath;
         var translated = IsTranslationPreview;
         forceRender = false;
+        ResetEditorToolbar(GetEditorSnapshot().Session);
+        if (_webView != null) _webView.EditorSnapshot = GetEditorSnapshot();
         await _renderContent(text, path, translated);
         renderedText = text;
         renderedPath = path;
@@ -104,9 +121,18 @@ namespace AnotherMarkdown.Forms
       finally { renderGate.Release(); }
     }
 
-    private async Task TranslateCurrentAsync()
+    private Task TranslateCurrentAsync() => RunTranslationAsync(false);
+
+    private async Task RunTranslationAsync(bool regenerate)
     {
       if (translationCancellation != null || string.IsNullOrWhiteSpace(sourceText)) return;
+      if (!regenerate && translatedText != null && translationIdentity != null) {
+        IsTranslationPreview = true;
+        translationStatus.Text = "Перевод · черновик";
+        UpdateTranslationButtons();
+        await RenderPreviewAsync();
+        return;
+      }
       var text = sourceText;
       var path = sourcePath;
       var options = translationOptions.Copy();
@@ -127,7 +153,8 @@ namespace AnotherMarkdown.Forms
           : value.Total > 1 ? "Перевод… " + completedParts + " из " + value.Total + " частей · " + modelLabel : "Перевод… " + modelLabel;
       });
       try {
-        var cached = translationCache.TryGet(key, out var result);
+        string result = null;
+        var cached = !regenerate && translationCache.TryGet(key, out result);
         if (!cached) {
           result = await new CliTranslator().TranslateAsync(text, options, cancellation.Token, progress);
           acceptingProgress = false;
@@ -136,6 +163,9 @@ namespace AnotherMarkdown.Forms
         acceptingProgress = false;
         if (_disposed || cancellation.IsCancellationRequested || sourceText != text || sourcePath != path) return;
         translatedText = result;
+        translatedSourcePath = path;
+        translationIdentity = Guid.NewGuid().ToString("N");
+        editorRevision++;
         IsTranslationPreview = true;
         translationStatus.Text = cached ? "Русский · из кэша" : "Русский · " + modelLabel;
         await RenderPreviewAsync();
@@ -167,7 +197,7 @@ namespace AnotherMarkdown.Forms
     private void UpdateTranslationButtons()
     {
       var visible = translationOptions.ShowButtons;
-      translateButton.Visible = originalButton.Visible = translationSettingsButton.Visible = translationStatus.Visible = visible;
+      translateButton.Visible = originalButton.Visible = translationStatus.Visible = visible;
       var busy = translationCancellation != null;
       translationIndicator.Visible = visible && busy;
       if (visible && busy) translationAnimation.Start(); else translationAnimation.Stop();
@@ -175,6 +205,9 @@ namespace AnotherMarkdown.Forms
       var markdown = string.Equals(extension, ".md", StringComparison.OrdinalIgnoreCase) || string.Equals(extension, ".mdc", StringComparison.OrdinalIgnoreCase);
       translateButton.Enabled = !busy && !string.IsNullOrWhiteSpace(sourceText) && markdown;
       translateButton.Checked = IsTranslationPreview;
+      translateButton.Text = translatedText == null ? "Перевести" : "Перевод";
+      retranslateButton.Visible = visible && translatedText != null;
+      retranslateButton.Enabled = !busy && markdown && !string.IsNullOrWhiteSpace(sourceText);
       originalButton.Enabled = IsTranslationPreview || busy;
       cancelButton.Visible = visible && busy;
     }

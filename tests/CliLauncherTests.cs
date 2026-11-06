@@ -58,7 +58,10 @@ internal static class CliLauncherTests
       if (args[0] == "spawn-wait") Thread.Sleep(60000);
       return 0;
     }
-    if (args.Length > 0 && args[0] == "flood") { Console.Write(new string('x', 8000001)); Console.Out.Flush(); Thread.Sleep(60000); return 0; }
+    if (args.Length > 0 && (args[0] == "flood" || args[0] == "stderr-flood")) {
+      var writer = args[0] == "flood" ? Console.Out : Console.Error;
+      writer.Write(new string('x', 8000001)); writer.Flush(); Thread.Sleep(60000); return 0;
+    }
     if (args.Length > 0 && args[0] == "echo") {
       Console.Write(new JObject { ["argv"] = new JArray(args.Skip(1)), ["stdin"] = Console.In.ReadToEnd() }.ToString(Newtonsoft.Json.Formatting.None));
       return 0;
@@ -206,11 +209,10 @@ internal static class CliLauncherTests
     var ordinaryInfo = CliCommand.StartInfo(executable, "localized-stderr", directory, "custom");
     Check(ordinaryInfo.StandardOutputEncoding.DecoderFallback is DecoderExceptionFallback
       && ordinaryInfo.StandardErrorEncoding.DecoderFallback is DecoderExceptionFallback,
-      "ordinary CLI providers retain strict UTF-8 stdout and stderr defaults");
-    Exception localizedFailure = null;
-    try { await CliCommand.RunAsync(executable, "localized-stderr", "", 5, CancellationToken.None, directory, "custom"); }
-    catch (Exception error) { localizedFailure = error; }
-    Check(localizedFailure is DecoderFallbackException, "ordinary CLI providers still reject malformed UTF-8 stderr");
+      "CLI stream defaults remain strict; command diagnostics use independent byte decoding");
+    var ordinaryResult = await CliCommand.RunAsync(executable, "localized-stderr", "", 5, CancellationToken.None, directory, "custom");
+    Check(ordinaryResult.ExitCode == 35 && (bool)JObject.Parse(ordinaryResult.StandardOutput)["ok"] && ordinaryResult.StandardError.Length > 0,
+      "ordinary CLI diagnostics preserve localized stderr and the native exit code independently of UTF-8 stdout");
 
     var renamed = Path.Combine(nativeDirectory, "oc.exe");
     File.Copy(executable, renamed);
@@ -257,6 +259,10 @@ internal static class CliLauncherTests
     try { await CliCommand.RunAsync(executable, "flood", "", 10, CancellationToken.None, directory); throw new Exception("FAIL output cap should fail"); }
     catch (InvalidOperationException error) { Check(error.Message.Contains("8"), "stdout cap fails with the bounded-output diagnostic"); }
     Check(floodTimer.Elapsed < TimeSpan.FromSeconds(5), "stdout overflow terminates owned process rather than waiting for the full timeout");
+    floodTimer.Restart();
+    try { await CliCommand.RunAsync(executable, "stderr-flood", "", 10, CancellationToken.None, directory); throw new Exception("FAIL diagnostic cap should fail"); }
+    catch (InvalidOperationException error) { Check(error.Message.Contains("8"), "stderr cap fails with the bounded-output diagnostic"); }
+    Check(floodTimer.Elapsed < TimeSpan.FromSeconds(5), "stderr overflow terminates the owned process before EOF or timeout");
   }
 
   private static bool Alive(int pid)
