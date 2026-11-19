@@ -1,7 +1,7 @@
 name: Build Markdown RU
 on:
   push:
-    branches: [cli-translation, master]
+    branches: [master]
   workflow_dispatch:
 jobs:
   windows-x64:

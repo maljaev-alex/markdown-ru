@@ -1,8 +1,6 @@
 name: Build AnotherMarkdown
 
 on:
-  push:
-    branches: [release]
   pull_request:
     branches: []
   workflow_dispatch:
