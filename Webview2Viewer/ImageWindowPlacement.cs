@@ -16,11 +16,15 @@ namespace Webview2Viewer
     public int Height { get; set; }
     public bool Maximized { get; set; }
 
-    internal static string DefaultFile => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AnotherMarkdown", "image-window.json");
+    private static string PlacementFile(string module) =>
+      Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), module, "image-window.json");
+    internal static string DefaultFile => PlacementFile(MarkdownRu.PluginBranding.Name);
 
     internal static ImageWindowPlacement Load(string path)
     {
       try {
+        if (string.Equals(path, DefaultFile, StringComparison.OrdinalIgnoreCase) && !File.Exists(path))
+          path = PlacementFile(MarkdownRu.PluginBranding.LegacyModuleName);
         var saved = JsonConvert.DeserializeObject<ImageWindowPlacement>(File.ReadAllText(path, Encoding.UTF8));
         return saved != null && saved.Width >= 360 && saved.Height >= 240 && saved.Width <= 100000 && saved.Height <= 100000
           && Math.Abs((long)saved.Left) <= 1000000 && Math.Abs((long)saved.Top) <= 1000000 ? saved : null;

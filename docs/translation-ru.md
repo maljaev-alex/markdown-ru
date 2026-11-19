@@ -1,18 +1,18 @@
-# AnotherMarkdown + Translate-RU — справка по переводу
+# markdown-ru — справка по переводу
 
-**Версия: [0.1.12-ru.45](https://github.com/maljaev-alex/markdown-ru/releases/tag/0.1.12-ru.45).** Репозиторий и сборки:
+**Версия: [0.1.12-ru.46](https://github.com/maljaev-alex/markdown-ru/releases/tag/0.1.12-ru.46).** Репозиторий и сборки:
 [maljaev-alex/markdown-ru](https://github.com/maljaev-alex/markdown-ru),
-[релизы форка](https://github.com/maljaev-alex/markdown-ru/releases).
+[релизы markdown-ru](https://github.com/maljaev-alex/markdown-ru/releases).
 
 Основа — [AnotherMarkdown от ezyuzin](https://github.com/ezyuzin/NppAnotherMarkdown),
 опубликованная версия **0.1.12**. Upstream создал панель предпросмотра,
-WebView2-интеграцию и ресурсы Markdown-рендерера. Форк добавляет перевод через CLI/API
-и поддержку `.mdc`; авторство и лицензия MIT основы сохранены. Визуальный редактор
+WebView2-интеграцию и ресурсы Markdown-рендерера. В markdown-ru добавлены перевод через CLI/API
+и поддержка `.mdc`. Авторство и лицензия MIT основы сохранены. Визуальный редактор
 использует CKEditor 5 по GPL-2.0-or-later; см. [справку редактора](visual-editor.md).
 
 Это подробная справка. Основная пользовательская инструкция — `README.md`,
-который открывает пункт **Плагины → AnotherMarkdown + Translate-RU → Справка**.
-Имя DLL, каталог установки и файл `AnotherMarkdown.ini` сохранены для совместимости.
+который открывает пункт **Плагины → markdown-ru → Справка**.
+С `ru.46` имя плагина, его DLL и папки установки — `markdown-ru`. При создании нового профиля автоматически импортируются настройки прежних сборок.
 
 ## Чтение и перевод
 
@@ -62,7 +62,7 @@ Notepad++ в режиме **Вписать**, чтобы изображение 
 
 ## Настройки
 
-Откройте **Плагины → AnotherMarkdown + Translate-RU → Настройки → Перевод** либо нажмите
+Откройте **Плагины → markdown-ru → Настройки → Перевод** либо нажмите
 **Настройки** в панели, затем выберите страницу **Перевод**.
 
 В поле **Подключение** выберите **CLI** или **API**. Их параметры сохраняются
@@ -112,7 +112,7 @@ Responses и Gemini); это значение используется для н
 или режим streaming. Если ответ обрезан по лимиту, он отображается как ошибка,
 а не как законченный перевод.
 
-Подключения хранятся рядом с INI в `AnotherMarkdown.ini.api.json`. Ключи,
+Подключения хранятся рядом с INI в `markdown-ru.ini.api.json`. Ключи,
 дополнительные заголовки, логины и пароли прокси шифруются Windows DPAPI для текущего пользователя;
 в INI ключей нет. Адрес, модель и дополнительные JSON-параметры сохраняются
 открытым текстом, поэтому для ключа используйте отдельное поле, для секретных
@@ -276,8 +276,8 @@ effort, ручной ID модели, аргументы, формат отве�
 кнопок перевода. Переключение между установками восстанавливает их значения; повторный
 выбор той же программы в списке или через **Выбрать…** ничего не сбрасывает.
 **Сохранить** записывает изменения всех посещённых подключений, **Отмена** их отбрасывает.
-История CLI хранится рядом с INI в `AnotherMarkdown.ini.cli.json`; существующие настройки
-переносятся автоматически. Для API используется прежний файл `AnotherMarkdown.ini.api.json`.
+История CLI хранится рядом с INI в `markdown-ru.ini.cli.json`; существующие настройки
+переносятся автоматически. Для API используется прежний файл `markdown-ru.ini.api.json`.
 
 - **CLI** — список найденных установок. Поиск проверяет `PATH` и обычные каталоги
   установки, ничего не устанавливая и не запуская остальные CLI. **Выбрать…**
@@ -415,8 +415,7 @@ Claude, `{policy}` — политику Gemini. Формат ответа выб
 JSON с `result`, JSON с `response`, события OpenCode, AGY или Kimi.
 Запускатель должен иметь расширение `.exe`, `.cmd` или `.bat`.
 
-Настройки сохраняются в секции `[Translation]` стандартного `AnotherMarkdown.ini`
-в каталоге конфигурации плагинов Notepad++. Они переживают перезапуск редактора.
+Настройки сохраняются в секции `[Translation]` файла `markdown-ru\markdown-ru.ini` в каталоге конфигурации плагинов Notepad++. Они переживают перезапуск редактора.
 Новые INI-файлы используют UTF-16 LE с BOM. Кодировка существующего INI
 сохраняется: если ANSI-файл не может записать символы выбранного пути или модели,
 плагин сообщит об этом вместо замены символов на ?. Такой INI можно пересохранить
@@ -439,15 +438,14 @@ JSON с `result`, JSON с `response`, события OpenCode, AGY или Kimi.
 Требуются Windows, 64-битный Notepad++, .NET Framework 4.7.2 или новее и
 [Microsoft WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
 
-Скачайте сборку из [релизов форка](https://github.com/maljaev-alex/markdown-ru/releases).
+Скачайте сборку из [релизов markdown-ru](https://github.com/maljaev-alex/markdown-ru/releases).
 Закройте Notepad++. Сохраните резервную копию папки плагина, затем распакуйте
-архив `AnotherMarkdown-<версия>-x64.zip` в `Notepad++\plugins\AnotherMarkdown`.
+архив `markdown-ru-<версия>-x64.zip` в `Notepad++\plugins\markdown-ru`.
 Если меняли CSS или другие assets, сохраните свои версии отдельно.
 Сборка предназначена для **64-битного Notepad++**. Для отката закройте редактор
 и восстановите папку из резервной копии.
 
-Обновление AnotherMarkdown через Plugin Admin заменит форк официальной сборкой;
-для сохранения кнопки перевода устанавливайте сборки этого форка.
+При переходе с **AnotherMarkdown + Translate-RU** переместите прежнюю папку `plugins\AnotherMarkdown` за пределы `plugins`. Новый профиль создаётся в `plugins\config\markdown-ru` каталога настроек Notepad++. При первом запуске туда копируются INI и файлы подключений из старого профиля.
 
 Пункт **Справка** открывает установленный `README.md`. Расширенная инструкция
 поставляется как `docs/translation-ru.md` и отдельная копия `TRANSLATION-RU.md`
@@ -525,4 +523,4 @@ python .\build_tools\tests\check_markdown_spec.py --test-executable D:\Temp\agen
 находятся в основной справке `README.md`. Основу предпросмотра разработал
 [ezyuzin/NppAnotherMarkdown](https://github.com/ezyuzin/NppAnotherMarkdown),
 основанный на [mohzy83/NppMarkdownPanel](https://github.com/mohzy83/NppMarkdownPanel).
-RU-форк: [maljaev-alex/markdown-ru](https://github.com/maljaev-alex/markdown-ru).
+Репозиторий — [maljaev-alex/markdown-ru](https://github.com/maljaev-alex/markdown-ru).

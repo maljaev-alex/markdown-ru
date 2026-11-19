@@ -53,7 +53,7 @@ async function main() {
         if (window.hold && message.action === 'apply') window.held = run; else setTimeout(run, 5);
       }
     };
-    await AnotherMarkdownEditor.create({ editorSnapshot: fixture });
+    await MarkdownRuEditor.create({ editorSnapshot: fixture });
     window.newDoc = async (text, edit = true) => {
       window.fixture = { ...fixture, session: 's' + (++fixture.revision), text, revision: fixture.revision + 1, translated: false, readOnly: false, visualEditing: false, modified: false };
       await amEditor.receiveSnapshot({ ...fixture });
@@ -249,7 +249,7 @@ async function main() {
     assert.equal(await page.evaluate(() => fixture.text), 'Left\\\nRight\n');
     await page.evaluate(async () => { fixture.revision++; await newDoc(fixture.text); });
     assert.equal(await page.locator('.ck-content p').evaluate(p => p.querySelectorAll('br').length), 1);
-    assert.equal(await page.evaluate(() => AnotherMarkdownEditor.hasHtml(fixture.text)), false);
+    assert.equal(await page.evaluate(() => MarkdownRuEditor.hasHtml(fixture.text)), false);
   });
   await check('hard breaks retain inline formatting, literal marker text and fenced code', async () => {
     const text = 'AMGFMHARDBREAK0TOKEN **bold  \nmore** and [link\\\nlabel](https://example.test).\n\n```md\none\n<br>\ntwo\n```\n';
@@ -259,7 +259,7 @@ async function main() {
         replaceModelText('bold', 'BOLD'); await amEditor.flush();
       }, { text, preserve });
       assert.equal(await page.evaluate(() => fixture.text), text.replace('bold  ', 'BOLD\\'));
-      assert.equal(await page.evaluate(() => AnotherMarkdownEditor.hasHtml(fixture.text)), false);
+      assert.equal(await page.evaluate(() => MarkdownRuEditor.hasHtml(fixture.text)), false);
     }
   });
   await check('changing wrap display retains pending visual edits', async () => {
@@ -310,7 +310,7 @@ async function main() {
     const text = await page.evaluate(() => fixture.text);
     assert.ok(text.includes('\u041f\u0440\u0438\u0432\u0435\u0442 \ud83d\ude00'));
     assert.ok(text.endsWith(atEntry.slice(atEntry.indexOf('* one'))));
-    assert.equal(await page.evaluate(() => AnotherMarkdownEditor.hasHtml(fixture.text)), false);
+    assert.equal(await page.evaluate(() => MarkdownRuEditor.hasHtml(fixture.text)), false);
   });
   await check('source edit updates WYSIWYG', async () => {
     await page.evaluate(async () => { fixture.text = '# Native change\n\nFrom source.\n'; fixture.revision++; await amEditor.receiveSnapshot({ ...fixture }); });
@@ -332,7 +332,7 @@ async function main() {
       await amEditor.flush();
     });
     const text = await page.evaluate(() => fixture.text);
-    assert.ok(text.includes('changed one')); assert.ok(text.includes('|')); assert.equal(await page.evaluate(() => AnotherMarkdownEditor.hasHtml(fixture.text)), false);
+    assert.ok(text.includes('changed one')); assert.ok(text.includes('|')); assert.equal(await page.evaluate(() => MarkdownRuEditor.hasHtml(fixture.text)), false);
     assert.match(text.split('\n')[1], /:\s*-+.*-+:/, 'GFM alignment survives a cell edit');
   });
   await check('opaque frontmatter/HTML/extensions survive adjacent edits', async () => {

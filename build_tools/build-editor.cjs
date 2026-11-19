@@ -9,7 +9,7 @@ const resolveDependency = createRequire(path.join(dependencies, 'package.json'))
 const esbuild = resolveDependency('esbuild');
 esbuild.build({
   entryPoints: [path.join(root, 'editor/src/index.js')],
-  bundle: true, format: 'iife', globalName: 'AnotherMarkdownEditor', metafile: true,
+  bundle: true, format: 'iife', globalName: 'MarkdownRuEditor', metafile: true,
   target: ['chrome110'], outfile: path.join(output, 'editor.js'),
   // Keep significant tabs/newlines from dependency strings escaped in the generated file.
   supported: { 'template-literal': false },

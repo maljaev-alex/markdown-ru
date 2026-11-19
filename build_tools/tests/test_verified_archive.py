@@ -26,7 +26,7 @@ class VerifiedArchiveTests(unittest.TestCase):
         self.archive = self.root / "fixture.zip"
         self.destination = self.root / "verified-hash" / "fixture"
         with zipfile.ZipFile(self.archive, "w") as bundle:
-            for name, content in [("AnotherMarkdown.dll", b"fixture dll"), ("assets/nested/data.txt", b"fixture data")]:
+            for name, content in [("markdown-ru.dll", b"fixture dll"), ("assets/nested/data.txt", b"fixture data")]:
                 bundle.writestr(zipfile.ZipInfo(name, (2020, 1, 1, 0, 0, 0)), content)
         self.hash = hashlib.sha256(self.archive.read_bytes()).hexdigest()
 
@@ -63,9 +63,9 @@ class VerifiedArchiveTests(unittest.TestCase):
     def test_verified_archive_is_reused_without_network(self):
         with mock.patch("urllib.request.urlopen", side_effect=AssertionError("Offline test attempted network")):
             self.prepare()
-            stamp = (self.destination / "AnotherMarkdown.dll").stat().st_mtime_ns
+            stamp = (self.destination / "markdown-ru.dll").stat().st_mtime_ns
             self.prepare()
-            self.assertEqual(stamp, (self.destination / "AnotherMarkdown.dll").stat().st_mtime_ns)
+            self.assertEqual(stamp, (self.destination / "markdown-ru.dll").stat().st_mtime_ns)
 
     def test_wrong_cached_hash_is_rejected_before_extraction(self):
         with mock.patch("urllib.request.urlopen", side_effect=AssertionError("Must not replace a bad cached archive")):
@@ -79,7 +79,7 @@ class VerifiedArchiveTests(unittest.TestCase):
         self.archive.write_bytes(b"corrupted after first extraction")
         with self.assertRaisesRegex(ValueError, "SHA256 mismatch"):
             self.prepare()
-        self.assertEqual(b"fixture dll", (self.destination / "AnotherMarkdown.dll").read_bytes())
+        self.assertEqual(b"fixture dll", (self.destination / "markdown-ru.dll").read_bytes())
 
     def test_wrong_download_is_not_cached_or_extracted(self):
         self.archive.unlink()
@@ -106,7 +106,7 @@ class VerifiedArchiveTests(unittest.TestCase):
 
     def test_incomplete_extraction_with_existing_dll_is_rebuilt(self):
         self.destination.mkdir(parents=True)
-        (self.destination / "AnotherMarkdown.dll").write_bytes(b"fixture dll")
+        (self.destination / "markdown-ru.dll").write_bytes(b"fixture dll")
         self.prepare()
         self.assertEqual(b"fixture data", (self.destination / "assets/nested/data.txt").read_bytes())
         self.assertEqual([], list(self.destination.parent.glob("*.extract-*")))
@@ -114,9 +114,9 @@ class VerifiedArchiveTests(unittest.TestCase):
 
     def test_modified_extracted_file_is_restored_from_verified_archive(self):
         self.prepare()
-        (self.destination / "AnotherMarkdown.dll").write_bytes(b"tampered dll")
+        (self.destination / "markdown-ru.dll").write_bytes(b"tampered dll")
         self.prepare()
-        self.assertEqual(b"fixture dll", (self.destination / "AnotherMarkdown.dll").read_bytes())
+        self.assertEqual(b"fixture dll", (self.destination / "markdown-ru.dll").read_bytes())
 
     def test_corrupt_crc_cannot_publish_a_partial_extraction(self):
         payload = bytearray(self.archive.read_bytes())

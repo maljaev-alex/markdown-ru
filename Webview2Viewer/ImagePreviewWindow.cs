@@ -33,7 +33,7 @@ namespace Webview2Viewer
       this.resourceRequested = resourceRequested;
       this.background = background;
       this.placementFile = placementFile;
-      Text = imageTitle + " - AnotherMarkdown";
+      Text = imageTitle + " - " + MarkdownRu.PluginBranding.Name;
       ShowInTaskbar = false;
       MinimizeBox = false;
       KeyPreview = true;

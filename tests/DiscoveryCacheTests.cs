@@ -6,7 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using AnotherMarkdown.Translation;
+using MarkdownRu.Translation;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -21,7 +21,7 @@ internal static class DiscoveryCacheTests
     Console.InputEncoding = Utf8; Console.OutputEncoding = Utf8;
     if (args.Length > 0 && args[0] == "app-server") return FakeServer();
     if (args.Length > 0 && args[0] == "exec") return FakeExec(args);
-    scratchRoot = Path.GetFullPath(Directory.Exists(@"D:\Temp") ? @"D:\Temp\agent\markdown-ru" : Path.Combine(Path.GetTempPath(), "AnotherMarkdown-tests"));
+    scratchRoot = Path.GetFullPath(Directory.Exists(@"D:\Temp") ? @"D:\Temp\agent\markdown-ru" : Path.Combine(Path.GetTempPath(), "markdown-ru-tests"));
     scratch = Path.Combine(scratchRoot, "discovery-cache-tests-" + Guid.NewGuid().ToString("N"));
     var oldTemp = Environment.GetEnvironmentVariable("TEMP"); var oldTmp = Environment.GetEnvironmentVariable("TMP");
     var oldLog = Environment.GetEnvironmentVariable("SETTINGS_DISCOVERY_FIXTURE_LOG"); var oldMcp = Environment.GetEnvironmentVariable("SETTINGS_DISCOVERY_FIXTURE_MCP");

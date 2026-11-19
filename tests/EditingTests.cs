@@ -4,7 +4,7 @@ using System.Linq;
 using System.Runtime.Remoting.Messaging;
 using System.Runtime.Remoting.Proxies;
 using System.Text;
-using AnotherMarkdown.Editing;
+using MarkdownRu.Editing;
 using Kbg.NppPluginNET.PluginInfrastructure;
 
 internal static class EditingTests

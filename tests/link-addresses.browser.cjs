@@ -53,7 +53,7 @@ async function main() {
         if (message.action === 'apply') writes.push(message);
         if (message.type === 'am.openLink') openedLinks.push(message.href);
       } };
-      window.testView = await AnotherMarkdownEditor.create({ editorSnapshot: fixture });
+      window.testView = await MarkdownRuEditor.create({ editorSnapshot: fixture });
     }, fixtures);
     let checks = 0;
     for (const editing of [false, true]) {

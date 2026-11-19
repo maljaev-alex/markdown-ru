@@ -3,7 +3,7 @@ using System.Linq;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
-using AnotherMarkdown.Translation;
+using MarkdownRu.Translation;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 

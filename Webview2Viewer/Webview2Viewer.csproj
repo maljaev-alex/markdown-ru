@@ -73,6 +73,9 @@
     <Compile Include="Webview2WebbrowserControl.Editing.cs" />
     <Compile Include="ImagePreviewWindow.cs" />
     <Compile Include="ImageWindowPlacement.cs" />
+    <Compile Include="..\markdown-ru\PluginBranding.cs">
+      <Link>PluginBranding.cs</Link>
+    </Compile>
     <Compile Include="Web\LocalFileService.cs" />
   </ItemGroup>
   <ItemGroup>

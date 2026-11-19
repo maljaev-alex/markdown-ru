@@ -1,4 +1,4 @@
-# Markdown visual editor
+# markdown-ru visual editor
 
 The `SourceMarkdown` plugin extends CKEditor 5 48.0.0's Markdown/GFM processor.
 Its model converters preserve front matter, formulas, reference definitions, HTML

@@ -3,14 +3,15 @@ using System.ComponentModel;
 using System.IO;
 using System.Reflection;
 using System.Runtime.Serialization;
+using System.Security.Cryptography;
 using System.Text;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using AnotherMarkdown;
-using AnotherMarkdown.Entities;
-using AnotherMarkdown.Forms;
-using AnotherMarkdown.Translation;
+using MarkdownRu;
+using MarkdownRu.Entities;
+using MarkdownRu.Forms;
+using MarkdownRu.Translation;
 using Kbg.NppPluginNET.PluginInfrastructure;
 
 internal static class IniSettingsTests
@@ -20,6 +21,52 @@ internal static class IniSettingsTests
   {
     if (!condition) throw new Exception("FAIL: " + label);
     checks++; Console.WriteLine("PASS " + label);
+  }
+
+  private static void LegacyProfileMigration(string directory)
+  {
+    var config = Directory.CreateDirectory(Path.Combine(directory, "migration")).FullName;
+    var legacy = Path.Combine(config, "AnotherMarkdown.ini");
+    var install = Path.Combine(directory, "plugins", "markdown-ru");
+    var assets = Directory.CreateDirectory(Path.Combine(install, "assets")).FullName;
+    var css = Path.Combine(assets, "style.css");
+    File.WriteAllText(css, "body {}");
+    var oldAssets = Path.Combine(directory, "plugins", "AnotherMarkdown", "assets");
+    var externalCss = Path.Combine(directory, "plugins", "AnotherMarkdown-custom", "dark.css");
+    File.WriteAllText(legacy, "[Options]\r\nZoomLevel=175\r\n", Encoding.Unicode);
+    Win32.WriteIniValue("Options", "AssetsPath", oldAssets.Replace('\\', '/'), legacy);
+    Win32.WriteIniValue("Options", "CssFileName", Path.Combine(oldAssets, "style.css"), legacy);
+    Win32.WriteIniValue("Options", "CssDarkModeFileName", externalCss, legacy);
+    File.WriteAllText(legacy + ".cli.json", "[]");
+    File.WriteAllText(legacy + ".models.json", "{}");
+    // Reproduce the wire format used by ru.45 independently of today's writer.
+    const string fixtureKey = "migration-test-value";
+    var encrypted = ProtectedData.Protect(Encoding.UTF8.GetBytes(fixtureKey),
+      Encoding.ASCII.GetBytes("AnotherMarkdown.ApiConnection.v1"), DataProtectionScope.CurrentUser);
+    File.WriteAllText(legacy + ".api.json", "[{\"EncryptedApiKey\":\"" + Convert.ToBase64String(encrypted) + "\"}]");
+    var profile = Path.Combine(config, "markdown-ru");
+    using (File.Open(legacy + ".cli.json", FileMode.Open, FileAccess.Read, FileShare.None)) {
+      Check(PluginSettingsFiles.ResolveIniPath(config, install) == legacy && !Directory.Exists(profile),
+        "a locked legacy profile stays accessible and a partial migration is never published");
+    }
+    var current = PluginSettingsFiles.ResolveIniPath(config, install);
+    Check(current == Path.Combine(profile, "markdown-ru.ini") &&
+      File.ReadAllBytes(current).Take(2).SequenceEqual(Encoding.Unicode.GetPreamble()) &&
+      new[] { ".cli.json", ".api.json", ".models.json" }.All(s =>
+        File.ReadAllBytes(legacy + s).SequenceEqual(File.ReadAllBytes(current + s))),
+      "the rebranded plugin preserves the complete profile, INI encoding and encrypted fields");
+    Check(Win32.ReadIniValue("Options", "AssetsPath", current) == assets.Replace('\\', '/') &&
+      Win32.ReadIniValue("Options", "CssFileName", current) == css.Replace('\\', '/') &&
+      Win32.ReadIniValue("Options", "CssDarkModeFileName", current) == externalCss &&
+      Win32.ReadIniValue("Options", "AssetsPath", legacy) == oldAssets.Replace('\\', '/'),
+      "installed resources move with the plugin; external styles and the original INI retain their paths");
+    Check(Win32.GetPrivateProfileInt("Options", "ZoomLevel", 0, current) == 175 &&
+      ApiConnectionStore.Load(current + ".api.json").Single().ApiKey == fixtureKey,
+      "the new profile reads the prior zoom level and decrypts a ru.45 credential");
+    File.Delete(current + ".api.json");
+    File.WriteAllText(current + ".cli.json", "edited");
+    Check(PluginSettingsFiles.ResolveIniPath(config, install) == current && !File.Exists(current + ".api.json") &&
+      File.ReadAllText(current + ".cli.json") == "edited", "reopening never restores deleted credentials or overwrites new settings");
   }
 
   private static void PreviewVisibilityPersistence(string directory)
@@ -166,6 +213,7 @@ internal static class IniSettingsTests
     Directory.CreateDirectory(directory);
     var file = Path.Combine(directory, "settings.ini");
     try {
+      LegacyProfileMigration(directory);
       File.WriteAllText(file, "[Translation]\r\nModel=before\r\n");
       Win32.WriteIniValue("Translation", "Model", "saved", file);
       Check(Win32.ReadIniValue("Translation", "Model", file, "") == "saved", "successful native INI write can be read back");

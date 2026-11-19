@@ -9,7 +9,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using AnotherMarkdown.Translation;
+using MarkdownRu.Translation;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 

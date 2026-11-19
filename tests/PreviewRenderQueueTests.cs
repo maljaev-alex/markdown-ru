@@ -4,8 +4,8 @@ using System.Reflection;
 using System.Runtime.Serialization;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using AnotherMarkdown;
-using AnotherMarkdown.Forms;
+using MarkdownRu;
+using MarkdownRu.Forms;
 using Kbg.NppPluginNET.PluginInfrastructure;
 
 internal static class PreviewRenderQueueTests

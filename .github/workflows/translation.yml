@@ -1,4 +1,4 @@
-name: Build Markdown RU
+name: Build markdown-ru
 on:
   push:
     branches: [master]
@@ -16,5 +16,5 @@ jobs:
         run: ./build_tools/build-translation.ps1
       - uses: actions/upload-artifact@v4
         with:
-          name: AnotherMarkdown-RU-x64
-          path: Release/AnotherMarkdown-*-x64.zip
+          name: markdown-ru-x64
+          path: Release/markdown-ru-*-x64.zip

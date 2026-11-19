@@ -22,7 +22,7 @@ async function testNavigation(browser, doctype) {
       window.fixture = { session: 'initial', path: 'D:/notes/navigation.md', text: '# Initial\n', revision: 1, syncSelection: true, syncScroll: true };
       window.navMessages = []; window.writes = []; window.drafts = 0; window.native = { anchor: 0, focus: 0, top: 0 }; let receiver;
       window.createLegacyView = async () => {
-        const parser = markdownit(); AnotherMarkdownEditor.configurePreviewParser(parser);
+        const parser = markdownit(); MarkdownRuEditor.configurePreviewParser(parser);
         const setOptions = async () => { document.getElementById('content').innerHTML = parser.render(fixture.text); };
         await setOptions(); return { setOptions, dispose() {} };
       };
@@ -47,7 +47,7 @@ async function testNavigation(browser, doctype) {
           }
         }
       } };
-      await AnotherMarkdownEditor.create({ editorSnapshot: fixture });
+      await MarkdownRuEditor.create({ editorSnapshot: fixture });
       window.openDoc = async (text, edit = false) => {
         fixture = { ...fixture, text, session: 's' + (++fixture.revision), revision: fixture.revision + 1, translated: false, readOnly: false, visualEditing: false, syncSelection: true, syncScroll: true };
         window.native = { anchor: 0, focus: 0, top: 0 };

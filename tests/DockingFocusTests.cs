@@ -3,8 +3,8 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using AnotherMarkdown.Entities;
-using AnotherMarkdown.Forms;
+using MarkdownRu.Entities;
+using MarkdownRu.Forms;
 using Kbg.NppPluginNET.PluginInfrastructure;
 
 internal static class DockingFocusTests

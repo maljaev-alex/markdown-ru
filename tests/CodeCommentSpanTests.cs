@@ -5,7 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
-using AnotherMarkdown.Translation;
+using MarkdownRu.Translation;
 
 internal static class CodeCommentSpanTests
 {
@@ -50,7 +50,7 @@ internal static class CodeCommentSpanTests
   }
   private static int Main(string[] arguments)
   {
-    var temporaryRoot = Directory.Exists(@"D:\Temp") ? @"D:\Temp\agent\markdown-ru" : Path.Combine(Path.GetTempPath(), "AnotherMarkdown-tests");
+    var temporaryRoot = Directory.Exists(@"D:\Temp") ? @"D:\Temp\agent\markdown-ru" : Path.Combine(Path.GetTempPath(), "markdown-ru-tests");
     var directory = Path.Combine(temporaryRoot, "ru16-comment-spans-" + Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(directory);
     try {

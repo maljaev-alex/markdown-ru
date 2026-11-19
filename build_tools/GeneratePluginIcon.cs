@@ -3,7 +3,7 @@ using System;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
-using AnotherMarkdown;
+using MarkdownRu;
 
 internal static class GeneratePluginIcon
 {
@@ -15,7 +15,7 @@ internal static class GeneratePluginIcon
     for (var i = 0; i < sizes.Length; i++) using (var image = PluginIcon.Render(sizes[i])) using (var stream = new MemoryStream()) {
       image.Save(stream, ImageFormat.Png); frames[i] = stream.ToArray();
     }
-    using (var writer = new BinaryWriter(File.Create(Path.Combine(folder, "translate-ru.ico")))) {
+    using (var writer = new BinaryWriter(File.Create(Path.Combine(folder, "markdown-ru.ico")))) {
       writer.Write((ushort)0); writer.Write((ushort)1); writer.Write((ushort)sizes.Length);
       var offset = 6 + 16 * sizes.Length;
       for (var i = 0; i < sizes.Length; i++) {
@@ -25,7 +25,7 @@ internal static class GeneratePluginIcon
       }
       foreach (var frame in frames) writer.Write(frame);
     }
-    using (var image = PluginIcon.Render(128)) image.Save(Path.Combine(folder, "translate-ru.png"), ImageFormat.Png);
+    using (var image = PluginIcon.Render(128)) image.Save(Path.Combine(folder, "markdown-ru.png"), ImageFormat.Png);
     Console.WriteLine("Generated nine native icon sizes and PNG from vector geometry.");
     return 0;
   }

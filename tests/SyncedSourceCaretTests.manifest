@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity name="AnotherMarkdown.SyncedSourceCaretTests" version="1.0.0.0" type="win32"/>
+  <assemblyIdentity name="MarkdownRu.SyncedSourceCaretTests" version="1.0.0.0" type="win32"/>
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     <application>
       <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/>

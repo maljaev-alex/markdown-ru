@@ -5,7 +5,7 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Text.RegularExpressions;
-using AnotherMarkdown.Translation;
+using MarkdownRu.Translation;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 

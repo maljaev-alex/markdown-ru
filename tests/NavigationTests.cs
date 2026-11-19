@@ -4,8 +4,8 @@ using System.Runtime.Remoting.Messaging;
 using System.Runtime.Remoting.Proxies;
 using System.Runtime.Serialization;
 using System.Text;
-using AnotherMarkdown;
-using AnotherMarkdown.Entities;
+using MarkdownRu;
+using MarkdownRu.Entities;
 using Kbg.NppPluginNET.PluginInfrastructure;
 using PanelCommon;
 

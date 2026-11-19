@@ -295,7 +295,7 @@ namespace Webview2Viewer
       catch (Exception) when (_disposed || webView.IsDisposed) { }
     }
 
-    const string CONFIG_FOLDER_NAME = "AnotherMarkdown";
+    const string CONFIG_FOLDER_NAME = MarkdownRu.PluginBranding.Name;
 
     private WebView2 _webView;
     private Task _initialization;

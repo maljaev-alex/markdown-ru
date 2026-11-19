@@ -59,7 +59,7 @@ $msbuild = & $vswhere -latest -products '*' -find 'MSBuild\**\Bin\MSBuild.exe' |
 if (-not $msbuild) { throw 'Visual Studio Build Tools with MSBuild is required.' }
 $buildDirectory = Join-Path $CacheRoot 'build'
 $objDirectory = Join-Path $CacheRoot 'obj'
-& $msbuild (Join-Path $projectRoot 'AnotherMarkdown.sln') /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:SkipLegacyDllExport=true "/p:PackagesDirectory=$packagesDirectory" "/p:TargetFrameworkRootPath=$references\build" "/p:OutDir=$buildDirectory\" "/p:BaseIntermediateOutputPath=$objDirectory\" /v:minimal /nologo
+& $msbuild (Join-Path $projectRoot 'markdown-ru.sln') /t:Rebuild /p:Configuration=Release /p:Platform=x64 /p:SkipLegacyDllExport=true "/p:PackagesDirectory=$packagesDirectory" "/p:TargetFrameworkRootPath=$references\build" "/p:OutDir=$buildDirectory\" "/p:BaseIntermediateOutputPath=$objDirectory\" /v:minimal /nologo
 if ($LASTEXITCODE -ne 0) { throw 'MSBuild failed.' }
 foreach ($assembly in $markdownAssemblies) {
     Copy-Item -LiteralPath $assembly -Destination $CacheRoot -Force
@@ -70,7 +70,7 @@ $ref = Join-Path $references 'build\.NETFramework\v4.7.2'
 $csc = Join-Path (Split-Path $msbuild -Parent) 'Roslyn\csc.exe'
 if (-not $SkipTests) {
     $historyTests = Join-Path $CacheRoot 'FileVisitHistoryTests.exe'
-    & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe "/out:$historyTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" (Join-Path $projectRoot 'AnotherMarkdown\FileVisitHistory.cs') (Join-Path $projectRoot 'tests\FileVisitHistoryTests.cs')
+    & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe "/out:$historyTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" (Join-Path $projectRoot 'markdown-ru\FileVisitHistory.cs') (Join-Path $projectRoot 'tests\FileVisitHistoryTests.cs')
     if ($LASTEXITCODE -ne 0) { throw 'History test compilation failed.' }
     & $historyTests
     if ($LASTEXITCODE -ne 0) { throw 'History tests failed.' }
@@ -85,7 +85,8 @@ if (-not $SkipTests) {
     & $linkTests
     if ($LASTEXITCODE -ne 0) { throw 'Local file link tests failed.' }
     $tests = Join-Path $CacheRoot 'TranslationTests.exe'
-    $sources = @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'AnotherMarkdown\Translation') -Filter '*.cs' | ForEach-Object FullName)
+    $sources = @(Get-ChildItem -LiteralPath (Join-Path $projectRoot 'markdown-ru\Translation') -Filter '*.cs' | ForEach-Object FullName)
+    $sources += Join-Path $projectRoot 'markdown-ru\PluginBranding.cs'
     $sources += Join-Path $projectRoot 'tests\TranslationTests.cs'
     $jsonAssembly = Join-Path $packagesDirectory 'Newtonsoft.Json.13.0.4\lib\net45\Newtonsoft.Json.dll'
     Copy-Item -LiteralPath $jsonAssembly -Destination $CacheRoot -Force
@@ -113,7 +114,7 @@ if (-not $SkipTests) {
     }
     $settingsTests = Join-Path $CacheRoot 'SettingsTests.exe'
     $settingsSources = @($sources | Where-Object { $_ -notlike '*TranslationTests.cs' })
-    $settingsSources += @('AnotherMarkdown\PluginBranding.cs', 'AnotherMarkdown\PluginIcon.cs', 'AnotherMarkdown\Forms\PluginLogo.cs', 'AnotherMarkdown\Entities\Settings.cs', 'AnotherMarkdown\Forms\SettingsForm.cs', 'AnotherMarkdown\Forms\SettingsForm.Designer.cs', 'AnotherMarkdown\Forms\SettingsForm.Translation.cs', 'AnotherMarkdown\Forms\SettingsForm.Api.cs', 'tests\SettingsTests.cs') | ForEach-Object { Join-Path $projectRoot $_ }
+    $settingsSources += @('markdown-ru\PluginIcon.cs', 'markdown-ru\Forms\PluginLogo.cs', 'markdown-ru\Entities\Settings.cs', 'markdown-ru\Forms\SettingsForm.cs', 'markdown-ru\Forms\SettingsForm.Designer.cs', 'markdown-ru\Forms\SettingsForm.Translation.cs', 'markdown-ru\Forms\SettingsForm.Api.cs', 'tests\SettingsTests.cs') | ForEach-Object { Join-Path $projectRoot $_ }
     & $csc "/r:$ref\System.Numerics.dll" @markdownReferences /nologo /noconfig /nostdlib /langversion:7.3 /target:exe "/out:$settingsTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Net.Http.dll" "/r:$ref\System.Security.dll" "/r:$ref\System.Drawing.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$jsonAssembly" $settingsSources
     if ($LASTEXITCODE -ne 0) { throw 'Settings test compilation failed.' }
     $testAssets = Join-Path $CacheRoot 'assets\markdown'
@@ -134,7 +135,7 @@ if (-not $SkipTests) {
         if ($pluginTestName -eq 'SyncedSourceCaretTests') {
             $manifestArgs = @("/win32manifest:$projectRoot\tests\SyncedSourceCaretTests.manifest")
         }
-        & $csc @manifestArgs "/r:$ref\System.Numerics.dll" @markdownReferences /nologo /noconfig /nostdlib /langversion:7.3 /target:exe /platform:x64 "/out:$pluginTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$ref\System.Drawing.dll" "/r:$buildDirectory\AnotherMarkdown.dll" "/r:$buildDirectory\PanelCommon.dll" (Join-Path $projectRoot ('tests\' + $pluginTestName + '.cs'))
+        & $csc @manifestArgs "/r:$ref\System.Numerics.dll" @markdownReferences /nologo /noconfig /nostdlib /langversion:7.3 /target:exe /platform:x64 "/out:$pluginTests" "/r:$ref\System.Security.dll" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$ref\System.Drawing.dll" "/r:$buildDirectory\markdown-ru.dll" "/r:$buildDirectory\PanelCommon.dll" (Join-Path $projectRoot ('tests\' + $pluginTestName + '.cs'))
         if ($LASTEXITCODE -ne 0) { throw "$pluginTestName compilation failed." }
         if ($pluginTestName -eq 'EditingTests') { & $pluginTests (Join-Path $CacheRoot 'editing-tests') }
         else { & $pluginTests }
@@ -142,7 +143,7 @@ if (-not $SkipTests) {
     }
 }
 
-& python (Join-Path $PSScriptRoot 'export_plugin.py') (Join-Path $buildDirectory 'AnotherMarkdown.dll') --ildasm (Join-Path $disassembler 'runtimes\win-x64\native\ildasm.exe') --ilasm (Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\ilasm.exe') --work $CacheRoot
+& python (Join-Path $PSScriptRoot 'export_plugin.py') (Join-Path $buildDirectory 'markdown-ru.dll') --ildasm (Join-Path $disassembler 'runtimes\win-x64\native\ildasm.exe') --ilasm (Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\ilasm.exe') --work $CacheRoot
 if ($LASTEXITCODE -ne 0) { throw 'Native export failed.' }
 
 # Keep the published upstream JavaScript bundle intact; overlay our loader and DLLs.
@@ -150,8 +151,11 @@ $upstream = Get-BuildArchive 'upstream-0.1.12-x64' ('upstream-0.1.12-verified-' 
 $stage = Join-Path $CacheRoot ('package-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage | Out-Null
 try {
-    Get-ChildItem -LiteralPath $upstream | Copy-Item -Destination $stage -Recurse
-    Copy-Item -LiteralPath (Join-Path $buildDirectory 'AnotherMarkdown.dll') -Destination $stage -Force
+    foreach ($folder in @('assets', 'lib')) {
+        Copy-Item -LiteralPath (Join-Path $upstream $folder) -Destination $stage -Recurse
+    }
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'License.txt') -Destination $stage
+    Copy-Item -LiteralPath (Join-Path $buildDirectory 'markdown-ru.dll') -Destination $stage -Force
     foreach ($name in @('Webview2Viewer.dll', 'PanelCommon.dll', 'Markdig.dll', 'System.Memory.dll', 'System.Buffers.dll', 'System.Numerics.Vectors.dll', 'System.Runtime.CompilerServices.Unsafe.dll')) {
         Copy-Item -LiteralPath (Join-Path $buildDirectory $name) -Destination (Join-Path $stage 'lib') -Force
     }
@@ -166,7 +170,8 @@ try {
     foreach ($style in @('style.css', 'style-dark.css')) {
         Copy-Item -LiteralPath (Join-Path $projectRoot ('assets\markdown\' + $style)) -Destination (Join-Path $stage ('assets\markdown\' + $style)) -Force
     }
-    Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\translation-ru.md') -Destination (Join-Path $stage 'TRANSLATION-RU.md')
+    $translationGuide = [IO.File]::ReadAllText((Join-Path $projectRoot 'docs\translation-ru.md'))
+    [IO.File]::WriteAllText((Join-Path $stage 'TRANSLATION-RU.md'), $translationGuide.Replace('](visual-editor.md)', '](docs/visual-editor.md)'), [Text.UTF8Encoding]::new($false))
     Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination (Join-Path $stage 'README.md') -Force
     Copy-Item -LiteralPath (Join-Path $projectRoot 'CHANGELOG.md') -Destination (Join-Path $stage 'CHANGELOG.md') -Force
     $helpDirectory = Join-Path $stage 'help'
@@ -192,10 +197,10 @@ try {
     Copy-Item -LiteralPath (Join-Path $projectRoot 'tests\link-addresses.browser.cjs') -Destination $editorTestDirectory
     $brandDirectory = Join-Path $stage 'assets\branding'
     New-Item -ItemType Directory -Path $brandDirectory -Force | Out-Null
-    Copy-Item -Path (Join-Path $projectRoot 'AnotherMarkdown\Resources\translate-ru.*') -Destination $brandDirectory -Force
+    Copy-Item -Path (Join-Path $projectRoot 'markdown-ru\Resources\markdown-ru.*') -Destination $brandDirectory -Force
     if (-not $SkipTests) {
         $placementTests = Join-Path $buildDirectory 'ImageWindowPlacementTests.exe'
-        & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe /platform:x64 "/out:$placementTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$ref\System.Drawing.dll" "/r:$buildDirectory\Newtonsoft.Json.dll" (Join-Path $projectRoot 'Webview2Viewer\ImageWindowPlacement.cs') (Join-Path $projectRoot 'tests\ImageWindowPlacementTests.cs')
+        & $csc /nologo /noconfig /nostdlib /langversion:7.3 /target:exe /platform:x64 "/out:$placementTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$ref\System.Drawing.dll" "/r:$buildDirectory\Newtonsoft.Json.dll" (Join-Path $projectRoot 'markdown-ru\PluginBranding.cs') (Join-Path $projectRoot 'Webview2Viewer\ImageWindowPlacement.cs') (Join-Path $projectRoot 'tests\ImageWindowPlacementTests.cs')
         if ($LASTEXITCODE -ne 0) { throw 'Image placement test compilation failed.' }
         & $placementTests (Join-Path $CacheRoot 'image-placement-tests')
         if ($LASTEXITCODE -ne 0) { throw 'Image placement tests failed.' }
@@ -210,9 +215,9 @@ try {
         & $editorTests (Join-Path $stage 'assets') (Join-Path $CacheRoot 'editor-integration-tests')
         if ($LASTEXITCODE -ne 0) { throw 'Editor integration tests failed.' }
     }
-    $version = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $buildDirectory 'AnotherMarkdown.dll')).ProductVersion
+    $version = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $buildDirectory 'markdown-ru.dll')).ProductVersion
     if ($version -notmatch '^\d+\.\d+\.\d+-ru\.\d+$') { throw "Unexpected plugin version: $version" }
-    $archive = Join-Path $OutputDirectory "AnotherMarkdown-$version-x64.zip"
+    $archive = Join-Path $OutputDirectory "markdown-ru-$version-x64.zip"
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -Force
     Write-Output "Package: $archive"
     Get-FileHash -LiteralPath $archive -Algorithm SHA256

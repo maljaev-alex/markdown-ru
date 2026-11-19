@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Remoting.Messaging;
 using System.Runtime.Remoting.Proxies;
 using System.Windows.Forms;
-using AnotherMarkdown;
+using MarkdownRu;
 using Kbg.NppPluginNET.PluginInfrastructure;
 
 internal static class SyncedSourceCaretTests
@@ -51,7 +51,7 @@ internal static class SyncedSourceCaretTests
   [STAThread]
   private static void Main()
   {
-    var type = typeof(MarkdownPanelController).Assembly.GetType("AnotherMarkdown.Forms.SyncedSourceCaret", true);
+    var type = typeof(MarkdownPanelController).Assembly.GetType("MarkdownRu.Forms.SyncedSourceCaret", true);
     using (var host = new Host { ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new Point(-30000, -30000), ClientSize = new Size(400, 250) }) {
       host.Show();
       var focus = GetFocus();

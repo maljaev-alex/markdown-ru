@@ -1,6 +1,12 @@
 ## Version History
 
-### Markdown RU 0.1.12-ru.45 (2026-11-19)
+### markdown-ru 0.1.12-ru.46 (2026-11-19)
+
+* Adopt the name `markdown-ru` for the Notepad++ plugin, native DLL, installation folder, release ZIP, settings and developer tools. The About dialog and user guide credit the original AnotherMarkdown project and the libraries used.
+* On first launch, import the previous INI, CLI/API profiles and model catalog together, preserving the INI encoding and existing Windows-encrypted credentials. New settings take precedence on later launches.
+* When upgrading from ru.45 or earlier, move the old `plugins/AnotherMarkdown` folder outside the Notepad++ plugins directory before installing `plugins/markdown-ru/markdown-ru.dll`.
+
+### markdown-ru 0.1.12-ru.45 (2026-11-19)
 
 This release includes the local ru.38–ru.44 iterations listed below: whole-document visual formatting, selection and caret corrections, wrapped-line/table navigation and live zoom updates.
 
@@ -8,40 +14,40 @@ This release includes the local ru.38–ru.44 iterations listed below: whole-doc
 * Apply translation exports atomically, remove newly created image files on export failure and enforce the decoded image size limit. Preserve encoded local paths and replace cached results after explicit retranslation.
 * Coalesce preview updates on the UI thread and isolate visual-edit baselines per source session. Refresh release links and package the editor sources without unrelated local files.
 
-### Markdown RU 0.1.12-ru.44 (included in ru.45)
+### markdown-ru 0.1.12-ru.44 (included in ru.45)
 
 * Display a two-pixel blinking insertion point in both panes, in preview and visual editing. Use the Notepad++ blink interval and restore its caret settings when leaving Markdown.
 
-### Markdown RU 0.1.12-ru.43 (included in ru.45)
+### markdown-ru 0.1.12-ru.43 (included in ru.45)
 
 * Keep the source insertion point visible over the Scintilla drawing surface after a render click.
 * Preserve the visual editor's caret when switching applications and resume editing after keyboard reactivation.
 
-### Markdown RU 0.1.12-ru.42 (included in ru.45)
+### markdown-ru 0.1.12-ru.42 (included in ru.45)
 
 * Keep the Markdown source on the visible table row when scrolling the preview or CKEditor.
 * Update the source caret and viewport during continuous navigation. Use the actual WebView2 viewport to reveal the caret in long documents.
 
-### Markdown RU 0.1.12-ru.41 (included in ru.45)
+### markdown-ru 0.1.12-ru.41 (included in ru.45)
 
 * Map table selections and carets by their Markdown row and cell, including padded columns and reverse selections.
 * Synchronize the visible part of wrapped lines and bring the active selection end into view on both axes, including horizontally scrollable tables and code.
 
-### Markdown RU 0.1.12-ru.40 (included in ru.45)
+### markdown-ru 0.1.12-ru.40 (included in ru.45)
 
 * Apply a saved zoom change to the open Markdown preview and visual editor. Preserve the editing session and its undo history.
 * Match the zoom slider to the effective WebView2 maximum of 500%. Older settings above 500% open at that maximum.
 
-### Markdown RU 0.1.12-ru.39 (included in ru.45)
+### markdown-ru 0.1.12-ru.39 (included in ru.45)
 
 * Clear the Notepad++ selection when a click clears the selection in the rendered preview. Keep the caret at the clicked position and preserve a pending selection while synchronizing scrolling.
 
-### Markdown RU 0.1.12-ru.38 (included in ru.45)
+### markdown-ru 0.1.12-ru.38 (included in ru.45)
 
 * Format the entire Notepad++ buffer when visual editing starts, including lists with inline HTML and Markdown inside containers and tabs.
 * Restore the original text and line endings when leaving without net edits. After an edit, keep the formatted document in the buffer until the user saves it.
 
-### Markdown RU 0.1.12-ru.37 (2026-11-07)
+### markdown-ru 0.1.12-ru.37 (2026-11-07)
 
 This release includes the local ru.22–ru.36 iterations listed below: the visual Markdown editor, two-way navigation, image viewer, local file links, file history and display settings.
 
@@ -49,106 +55,106 @@ This release includes the local ru.22–ru.36 iterations listed below: the visua
 * Persist the enabled preview independently of temporary hiding on non-Markdown files. Restore on NPPN_READY after the session loads, or when returning to Markdown.
 * Save manual open/close immediately, preserve the choice during shutdown, and resume normal behavior after a canceled exit.
 
-### Markdown RU 0.1.12-ru.36 (included in ru.37)
+### markdown-ru 0.1.12-ru.36 (included in ru.37)
 
 * Center the requested source line after opening a local file link. Keep it visible when hiding the Markdown dock or showing a horizontal scrollbar, and focus the text editor for non-Markdown targets.
 
-### Markdown RU 0.1.12-ru.35 (included in ru.37)
+### markdown-ru 0.1.12-ru.35 (included in ru.37)
 
 * Hide the Markdown panel on other file types and restore it on Markdown tabs when previously enabled. Preserve manual closing and visual drafts.
 * Add native Back/Forward toolbar buttons with light/dark icons and availability states. Track visited buffer IDs, skip closed tabs and clear forward history after a new visit.
 
-### Markdown RU 0.1.12-ru.34 (included in ru.37)
+### markdown-ru 0.1.12-ru.34 (included in ru.37)
 
 * Open local file links of any extension in Notepad++, including BSL, JSON and XML. Support one-based :line and :line:column suffixes, encoded filenames, relative links and file URLs.
 * Handle CKEditor Ctrl+click, its link balloon and preview clicks through the same native file-open route. Recognize drive paths and file URLs without replacing them with #; retain the original Markdown and keep script/data protocols blocked.
 * Show readable local paths in the green address indicator, including Cyrillic and source positions. Add native WebView2 click and link-target regressions.
 
-### Markdown RU 0.1.12-ru.33 (included in ru.37)
+### markdown-ru 0.1.12-ru.33 (included in ru.37)
 
 * Fix immediate hovered-link visibility: WebView2 only applies native status-bar changes on the next navigation. Keep its native overlay disabled and show a page-owned, noninteractive URL indicator controlled by the existing setting.
 * Update preview, WYSIWYG and legacy rendering without reloading the document. Test actual pointer hover and visible URL content during setting toggles, rather than just reading the native property.
 
-### Markdown RU 0.1.12-ru.32 (included in ru.37)
+### markdown-ru 0.1.12-ru.32 (included in ru.37)
 
 * Rename the setting to «Показывать адреса ссылок» and remove the empty native preview status strip. Use the recovered height for document content.
 * Apply the existing ShowStatusbar INI preference to WebView2's native hovered-link URL overlay, initially and on settings updates in preview and WYSIWYG. Preserve the upper synchronization status.
 
-### Markdown RU 0.1.12-ru.31 (included in ru.37)
+### markdown-ru 0.1.12-ru.31 (included in ru.37)
 
 * Add «Сохранять переносы строк в редакторе» on the first settings page, persisted as PreserveEditorLineBreaks. Default to reflowing Markdown soft wraps across the editor width; optionally retain source line breaks.
 * Keep source spelling and CRLF when switching the option. Preserve explicit Markdown hard breaks and emit standard GFM breaks for Shift+Enter in either mode. Verify layout, persistence, navigation and the native WebView2 settings bridge.
 
-### Markdown RU 0.1.12-ru.30 (included in ru.37)
+### markdown-ru 0.1.12-ru.30 (included in ru.37)
 
 * Place «Просмотр» before «Редактирование» in the mode toolbar.
 
-### Markdown RU 0.1.12-ru.29 (included in ru.37)
+### markdown-ru 0.1.12-ru.29 (included in ru.37)
 
 * Rename the mode buttons to «Редактирование» and «Просмотр» in both the native toolbar and the web editor.
 
-### Markdown RU 0.1.12-ru.28 (included in ru.37)
+### markdown-ru 0.1.12-ru.28 (included in ru.37)
 
 * Keep the synchronized source caret visible while preview or WYSIWYG owns keyboard focus. Draw a passive, click-through marker using the source theme and native text coordinates; do not alter Scintilla focus or undo history.
 * Hide the marker for native source focus, hidden/folded text, a closed panel, another document or translated draft. Add native visibility, geometry and focus regressions.
 
-### Markdown RU 0.1.12-ru.27 (included in ru.37)
+### markdown-ru 0.1.12-ru.27 (included in ru.37)
 
 * Synchronize caret, directed text selection and scrolling between the Notepad++ buffer and both preview and WYSIWYG. Keep focus in the active pane and display passive selection/caret markers in the rendered document.
 * Map UTF-16 positions through Markdown block spans, hidden syntax and Scintilla byte offsets. Guard navigation by document session and text revision, suppress programmatic echoes, and apply the visual caret together with text edits.
 * Enable independent cursor/selection and scroll switches by default. Keep translated drafts isolated. Add browser, native navigation, INI persistence and real WebView2 regressions.
 
-### Markdown RU 0.1.12-ru.26 (included in ru.37)
+### markdown-ru 0.1.12-ru.26 (included in ru.37)
 
 * Apply dark-theme hover and divider colors to split buttons. The Code Block action and language arrow no longer inherit a near-white background when hovering either half or opening the language menu.
 
-### Markdown RU 0.1.12-ru.25 (included in ru.37)
+### markdown-ru 0.1.12-ru.25 (included in ru.37)
 
 * Move Code Block and Horizontal Line onto the main editor toolbar. Remove the More submenu and wrap toolbar items in narrow panels instead of hiding them in an overflow menu.
 
-### Markdown RU 0.1.12-ru.24 (included in ru.37)
+### markdown-ru 0.1.12-ru.24 (included in ru.37)
 
 * Preserve the spelling of edited Markdown by projecting text changes onto source spans and validating their meaning through the editor. Retain list markers, spacing, emphasis delimiters, reference links and table padding during text edits; retain canonical Markdown as the fallback for structural changes.
 * Right-align synchronization status and remove the redundant Save action for original documents. Keep native Notepad++ saving and Save As for translated drafts.
 * Synchronize the native Markdown toolbar button and menu check with panel visibility, including closing a floating panel.
 * Add regressions for Cyrillic list edits, varied Markdown syntax, concurrent edits within one list, task checkboxes and the real WebView2 bridge.
 
-### Markdown RU 0.1.12-ru.23 (included in ru.37)
+### markdown-ru 0.1.12-ru.23 (included in ru.37)
 
 * Open documents in preview by default; expose Edit and Preview in the same native toolbar as translation, Settings, Save and synchronization status. Hide formatting controls until editing is selected.
 * Restore the original preview styling and readable light/dark editor text, headings and tables. Add persistent automatic, light and dark theme selection on the first Settings page.
 * Rename the toolbar settings action to Settings and open the first page. Cover mode switching, stale toolbar commands, theme persistence and native WebView2 contrast in regression checks.
 
-### Markdown RU 0.1.12-ru.22 (included in ru.37)
+### markdown-ru 0.1.12-ru.22 (included in ru.37)
 
 * Add a Russian CKEditor 5 toolbar with Markdown + GFM output, live two-way synchronization with the Notepad++ buffer, native saving, images and read-only handling. Do not generate raw HTML for formatting. Preserve unchanged source blocks, EOLs, reference definitions and opaque unsupported syntax.
 * Compare the document identity and base text before each write. Merge independent edits using a three-way diff, retain pending drafts across tab switches and show overlapping edits for explicit resolution. Keep programmatic loading out of Undo history and preserve Unicode byte boundaries in Scintilla edits.
 * Keep translated text in a separate editable draft. Export it only through Save As to a different file; rebase Markdown links and materialize pasted images on export. Retain per-document drafts while switching tabs and offer an explicit retranslation action.
 * Include browser regressions, real WebView2 bridge checks and native tests for encoding, translation drafts and export. Ship the CKEditor license, integration source and pinned frontend build dependencies.
 
-### Markdown RU 0.1.12-ru.21 (2026-10-10)
+### markdown-ru 0.1.12-ru.21 (2026-10-10)
 
 * Populate model lists independently of the parent window's paint events. Apply ready CLI/API catalogs before showing Settings, preload the persistent cache on a background worker at plugin initialization, and remove the temporary saved-model caption.
 * Add cold and warm CLI/API regressions that deliberately suppress parent painting and never use screenshot rendering to trigger discovery.
 
-### Markdown RU 0.1.12-ru.20 (unreleased)
+### markdown-ru 0.1.12-ru.20 (unreleased)
 
 * Keep API model catalogs when leaving or renaming a profile, and when editing the selected model or translation options during discovery. Preserve the current model on a late response, suppress empty popups, and safely replace an open model list.
 * Group advertised Fast-only CLI aliases into the same model and effort selectors. Keep their exact launch IDs; show Fast checked and read-only when no normal counterpart exists. Refresh older CLI catalog caches once to apply the new normalization.
 * Align field and action columns, match dropdown widths to their fields, expand the model when Effort/Fast are hidden, and wrap options on narrow windows. Recalculate scrolling after dynamic layout and font changes. Add UI regressions and verify real Cursor and RouterAI catalogs.
 
-### Markdown RU 0.1.12-ru.19 (unreleased)
+### markdown-ru 0.1.12-ru.19 (unreleased)
 
 * Preserve API effort and its verified model/catalog identity when Settings is saved before API model discovery completes or after it fails. Keep unpaired Cursor Fast models selectable while paired aliases remain one model plus the Fast checkbox.
 * Prevent stale disk metadata from replacing a newer in-memory catalog. Restore the original preview after cancellation during a deferred render; reject inline code moved out of its Markdown link; substitute CLI argument placeholders only once.
 * Keep API connection actions visible at the default window size, align the detailed fields and profile buttons, and keep the "0 characters" help phrase together.
 
-### Markdown RU 0.1.12-ru.18 (unreleased)
+### markdown-ru 0.1.12-ru.18 (unreleased)
 
 * Keep each CLI model on one row. Show effort only when levels are advertised; show Fast as a separate checkbox only for an exact matching CLI alias, including conservative support beyond Cursor. Restore the exact Fast ID in saved profiles and keep model-row geometry stable while metadata loads.
 * Hide API effort when the selected model does not explicitly advertise protocol-supported levels. Invalidate older persisted model catalogs once so they cannot supply obsolete effort or Fast metadata; subsequent catalogs retain their 24-hour lifetime.
 
-### Markdown RU 0.1.12-ru.17 (unreleased)
+### markdown-ru 0.1.12-ru.17 (unreleased)
 
 * Start CLI installation discovery and selected CLI/API model lookup on background workers while constructing the settings dialog. Populate the current API profile automatically on open, profile or connection changes and service selection; an empty model picker also requests the catalog. Keep Save and model editing responsive during discovery.
 * Persist successful CLI and API model catalogs for 24 hours beside the plugin INI, without API credentials or endpoint URLs. Explicit **Refresh** bypasses completed cache entries. Keep installation scanning on a five-minute in-memory cache.
@@ -156,14 +162,14 @@ This release includes the local ru.22–ru.36 iterations listed below: the visua
 * Enable API effort only when the selected model entry explicitly advertises protocol-supported levels. Otherwise the selector is disabled and the parameter is omitted; legacy unconfirmed values are ignored until reselected from the model catalog. The UI identifies the outgoing protocol field when effort is available.
 * Start Markdown chunk planning and Codex isolation lookup concurrently before the existing bounded parallel translation workers. Add UI, cache, provider-effort and alias regression coverage.
 
-### Markdown RU 0.1.12-ru.16 (unreleased)
+### markdown-ru 0.1.12-ru.16 (unreleased)
 
 * Translate human comments and annotations through separate prose slots inside immutable code blocks. Support conservative comment parsing for PowerShell, Python, shell, BSL, C-family languages and JavaScript/TypeScript, directory-tree notes, text pseudo-call notes and Markdown examples. Preserve commands, technical tokens, delimiters, source lines and signed PowerShell blocks.
 * Automatically retry only a part whose protected Markdown or annotation validation failed, with fresh markers and a corrective prompt, up to three total attempts. Keep completed parts, show retry progress and retain cancellation. Network, authentication, rate-limit, timeout and truncated-response failures are not retried.
 * Allow natural Russian word order to rearrange inline-code markers within their original paragraph or table cell. Continue rejecting missing/duplicate markers, code-block reordering and movement between source blocks; restore each marker by its ID.
 * Invalidate old translation-cache entries and add regression coverage for annotation injection, exact source restoration and bounded retry orchestration.
 
-### Markdown RU 0.1.12-ru.15 (2026-10-09)
+### markdown-ru 0.1.12-ru.15 (2026-10-09)
 
 * Parse Markdown structure with Markdig 1.4.0 before choosing translation boundaries. Keep sections up to 12,000 characters whole; split larger or heading-free documents between independent paragraphs, retaining code, lists, tables, quotes and related explanations together.
 * Remove the former 8,000-character threshold. Add a configurable minimum part size (2,000 characters by default, 0 disables the minimum) and retain the 1–8 simultaneous-request limit. Document structure can reduce the actual number of parts.
@@ -175,7 +181,7 @@ This release includes the local ru.22–ru.36 iterations listed below: the visua
 * Bundle verified Markdig/System.Memory runtime dependencies and their licenses; the markdown-it preview renderer remains unchanged.
 * Expand regression coverage for Markdown protection, parallel CLI/API requests, per-connection persistence, asynchronous discovery and settings layout. Include an independent CommonMark corpus runner covering all 652 specification examples.
 
-### Markdown RU 0.1.12-ru.9
+### markdown-ru 0.1.12-ru.9
 
 * Add persistent 1-8 parallel translation requests for CLI and API, defaulting to one whole-document request.
 * Split long Markdown at conservative block boundaries, provide neighboring source context, and assemble only target translations in source order.
@@ -183,7 +189,7 @@ This release includes the local ru.22–ru.36 iterations listed below: the visua
 * Resolve Codex isolation once per document and retain per-request timeouts and existing credential/proxy policies.
 * Cover Markdown boundaries, concurrent CLI/API transports, stable assembly, cancellation and settings persistence with regression tests.
 
-### Markdown RU 0.1.12-ru.8
+### markdown-ru 0.1.12-ru.8
 
 * Add per-API system/direct/custom HTTP and SOCKS5 proxy settings, explicit authentication, remote/local SOCKS DNS and DPAPI-protected proxy credentials.
 * Invalidate cached API translations when the output-token parameter changes.
@@ -208,13 +214,13 @@ This release includes the local ru.22–ru.36 iterations listed below: the visua
 * Apply provider environment policies using the selected CLI profile even for renamed executables.
 * Send AGY prompts over documented JSON stdin and exclude unsupported Kimi batch launchers from automatic profiles.
 
-### Markdown RU 0.1.12-ru.7
+### markdown-ru 0.1.12-ru.7
 
 * Rename the plugin UI to AnotherMarkdown + Translate-RU; show the fork URL and retain upstream credits.
 * Update the installed Help/README with translation, CLI/API setup and current model/effort behavior.
 * Replace the stretched legacy artwork with a square vector mark, native icon sizes from 16 to 256 pixels, and light/dark toolbar variants.
 
-### Markdown RU 0.1.12-ru.6
+### markdown-ru 0.1.12-ru.6
 
 * Group Cursor effort aliases even when their display names omit the effort; hide Fast variants.
 * Sort CLI and API model selectors alphabetically while preserving the saved choice.

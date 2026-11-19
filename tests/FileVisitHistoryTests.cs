@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using AnotherMarkdown;
+using MarkdownRu;
 class FileVisitHistoryTests {
   static int checks;
   static void Check(bool value) { if (!value) throw new Exception("History assertion " + checks); checks++; }

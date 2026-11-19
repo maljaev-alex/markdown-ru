@@ -9,7 +9,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using AnotherMarkdown.Translation;
+using MarkdownRu.Translation;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -25,7 +25,7 @@ internal static class ParallelTranslationTests
     Console.InputEncoding = Utf8; Console.OutputEncoding = Utf8;
     if (args.Length != 0 && args[0] == "app-server") return FakeServer();
     if (args.Length != 0 && (args[0] == "fake-echo" || args[0] == "exec")) return FakeEcho(args);
-    scratchRoot = Path.GetFullPath(Directory.Exists(@"D:\Temp") ? @"D:\Temp\agent\markdown-ru" : Path.Combine(Path.GetTempPath(), "AnotherMarkdown-tests"));
+    scratchRoot = Path.GetFullPath(Directory.Exists(@"D:\Temp") ? @"D:\Temp\agent\markdown-ru" : Path.Combine(Path.GetTempPath(), "markdown-ru-tests"));
     scratch = Path.Combine(scratchRoot, "parallel-tests-" + Guid.NewGuid().ToString("N"));
     var oldTemp = Environment.GetEnvironmentVariable("TEMP");
     var oldTmp = Environment.GetEnvironmentVariable("TMP");

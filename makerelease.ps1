@@ -6,13 +6,13 @@ Copy-Item -Force -Recurse -Path Webview2Viewer\bin\Release\runtimes\ -Destinatio
 
 function makeReleaseZip($filename, $targetPlattform)
 {
-	$zipName = "Release\AnotherMarkdown-" + (Get-Item $filename).VersionInfo.FileVersion + "-" + $targetPlattform + ".zip"
+	$zipName = "Release\markdown-ru-" + (Get-Item $filename).VersionInfo.FileVersion + "-" + $targetPlattform + ".zip"
 	Compress-Archive `
     -Force `
     -DestinationPath $zipName `
     -LiteralPath $filename, 'Release\lib\', 'README.md', 'help\', 'assets\', 'License.txt' 
 }
 
-makeReleaseZip "AnotherMarkdown\bin\Release\AnotherMarkdown.dll" "x86"
-makeReleaseZip "AnotherMarkdown\bin\Release-x64\AnotherMarkdown.dll" "x64"
+makeReleaseZip "markdown-ru\bin\Release\markdown-ru.dll" "x86"
+makeReleaseZip "markdown-ru\bin\Release-x64\markdown-ru.dll" "x64"
 pause

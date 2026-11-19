@@ -7,9 +7,9 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using AnotherMarkdown.Entities;
-using AnotherMarkdown.Forms;
-using AnotherMarkdown.Translation;
+using MarkdownRu.Entities;
+using MarkdownRu.Forms;
+using MarkdownRu.Translation;
 
 internal static class PreviewProgressTests
 {

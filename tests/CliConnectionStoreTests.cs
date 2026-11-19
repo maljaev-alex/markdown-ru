@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using AnotherMarkdown.Translation;
+using MarkdownRu.Translation;
 using Newtonsoft.Json;
 
 internal static class CliConnectionStoreTests
@@ -57,7 +57,7 @@ internal static class CliConnectionStoreTests
   }
   private static int Main()
   {
-    var temporaryRoot = Directory.Exists(@"D:\Temp") ? @"D:\Temp\agent\markdown-ru" : Path.Combine(Path.GetTempPath(), "AnotherMarkdown-tests");
+    var temporaryRoot = Directory.Exists(@"D:\Temp") ? @"D:\Temp\agent\markdown-ru" : Path.Combine(Path.GetTempPath(), "markdown-ru-tests");
     var directory = Path.Combine(temporaryRoot, "cli-connection-store-" + Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(directory);
     try {

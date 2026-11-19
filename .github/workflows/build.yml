@@ -1,4 +1,4 @@
-name: Build AnotherMarkdown
+name: Build markdown-ru (legacy MSBuild)
 
 on:
   pull_request:
@@ -39,7 +39,7 @@ jobs:
           write-host (ConvertTo-Json $response);
 
           $artefacts = $response.artifacts |
-            Where-Object { $_.name -like "AnotherMarkdown-*" } |
+            Where-Object { $_.name -like "markdown-ru-*" } |
             Sort-Object created_at -Descending
 
           $newVersion = "0.1";
@@ -75,7 +75,7 @@ jobs:
           }
 
           Write-Host "New version: $newVersion"
-          $file = "AnotherMarkdown/Properties/AssemblyInfo.cs"
+          $file = "markdown-ru/Properties/AssemblyInfo.cs"
           $content = Get-Content $file -Raw
 
           $content = $content `
@@ -102,12 +102,12 @@ jobs:
       - name: Restore NuGet packages
         shell: pwsh
         run: |
-          nuget restore AnotherMarkdown.sln
+          nuget restore markdown-ru.sln
 
       - name: Build x86
         shell: pwsh
         run: |
-          msbuild AnotherMarkdown.sln `
+          msbuild markdown-ru.sln `
             /target:Clean,Build `
             /p:Configuration=Release `
             /p:Platform=x86
@@ -115,7 +115,7 @@ jobs:
       - name: Build x64
         shell: pwsh
         run: |
-          msbuild AnotherMarkdown.sln `
+          msbuild markdown-ru.sln `
             /target:Clean,Build `
             /p:Configuration=Release `
             /p:Platform=x64
@@ -148,7 +148,7 @@ jobs:
 
           $version = "${{ steps.version.outputs.APP_VERSION }}"
           function Make-ReleaseFolder($sourceDir, $targetPlatform) {
-            $name = "AnotherMarkdown-$($version)-$($prefix)$($targetPlatform)";
+            $name = "markdown-ru-$($version)-$($prefix)$($targetPlatform)";
             $targetDir = "Release/$name"
             New-Item -ItemType Directory -Path "$targetDir" | Out-Null
             New-Item -ItemType Directory -Path "$targetDir/lib" | Out-Null
@@ -157,17 +157,17 @@ jobs:
             Copy-Item -Force -Recurse -Path "$sourceDir/*.dll" -Destination "$targetDir/lib"
             Copy-Item -Force -Recurse -Path "$sourceDir/runtimes/win-$($targetPlatform)" -Destination "$targetDir/lib/runtimes/win-$($targetPlatform)"
             
-            Get-ChildItem "$targetDir/lib" -Recurse -Filter "AnotherMarkdown.*" | Move-Item -Destination "$targetDir" -Force
+            Get-ChildItem "$targetDir/lib" -Recurse -Filter "markdown-ru.*" | Move-Item -Destination "$targetDir" -Force
             
             Copy-Item -Force -Recurse -Path "README.md","CHANGELOG.md","help","assets","License.txt" -Destination "$targetDir"
             Copy-Item -Force -Recurse -Path "PluginPack/dist/js/*.js" -Destination "$targetDir/assets/markdown"
             return $name;
           }
           
-          $name = Make-ReleaseFolder "AnotherMarkdown\bin\Release" "x86"
+          $name = Make-ReleaseFolder "markdown-ru\bin\Release" "x86"
           "X86_NAME=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
-          $name = Make-ReleaseFolder "AnotherMarkdown\bin\Release-x64" "x64"
+          $name = Make-ReleaseFolder "markdown-ru\bin\Release-x64" "x64"
           "X64_NAME=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Upload x86 release
@@ -195,7 +195,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.version.outputs.APP_VERSION }}
-          name: NppAnotherMarkdown ${{ steps.version.outputs.APP_VERSION }}
+          name: markdown-ru ${{ steps.version.outputs.APP_VERSION }}
           draft: false
           prerelease: false
           files: |
