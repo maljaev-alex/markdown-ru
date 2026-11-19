@@ -24,7 +24,8 @@ internal static class SettingsTests
         Check(picker.InitialDirectory == Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) && picker.FileName == Assembly.GetExecutingAssembly().Location, "CLI picker starts in selected executable directory");
         Check(picker.Filter == "CLI (*.exe;*.cmd;*.bat)|*.exe;*.cmd;*.bat", "CLI picker supports native programs and official batch launchers");
       }
-      var settings = new Settings { ZoomLevel = 9000, EnabledMarkdownPlugins = new[] { "attrs" } };
+      var settings = new Settings { ZoomLevel = 800, EnabledMarkdownPlugins = new[] { "tasks-list", "custom-from-ini", "attrs", "qrcode", "pano360" } };
+      Check(new Settings { ZoomLevel = 0 }.ZoomLevel == 80, "an invalid zoom uses the slider minimum");
       EffortSettings();
       SimpleModelSettings();
       ModelSortingSettings();
@@ -38,7 +39,8 @@ internal static class SettingsTests
       DynamicModelLayout();
       settings.Translation.ShowButtons = false;
       using (var form = new SettingsForm(settings)) {
-        Check(Find<TrackBar>(form, "trackBar1").Value == 800, "invalid stored zoom is clamped");
+        var zoomSlider = Find<TrackBar>(form, "trackBar1");
+        Check(zoomSlider.Maximum == 500 && zoomSlider.Value == 500 && form.ZoomLevel == 500, "legacy zoom above the WebView limit opens at 500 percent");
         Check(Find<TextBox>(form, "tbCssFile").Text == "", "empty CSS keeps default reset semantics");
         Check(!Find<ComboBox>(form, "translationOutput").Enabled && Find<TextBox>(form, "translationArguments").ReadOnly, "automatic arguments and output format are read-only");
         var customArguments = (CheckBox)typeof(SettingsForm).GetField("translationCustomArguments", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(form);
@@ -61,10 +63,18 @@ internal static class SettingsTests
         Find<CheckBox>(form, "cbShowToolbar").Checked = true;
         typeof(SettingsForm).GetMethod("btnSave_Click", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { null, EventArgs.Empty });
         Check(form.DialogResult == DialogResult.OK && form.CssFileName == "changed.css" && form.CssDarkModeFileName == "dark.css" && form.ZoomLevel == 175 && form.ShowToolbar, "save captures edited preview controls");
-        Check(settings.CssFileName == null && settings.ZoomLevel == 9000 && !settings.ShowToolbar, "dialog edits do not mutate supplied settings before acceptance");
+        Check(form.AllowedMarkdownPlugins.SequenceEqual(settings.EnabledMarkdownPlugins), "saving zoom preserves configured extension order and custom entries");
+        Check(settings.CssFileName == null && settings.ZoomLevel == 500 && !settings.ShowToolbar, "dialog edits do not mutate supplied settings before acceptance");
         Check(!form.TranslationOptions.ShowButtons, "translation visibility persists");
         Check(form.Theme == "dark" && settings.Theme == "auto", "theme selection is captured only on saving the dialog");
         Check(form.PreserveEditorLineBreaks && !settings.PreserveEditorLineBreaks, "line-break selection is captured only on saving the dialog");
+        var extensions = Find<CheckedListBox>(form, "MarkdownPlugins");
+        var ids = extensions.Items.Cast<object>().Select(item => (string)item.GetType().GetProperty("Id").GetValue(item)).ToArray();
+        extensions.SetItemChecked(Array.IndexOf(ids, "attrs"), false);
+        extensions.SetItemChecked(Array.IndexOf(ids, "emoji"), true);
+        typeof(SettingsForm).GetMethod("btnSave_Click", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] { null, EventArgs.Empty });
+        Check(form.AllowedMarkdownPlugins.SequenceEqual(new[] { "tasks-list", "custom-from-ini", "qrcode", "pano360", "emoji" }),
+          "extension changes affect only the chosen entries");
       }
       Console.WriteLine("PASS settings: " + passed + " assertions");
       return 0;

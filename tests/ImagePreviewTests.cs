@@ -73,9 +73,11 @@ internal sealed class ImagePreviewTests : Form
     viewer = (Webview2WebbrowserControl)constructor.Invoke(new object[] { Path.Combine(args[2], "image-window.json") });
     var placementFile = Path.Combine(args[2], "image-window.json");
     var previousPlacement = File.Exists(placementFile) ? JObject.Parse(File.ReadAllText(placementFile, Encoding.UTF8)) : null;
-    viewer.Initialize(new TestSettings(args[0]), new TestEvents(() => writes++));
-    browser = await (Task<WebView2>)typeof(Webview2WebbrowserControl).GetField("_webView", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(viewer);
-    Controls.Add(browser);
+    var settings = new TestSettings(args[0]);
+    viewer.Initialize(settings, new TestEvents(() => writes++));
+    viewer.AddToHost(this);
+    await viewer.SetZoomLevel(settings.ZoomLevel);
+    browser = Controls.OfType<WebView2>().Single();
     browser.CoreWebView2.WebResourceResponseReceived += (sender, e) => {
       if (e.Response.StatusCode >= 400) { failedRequests++; log.AppendLine("HTTP " + e.Response.StatusCode + " " + e.Request.Uri); }
     };

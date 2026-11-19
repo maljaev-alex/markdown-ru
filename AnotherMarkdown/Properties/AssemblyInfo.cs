@@ -18,6 +18,8 @@ using System.Runtime.InteropServices;
 // to COM components.  If you need to access a type in this assembly from 
 // COM, set the ComVisible attribute to true on that type.
 [assembly: ComVisible(false)]
+[assembly: InternalsVisibleTo("EditingTests")]
+[assembly: InternalsVisibleTo("PreviewRenderQueueTests")]
 
 // The following GUID is for the ID of the typelib if this project is exposed to COM
 [assembly: Guid("31492674-6fe0-485c-91f0-2e17244588ff")]
@@ -32,6 +34,6 @@ using System.Runtime.InteropServices;
 // You can specify all the values or you can default the Build and Revision Numbers 
 // by using the '*' as shown below:
 // [assembly: AssemblyVersion("1.0.*")]
-[assembly: AssemblyVersion("0.1.12.37")]
-[assembly: AssemblyFileVersion("0.1.12.37")]
-[assembly: AssemblyInformationalVersion("0.1.12-ru.37")]
+[assembly: AssemblyVersion("0.1.12.45")]
+[assembly: AssemblyFileVersion("0.1.12.45")]
+[assembly: AssemblyInformationalVersion("0.1.12-ru.45")]

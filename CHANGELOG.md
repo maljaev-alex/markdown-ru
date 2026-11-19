@@ -1,5 +1,46 @@
 ## Version History
 
+### Markdown RU 0.1.12-ru.45 (2026-11-19)
+
+This release includes the local ru.38–ru.44 iterations listed below: whole-document visual formatting, selection and caret corrections, wrapped-line/table navigation and live zoom updates.
+
+* Preserve the horizontal position during vertical scroll synchronization. Track progress through rendered paragraphs and table rows across wrapped source lines.
+* Apply translation exports atomically, remove newly created image files on export failure and enforce the decoded image size limit. Preserve encoded local paths and replace cached results after explicit retranslation.
+* Coalesce preview updates on the UI thread and isolate visual-edit baselines per source session. Refresh release links and package the editor sources without unrelated local files.
+
+### Markdown RU 0.1.12-ru.44 (included in ru.45)
+
+* Display a two-pixel blinking insertion point in both panes, in preview and visual editing. Use the Notepad++ blink interval and restore its caret settings when leaving Markdown.
+
+### Markdown RU 0.1.12-ru.43 (included in ru.45)
+
+* Keep the source insertion point visible over the Scintilla drawing surface after a render click.
+* Preserve the visual editor's caret when switching applications and resume editing after keyboard reactivation.
+
+### Markdown RU 0.1.12-ru.42 (included in ru.45)
+
+* Keep the Markdown source on the visible table row when scrolling the preview or CKEditor.
+* Update the source caret and viewport during continuous navigation. Use the actual WebView2 viewport to reveal the caret in long documents.
+
+### Markdown RU 0.1.12-ru.41 (included in ru.45)
+
+* Map table selections and carets by their Markdown row and cell, including padded columns and reverse selections.
+* Synchronize the visible part of wrapped lines and bring the active selection end into view on both axes, including horizontally scrollable tables and code.
+
+### Markdown RU 0.1.12-ru.40 (included in ru.45)
+
+* Apply a saved zoom change to the open Markdown preview and visual editor. Preserve the editing session and its undo history.
+* Match the zoom slider to the effective WebView2 maximum of 500%. Older settings above 500% open at that maximum.
+
+### Markdown RU 0.1.12-ru.39 (included in ru.45)
+
+* Clear the Notepad++ selection when a click clears the selection in the rendered preview. Keep the caret at the clicked position and preserve a pending selection while synchronizing scrolling.
+
+### Markdown RU 0.1.12-ru.38 (included in ru.45)
+
+* Format the entire Notepad++ buffer when visual editing starts, including lists with inline HTML and Markdown inside containers and tabs.
+* Restore the original text and line endings when leaving without net edits. After an edit, keep the formatted document in the buffer until the user saves it.
+
 ### Markdown RU 0.1.12-ru.37 (2026-11-07)
 
 This release includes the local ru.22–ru.36 iterations listed below: the visual Markdown editor, two-way navigation, image viewer, local file links, file history and display settings.

@@ -12,6 +12,9 @@ namespace AnotherMarkdown.Forms
   public partial class MarkdownPreviewForm
   {
     public Func<EditorRequest, EditorReply> EditSource { get; set; }
+    internal Action LeaveSourceEditor { get; set; }
+    public EditorRequest GetEditorDraft(string session) => _webView?.GetEditorDraft(session);
+    internal void AcknowledgeEditorDraft(EditorRequest draft) => _webView?.AcknowledgeEditorDraft(draft);
     private ToolStripButton editButton, previewButton, saveButton, conflictButton, retryButton;
     private ToolStripLabel editorStatus;
     private EditorUiState editorUi;
@@ -68,7 +71,9 @@ namespace AnotherMarkdown.Forms
 
     private string sourceIdentity, translationIdentity;
     private long editorRevision;
-    private bool sourceReadOnly, sourceModified;
+    private bool sourceReadOnly, sourceModified, sourceEditing;
+    private int sourceCaretBlinkPeriod = SyncedSourceCaret.DefaultBlinkPeriod;
+    private VisualEditBaseline translationEdit;
     private bool managedSourceIdentity;
     private string translatedSourcePath;
     private sealed class TranslationDraft
@@ -78,9 +83,11 @@ namespace AnotherMarkdown.Forms
     }
     private readonly Dictionary<string, TranslationDraft> translationDrafts = new Dictionary<string, TranslationDraft>();
 
-    public void SetSourceState(string identity, bool readOnly, bool modified)
+    public void SetSourceState(string identity, bool readOnly, bool modified, bool editing = false,
+      int caretBlinkPeriod = SyncedSourceCaret.DefaultBlinkPeriod)
     {
       if (sourceIdentity != identity) {
+        FinishTranslationEdit();
         if (sourceIdentity != null && translatedText != null)
           translationDrafts[sourceIdentity] = new TranslationDraft { Text = translatedText, Identity = translationIdentity, Visible = IsTranslationPreview, SourcePath = translatedSourcePath };
         sourceIdentity = identity;
@@ -93,7 +100,10 @@ namespace AnotherMarkdown.Forms
         editorRevision++;
         forceRender = true;
       }
-      if (sourceReadOnly != readOnly || sourceModified != modified) forceRender = true;
+      int period = caretBlinkPeriod > 0 ? caretBlinkPeriod : SyncedSourceCaret.DefaultBlinkPeriod;
+      if (sourceReadOnly != readOnly || sourceModified != modified || sourceEditing != editing || sourceCaretBlinkPeriod != period) forceRender = true;
+      sourceCaretBlinkPeriod = period;
+      sourceEditing = editing;
       sourceReadOnly = readOnly;
       sourceModified = modified;
       managedSourceIdentity = true;
@@ -103,14 +113,28 @@ namespace AnotherMarkdown.Forms
       Session = IsTranslationPreview ? translationIdentity : sourceIdentity,
       Path = sourcePath, Text = (IsTranslationPreview ? translatedText : sourceText) ?? "",
       AssetPath = IsTranslationPreview ? translatedSourcePath ?? sourcePath : sourcePath,
-      Revision = editorRevision, Translated = IsTranslationPreview,
+      Revision = editorRevision, Translated = IsTranslationPreview, CaretBlinkPeriod = sourceCaretBlinkPeriod,
+      VisualEditing = IsTranslationPreview ? translationEdit != null : sourceEditing,
       ReadOnly = !IsTranslationPreview && sourceReadOnly, Modified = sourceModified
     };
 
-    public void AcceptSourceText(string text, bool modified)
+    public void AcceptSourceText(string text, bool modified, bool? editing = null)
     {
       if (sourceText != text) { sourceText = text; editorRevision++; }
       sourceModified = modified;
+      if (editing.HasValue) sourceEditing = editing.Value;
+    }
+
+    internal void FinishTranslationEdit(bool includeDraft = true)
+    {
+      if (translationEdit == null) return;
+      var draft = includeDraft ? GetEditorDraft(translationIdentity) : null;
+      var conflict = draft != null && draft.Content != translatedText && draft.BaseText != translatedText;
+      var result = conflict ? translatedText : translationEdit.OnExit(draft?.Content ?? translatedText);
+      if (result != translatedText) { translatedText = result; editorRevision++; }
+      translationEdit = null;
+      if (!conflict) AcknowledgeEditorDraft(draft);
+      forceRender = true;
     }
 
     private EditorReply HandleEditorRequest(EditorRequest request)
@@ -119,14 +143,22 @@ namespace AnotherMarkdown.Forms
       if (request.Action == "state") return new EditorReply { Status = "state", Snapshot = snapshot };
       if (request.Session != snapshot.Session) return new EditorReply { Status = "stale", Snapshot = snapshot };
       if (IsTranslationPreview) {
+        if (request.Action == "endEdit") {
+          FinishTranslationEdit(false);
+          return new EditorReply { Status = "applied", Snapshot = GetEditorSnapshot() };
+        }
         if (request.Action == "image") {
           ImageAsset.Decode(request.Data, out var _);
           return new EditorReply { Status = "image", Url = request.Data, Snapshot = snapshot };
         }
-        if (request.Action != "apply" && request.Action != "saveAs")
+        if (request.Action != "apply" && request.Action != "beginEdit" && request.Action != "saveAs")
           return new EditorReply { Status = "error", Message = "Перевод сохраняется только через «Сохранить как…»." };
         if (request.BaseText != translatedText)
           return new EditorReply { Status = "conflict", Snapshot = snapshot };
+        if (request.Content == null)
+          return new EditorReply { Status = "error", Message = "Не получен текст перевода.", Snapshot = snapshot };
+        if (request.Action == "beginEdit" && translationEdit == null)
+          translationEdit = new VisualEditBaseline(translatedText, request.Content);
         if (request.Content != translatedText) { translatedText = request.Content; editorRevision++; }
         if (request.Action == "saveAs") return SaveTranslationAs();
         return new EditorReply { Status = "applied", Snapshot = GetEditorSnapshot() };

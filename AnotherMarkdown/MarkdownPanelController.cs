@@ -11,7 +11,7 @@ using System.Windows.Forms;
 using AnotherMarkdown.Entities;
 using AnotherMarkdown.Forms;
 using AnotherMarkdown.Translation;
-using DiffPlex;
+using AnotherMarkdown.Editing;
 using Kbg.NppPluginNET.PluginInfrastructure;
 using PanelCommon;
 
@@ -27,6 +27,7 @@ namespace AnotherMarkdown
             if (_previewForm == null) {
               _previewForm = MarkdownPreviewForm.Create(_settings);
               _previewForm.EditSource = HandleSourceEdit;
+              _previewForm.LeaveSourceEditor = FinishSourceFormatting;
               _previewForm.NavigationChanged = HandleEditorNavigation;
               _previewForm.OnEvent.DocumentChanged += (_, e) => DocumentChanged(e);
               _previewForm.OnEvent.FirstLineChanged += (_, e) => FirstLineChanged(e);
@@ -42,6 +43,7 @@ namespace AnotherMarkdown
     }
     public MarkdownPanelController()
     {
+      _renderQueue = new PreviewRenderQueue(RenderCurrentBufferAsync);
       AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
       scintillaGatewayFactory = PluginBase.GetGatewayFactory();
       _nppGateway = new NotepadPPGateway();
@@ -82,7 +84,7 @@ namespace AnotherMarkdown
       settings.AssetsPath = Win32.ReadIniValue("Options", "AssetsPath", _iniFilePath, "");
       settings.CssFileName = Win32.ReadIniValue("Options", "CssFileName", _iniFilePath, "style.css");
       settings.CssDarkModeFileName = Win32.ReadIniValue("Options", "CssDarkModeFileName", _iniFilePath, "style-dark.css");
-      settings.ZoomLevel = Win32.GetPrivateProfileInt("Options", "ZoomLevel", 130, _iniFilePath);
+      settings.ZoomLevel = Win32.GetPrivateProfileInt("Options", "ZoomLevel", Settings.DefaultZoomLevel, _iniFilePath);
       settings.ShowToolbar = PluginUtils.ReadIniBool("Options", "ShowToolbar", _iniFilePath);
       settings.ShowStatusbar = PluginUtils.ReadIniBool("Options", "ShowStatusbar", _iniFilePath);
       settings.PreserveEditorLineBreaks = Win32.GetPrivateProfileInt("Options", "PreserveEditorLineBreaks", 0, _iniFilePath) != 0;
@@ -129,8 +131,6 @@ namespace AnotherMarkdown
         return;
       }
 
-      EditorNotification(notification);
-
       switch (notification.Header.Code) {
         case (uint) SciMsg.SCN_UPDATEUI: {
           if (!_applyingNavigation && _isPanelVisible && (_settings.SyncViewWithCaretPosition || _settings.SyncViewWithFirstVisibleLine)) {
@@ -143,16 +143,32 @@ namespace AnotherMarkdown
           }
           break;
         }
+        case (uint) NppMsg.NPPN_FILEBEFORECLOSE: {
+          if (editingBuffer == notification.Header.IdFrom) FinishSourceFormatting();
+          break;
+        }
         case (uint) NppMsg.NPPN_FILECLOSED: {
+          if (editingBuffer != IntPtr.Zero && editingBuffer == notification.Header.IdFrom) DetachFormatView();
+          editorSources.Remove(notification.Header.IdFrom);
           _fileVisits.Remove(notification.Header.IdFrom);
           UpdateHistoryButtons();
           break;
         }
-        case (uint) NppMsg.NPPN_FILESAVED: {
+        case (uint) NppMsg.NPPN_FILESAVED:
+        case (uint) NppMsg.NPPN_FILERENAMED: {
+          if (notification.Header.Code == (uint)NppMsg.NPPN_FILESAVED) RecordSourceSave(notification.Header.IdFrom);
           UpdateAutomaticPanel();
+          RenderMarkdown(force: true);
+          break;
+        }
+        case (uint) NppMsg.NPPN_READONLYCHANGED:
+        case (uint) SciMsg.SCN_SAVEPOINTLEFT:
+        case (uint) SciMsg.SCN_SAVEPOINTREACHED: {
+          RenderMarkdown();
           break;
         }
         case (uint) NppMsg.NPPN_BEFORESHUTDOWN: {
+          FinishSourceFormatting();
           _shuttingDown = true;
           break;
         }
@@ -170,8 +186,11 @@ namespace AnotherMarkdown
           break;
         }
         case (uint) NppMsg.NPPN_BUFFERACTIVATED: {
+          var buffer = CurrentBufferId();
+          if (editingBuffer != IntPtr.Zero && editingBuffer != buffer) FinishSourceFormatting();
+          if (editorSources.TryGetValue(buffer, out var session)) session.Activated(scintillaGatewayFactory());
           ClearSourceCaret();
-          _fileVisits.Record(CurrentBufferId());
+          _fileVisits.Record(buffer);
           UpdateAutomaticPanel();
           UpdateHistoryButtons();
           RenderMarkdown(force: true);
@@ -186,7 +205,9 @@ namespace AnotherMarkdown
           break;
         }
         case (uint) SciMsg.SCN_MODIFIED: {
-          if (_skipSyncEventsDue < DateTime.UtcNow) {
+          const int textChanged = (int)SciMsg.SC_MOD_INSERTTEXT | (int)SciMsg.SC_MOD_DELETETEXT;
+          if ((notification.ModificationType & textChanged) != 0) {
+            StopViewportScroll();
             RenderMarkdown();
           }
           break;
@@ -362,58 +383,18 @@ namespace AnotherMarkdown
 
       if (visibleLine != newVisibleLine) {
         scintillaGateway.LineScroll(0, newVisibleLine - visibleLine);
-        _skipSyncEventsDue = DateTime.UtcNow.AddSeconds(1);
       }
     }
 
     private void DocumentChanged(DocumentChangedEvent args)
     {
-      if (_previewForm?.IsTranslationPreview == true) return;
-      var scintillaGateway = scintillaGatewayFactory();
-
-      var currentTextLength = scintillaGateway.GetLength();
-      var currentText = scintillaGateway.GetText(currentTextLength + 1);
-      var newText = args.Content;
-      if (newText == currentText) {
-        return;
-      }
-      var len1 = currentText.Length;
-      var len2 = newText.Length;
-
-      var differ = new Differ();
-      var diff = differ.CreateCharacterDiffs(currentText, newText, false);
-      _skipSyncEventsDue = DateTime.UtcNow.AddSeconds(600);
-      scintillaGateway.BeginUndoAction();
-      try {
-        foreach (var block in diff.DiffBlocks.Reverse()) {
-          int deleteStartA = block.DeleteStartA;
-          for (var i = 0; i < block.DeleteStartA; i++) {
-            var ch = currentText[i];
-            if (char.IsHighSurrogate(ch)) {
-              deleteStartA += 2;
-              i++;
-            }
-            else if (ch >= 0x800) {
-              deleteStartA += 2;
-            }
-            else if (ch >= 0x80) {
-              deleteStartA += 1;
-            }
-          }
-
-          if (block.DeleteCountA > 0) {
-            scintillaGateway.DeleteRange(deleteStartA, block.DeleteCountA);
-          }
-          if (block.InsertCountB > 0) {
-            var insertText = newText.Substring(block.InsertStartB, block.InsertCountB).Replace("\n", "\r\n");
-            scintillaGateway.InsertText(deleteStartA, insertText);
-          }
-        }
-      }
-      finally {
-        scintillaGateway.EndUndoAction();
-        _skipSyncEventsDue = DateTime.UtcNow.AddSeconds(0.5);
-      }
+      if (_previewForm?.IsTranslationPreview == true || args.Content == null ||
+          !string.Equals(args.DocumentPath, _nppGateway.GetCurrentFilePath(), StringComparison.OrdinalIgnoreCase)) return;
+      var gateway = scintillaGatewayFactory();
+      if (gateway.GetReadOnly()) return;
+      var current = gateway.GetText(gateway.GetLength() + 1);
+      var edit = SourceTextEdit.Between(current, args.Content, SourceTextEdit.EncodingFor(gateway.GetCodePage()));
+      edit?.Apply(gateway);
     }
 
     private void ShowHelp()
@@ -458,7 +439,7 @@ namespace AnotherMarkdown
         return;
       }
       _settings.SyncViewWithCaretPosition = enabled;
-      if (!enabled) ClearSourceCaret();
+      _sourceCaret?.Refresh();
 
       Win32.CheckMenuItem(Win32.GetMenu(PluginBase.nppData._nppHandle), PluginBase._funcItems.Items[2]._cmdID, Win32.MF_BYCOMMAND
         | (enabled ? Win32.MF_CHECKED : Win32.MF_UNCHECKED));
@@ -470,6 +451,7 @@ namespace AnotherMarkdown
         return;
       }
       _settings.SyncViewWithFirstVisibleLine = enabled;
+      if (!enabled) StopViewportScroll();
       Win32.CheckMenuItem(Win32.GetMenu(PluginBase.nppData._nppHandle), PluginBase._funcItems.Items[3]._cmdID, Win32.MF_BYCOMMAND
         | (enabled ? Win32.MF_CHECKED : Win32.MF_UNCHECKED));
     }
@@ -496,13 +478,19 @@ namespace AnotherMarkdown
     private void SetPanelVisibleState(bool visible)
     {
       _isPanelVisible = visible;
-      if (!visible) ClearSourceCaret();
+      if (!visible) {
+        FinishSourceFormatting();
+        _previewForm?.FinishTranslationEdit();
+        _renderQueue.Clear();
+        ClearSourceCaret();
+      }
       Win32.SendMessage(PluginBase.nppData._nppHandle, (uint)NppMsg.NPPM_SETMENUITEMCHECK,
         PluginBase._funcItems.Items[_myDlgId]._cmdID, visible ? 1 : 0);
     }
 
     public void PluginCleanUp()
     {
+      ClearSourceCaret();
       SaveSettings();
     }
 
@@ -696,53 +684,25 @@ namespace AnotherMarkdown
 
     public void RenderMarkdown(bool force = false)
     {
-      lock (_renderMarkdownLock) {
-        if (force) {
-          _forceRenderRequested = true;
-          _renderMarkdownAt = DateTime.UtcNow;
-        }
-        else {
-          if (_renderMarkdownAt == DateTime.MinValue) {
-            _renderMarkdownAt = DateTime.UtcNow.Add(InputUpdateThreshold);
-          }
-        }
-        if (_renderMarkdownTask == null || (_renderMarkdownTask.IsCompleted || _renderMarkdownTask.IsFaulted)) {
-          _renderMarkdownTask = RenderMarkdownTask();
-        }
-      }
+      if (_isPanelVisible && !_disposedValue) _renderQueue.Request(force);
     }
 
-    private async Task RenderMarkdownTask()
+    private Task RenderCurrentBufferAsync(bool force)
     {
-      try {
-        while (!_disposedValue && _isPanelVisible) {
-          await Task.Delay(20);
-          if (_disposedValue || !_isPanelVisible) {
-            break;
-          }
-          bool force;
-          lock (_renderMarkdownLock) {
-            if (_renderMarkdownAt > DateTime.UtcNow) continue;
-            _renderMarkdownAt = DateTime.MinValue;
-            force = _forceRenderRequested;
-            _forceRenderRequested = false;
-          }
-
-          var scintillaGateway = scintillaGatewayFactory();
-          var currentText = scintillaGateway.GetText(scintillaGateway.GetLength() + 1);
-
-          var currentFile = _nppGateway.GetCurrentFilePath();
-          if (!IsMarkdownFile(currentFile)) { UpdateAutomaticPanel(); break; }
-          _currentFile = currentFile;
-
-          PreviewForm.SetSourceState(GetEditorSession(currentFile), scintillaGateway.GetReadOnly(), scintillaGateway.GetModify());
-          ObserveCleanSource(currentText, scintillaGateway.GetModify(), scintillaGateway.GetCodePage());
-          await PreviewForm.RenderMarkdown(currentText, currentFile, force);
-        }
+      var currentFile = _nppGateway.GetCurrentFilePath();
+      if (!IsMarkdownFile(currentFile)) {
+        UpdateAutomaticPanel();
+        return Task.CompletedTask;
       }
-      catch (Exception err) {
-        _renderMarkdownAt = DateTime.MinValue;
-      }
+      var gateway = scintillaGatewayFactory();
+      var text = gateway.GetText(gateway.GetLength() + 1);
+      var modified = gateway.GetModify();
+      var form = PreviewForm;
+      var session = GetEditorSession(currentFile);
+      form.SetSourceState(session.Id, gateway.GetReadOnly(), modified, session.VisualEditing, gateway.GetCaretPeriod());
+      if (_sourceCaret == null) UpdateSourceCaret(gateway);
+      session.Observe(text, modified, gateway.GetCodePage());
+      return form.RenderMarkdown(text, currentFile, force);
     }
 
     private bool IsDarkModeEnabled()
@@ -762,6 +722,8 @@ namespace AnotherMarkdown
       }
 
       _disposedValue = true;
+      _renderQueue.Dispose();
+      AppDomain.CurrentDomain.AssemblyResolve -= CurrentDomain_AssemblyResolve;
       _linkRevealTimer?.Dispose(); _linkRevealTimer = null;
       ClearSourceCaret();
       DisposeHistoryIcons();
@@ -797,8 +759,6 @@ namespace AnotherMarkdown
     private readonly Func<IScintillaGateway> scintillaGatewayFactory;
     private readonly INotepadPPGateway _nppGateway;
     private string _iniFilePath;
-    private int _lastCaretPosition;
-    private int _lastScrollToLine;
     private Settings _settings;
     private IntPtr? _ptrNppTbData;
     private Icon _icon;
@@ -807,17 +767,10 @@ namespace AnotherMarkdown
     [DllImport("gdi32.dll")] private static extern bool DeleteObject(IntPtr handle);
     private bool _disposedValue;
 
-    private DateTime _skipSyncEventsDue = DateTime.MinValue;
-    private string _currentFile;
     private object _syncViewLock = new object();
     private bool _syncViewPending = false;
     private Task _syncViewTask;
 
-    private DateTime _renderMarkdownAt = DateTime.MinValue;
-    private object _renderMarkdownLock = new object();
-    private Task _renderMarkdownTask;
-    private bool _forceRenderRequested;
-
-    private static readonly TimeSpan InputUpdateThreshold = TimeSpan.FromMilliseconds(200);
+    private readonly PreviewRenderQueue _renderQueue;
   }
 }

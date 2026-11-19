@@ -27,6 +27,7 @@ internal static class LocalFilePathTests
       }
       Check(HttpUtility2.UrlPathEncode("themes/100%/dark #1+.css") == "themes/100%25/dark%20%231%2B.css", "CSS and base paths escape reserved characters while preserving separators");
       Check(HttpUtility2.PathToUri("") == "" && HttpUtility2.UriToPath("") == "", "empty paths retain their existing behavior");
+      Check(HttpUtility2.UriToPath("/diskD/a+b%20%2B.png") == "D:/a+b +.png", "relative resource URLs preserve literal and escaped plus signs");
       Console.WriteLine("PASS local file paths: " + checks + " assertions");
       return 0;
     }

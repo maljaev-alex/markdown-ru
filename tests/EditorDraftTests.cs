@@ -52,10 +52,22 @@ internal static class EditorDraftTests
         ((Task)Call(form, "TranslateCurrentAsync")).GetAwaiter().GetResult();
         Call(form, "UpdateEditorToolbar", new EditorUiState { Session = "translated-first", Translated = true });
         Check(save.Available, "translation retains its separate Save As action");
+        var entered = (EditorReply)Call(form, "HandleEditorRequest", new EditorRequest {
+          Action = "beginEdit", Session = "translated-first", BaseText = "Translated.\n", Content = "Formatted translation.\n"
+        });
+        Check(entered.Snapshot.VisualEditing && entered.Snapshot.Text == "Formatted translation.\n" && sourceCalls == 0,
+          "formatting starts on the translation draft only");
+        var left = (EditorReply)Call(form, "HandleEditorRequest", new EditorRequest { Action = "endEdit", Session = "translated-first" });
+        Check(!left.Snapshot.VisualEditing && left.Snapshot.Text == "Translated.\n" && sourceCalls == 0,
+          "unchanged exit restores only the translation draft");
         var reply = (EditorReply)Call(form, "HandleEditorRequest", new EditorRequest {
           Action = "apply", Session = "translated-first", BaseText = "Translated.\n", Content = "Edited translation.\n"
         });
         Check(reply.Status == "applied" && sourceCalls == 0, "translation edit never reaches source writer");
+        reply = (EditorReply)Call(form, "HandleEditorRequest", new EditorRequest {
+          Action = "apply", Session = "translated-first", BaseText = "Edited translation.\n"
+        });
+        Check(reply.Status == "error" && form.GetEditorSnapshot().Text == "Edited translation.\n", "an incomplete editor message preserves the translation draft");
         reply = (EditorReply)Call(form, "HandleEditorRequest", new EditorRequest { Action = "save", Session = "translated-first" });
         Check(reply.Status == "error" && sourceCalls == 0, "translation refuses ordinary Save");
         form.RenderMarkdown("Original changed.\n", @"D:\notes\first.md").GetAwaiter().GetResult();

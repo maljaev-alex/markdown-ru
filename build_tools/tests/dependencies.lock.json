@@ -2,21 +2,6 @@
   "schema": 1,
   "archives": [
     {
-      "id": "DiffPlex.1.9.0",
-      "url": "https://api.nuget.org/v3-flatcontainer/diffplex/1.9.0/diffplex.1.9.0.nupkg",
-      "cacheNames": [
-        "DiffPlex.1.9.0.nupkg",
-        "DiffPlex.1.9.0.zip"
-      ],
-      "sha256": "a338f6304f1f4e3dc05cc520b88a88e3979c2d2e355a73844c2c421ba6c37a8e",
-      "sha512": "LCXsdkIHLQpd6ZqVQwyqIRI2stR8USH74UcOL48BHGU98h7atuwKaiLok2/72h+LWcjfUinZfK0TCaT9i1VoqA==",
-      "provenance": {
-        "source": "https://api.nuget.org/v3/catalog0/data/2025.09.13.16.21.10/diffplex.1.9.0.json",
-        "algorithm": "SHA512",
-        "digest": "LCXsdkIHLQpd6ZqVQwyqIRI2stR8USH74UcOL48BHGU98h7atuwKaiLok2/72h+LWcjfUinZfK0TCaT9i1VoqA=="
-      }
-    },
-    {
       "id": "Newtonsoft.Json.13.0.4",
       "url": "https://api.nuget.org/v3-flatcontainer/newtonsoft.json/13.0.4/newtonsoft.json.13.0.4.nupkg",
       "cacheNames": [

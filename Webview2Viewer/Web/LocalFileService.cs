@@ -1,11 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
-using System.Web;
 using Microsoft.Web.WebView2.Core;
 using Newtonsoft.Json;
 using PanelCommon;
@@ -16,7 +15,6 @@ namespace Webview2Viewer.Web
   {
     public string DocumentUri { get; private set; }
     public string DocumentPath { get; private set; }
-    public string DocumentContent { get; set; }
     public string Hostname { get; }
     public bool ReadOnly { get; set; }
 
@@ -31,8 +29,7 @@ namespace Webview2Viewer.Web
     {
       DocumentPath = documentPath;
       DocumentUri = "/" + HttpUtility2.PathToUri(documentPath);
-      DocumentContent = content;
-      _documentBytesData = Encoding.UTF8.GetBytes(DocumentContent);
+      _documentBytesData = Encoding.UTF8.GetBytes(content);
     }
 
     public bool HandleRequest(CoreWebView2WebResourceRequestedEventArgs e)
@@ -64,7 +61,7 @@ namespace Webview2Viewer.Web
         e.Response = _httpEnvironment.CreateWebResourceResponse(new MemoryStream(), 403, "Read-only preview", "Access-Control-Allow-Origin: *");
         return;
       }
-      if (!DocumentUri.Equals(requestUri.AbsolutePath, StringComparison.InvariantCultureIgnoreCase)) {
+      if (!string.Equals(DocumentUri, requestUri.AbsolutePath, StringComparison.OrdinalIgnoreCase)) {
         Error404(e);
         return;
       }
@@ -78,11 +75,15 @@ namespace Webview2Viewer.Web
         requestBody = reader.ReadToEnd();
       }
 
+      try {
+        _on.DocumentChanged?.Invoke(this, new DocumentChangedEvent { Content = requestBody, DocumentPath = DocumentPath });
+      }
+      catch (Exception error) {
+        Trace.TraceError("Markdown update failed: {0}", error);
+        e.Response = _httpEnvironment.CreateWebResourceResponse(new MemoryStream(), 409, "Document update failed", string.Join("\r\n", headers));
+        return;
+      }
       e.Response = _httpEnvironment.CreateWebResourceResponse(new MemoryStream(), 200, "OK", string.Join("\r\n", headers));
-
-      new Task(() => _on.DocumentChanged?.Invoke(this, new DocumentChangedEvent {
-        Content = requestBody
-      })).Start();
     }
 
     private void HttpGetContent(CoreWebView2WebResourceRequestedEventArgs e, Uri requestUri)
@@ -110,7 +111,7 @@ namespace Webview2Viewer.Web
         return;
       }
 
-      if (DocumentUri.Equals(requestUri.AbsolutePath, StringComparison.InvariantCultureIgnoreCase)) {
+      if (string.Equals(DocumentUri, requestUri.AbsolutePath, StringComparison.OrdinalIgnoreCase)) {
         bytes = _documentBytesData;
         charset = "; charset=utf-8";
       }
@@ -139,20 +140,8 @@ namespace Webview2Viewer.Web
     private void Json<TModel>(CoreWebView2WebResourceRequestedEventArgs e, List<string> headers, TModel data)
     {
       headers.Add("Content-Type: application/json; charset=utf-8");
-      e.Response = _httpEnvironment.CreateWebResourceResponse(ToJson(data), 200, "OK", string.Join("\r\n", headers));
-    }
-
-    private static MemoryStream ToJson<TData>(TData files, MemoryStream stream = null)
-    {
-      if (stream == null) {
-        stream = new MemoryStream();
-      }
-      var serializer = new JsonSerializer();
-      using (var writter = new StreamWriter(stream, Encoding.UTF8, 2048, true)) {
-        serializer.Serialize(writter, files);
-        writter.Flush();
-      }
-      return stream;
+      var stream = new MemoryStream(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(data)));
+      e.Response = _httpEnvironment.CreateWebResourceResponse(stream, 200, "OK", string.Join("\r\n", headers));
     }
 
     private void Error404(CoreWebView2WebResourceRequestedEventArgs e)
@@ -168,13 +157,12 @@ namespace Webview2Viewer.Web
         "Access-Control-Allow-Headers: *"
       };
 
-      if (DocumentUri.Equals(uri.AbsolutePath, StringComparison.InvariantCultureIgnoreCase)) {
+      if (string.Equals(DocumentUri, uri.AbsolutePath, StringComparison.OrdinalIgnoreCase)) {
         charset = "; charset=utf-8";
-        headers.Add("Access-Control-Allow-Methods: GET, PUT, OPTIONS");
+        headers.Add(ReadOnly ? "Access-Control-Allow-Methods: GET, OPTIONS" : "Access-Control-Allow-Methods: GET, PUT, OPTIONS");
       }
       else {
-        var path = HttpUtility.UrlDecode(uri.AbsolutePath);
-        path = Regex.Replace(path, @"^\/disk(\w)\/", "$1:/");
+        var path = HttpUtility2.UriToPath(uri.AbsolutePath);
         if (!File.Exists(path)) {
           Error404(e);
           return;

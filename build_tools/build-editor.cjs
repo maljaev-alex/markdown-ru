@@ -11,6 +11,8 @@ esbuild.build({
   entryPoints: [path.join(root, 'editor/src/index.js')],
   bundle: true, format: 'iife', globalName: 'AnotherMarkdownEditor', metafile: true,
   target: ['chrome110'], outfile: path.join(output, 'editor.js'),
+  // Keep significant tabs/newlines from dependency strings escaped in the generated file.
+  supported: { 'template-literal': false },
   nodePaths: [path.join(dependencies, 'node_modules')],
   minify: true, legalComments: 'linked', charset: 'utf8',
   loader: { '.svg': 'text', '.woff2': 'dataurl' },

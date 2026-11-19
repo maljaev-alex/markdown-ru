@@ -1,5 +1,6 @@
 using System;
 using System.Text;
+using Kbg.NppPluginNET.PluginInfrastructure;
 
 namespace AnotherMarkdown.Editing
 {
@@ -25,11 +26,37 @@ namespace AnotherMarkdown.Editing
       while (oldEnd > start && newEnd > start && before[oldEnd - 1] == after[newEnd - 1]) { oldEnd--; newEnd--; }
       if (oldEnd < before.Length && oldEnd > start && char.IsLowSurrogate(before[oldEnd])) { oldEnd++; newEnd++; }
       var text = after.Substring(start, newEnd - start);
+      var startBytes = ByteCount(encoding, before, 0, start);
       return new SourceTextEdit {
-        Start = encoding.GetByteCount(before.Substring(0, start)),
-        End = encoding.GetByteCount(before.Substring(0, oldEnd)),
+        Start = startBytes,
+        End = startBytes + ByteCount(encoding, before, start, oldEnd - start),
         Length = encoding.GetByteCount(text), Text = text
       };
+    }
+
+    private static unsafe int ByteCount(Encoding encoding, string text, int start, int length)
+    {
+      if (length == 0) return 0;
+      fixed (char* chars = text) return encoding.GetByteCount(chars + start, length);
+    }
+
+    internal void Apply(IScintillaGateway gateway)
+    {
+      gateway.BeginUndoAction();
+      try {
+        gateway.SetTargetStart(Start);
+        gateway.SetTargetEnd(End);
+        gateway.ReplaceTarget(Length, Text);
+      }
+      finally { gateway.EndUndoAction(); }
+    }
+
+    internal static void Replace(IScintillaGateway gateway, string current, string target)
+    {
+      if (current == target) return;
+      Between(current, target, EncodingFor(gateway.GetCodePage())).Apply(gateway);
+      if (gateway.GetText(gateway.GetLength() + 1) != target)
+        throw new System.IO.IOException("Notepad++ не подтвердил изменение текста.");
     }
   }
 }

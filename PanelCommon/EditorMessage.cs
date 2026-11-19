@@ -8,6 +8,12 @@ namespace PanelCommon
     public int Anchor { get; set; }
     public int Focus { get; set; }
     public int Top { get; set; }
+    // The vertical position lies between two Markdown block starts. Left is
+    // a character offset sent only for an explicit horizontal pan.
+    public int? NextTop { get; set; }
+    public double TopFraction { get; set; }
+    public int? Left { get; set; }
+    public bool SmoothScroll { get; set; }
     public bool Selection { get; set; }
     public bool Scroll { get; set; }
     public bool Reveal { get; set; }
@@ -35,10 +41,12 @@ namespace PanelCommon
     public bool Translated { get; set; }
     public bool ReadOnly { get; set; }
     public bool Modified { get; set; }
+    public bool VisualEditing { get; set; }
     public bool PreserveLineBreaks { get; set; }
     public bool ShowLinkAddresses { get; set; }
     public bool Dark { get; set; }
     public bool SyncSelection { get; set; } = true;
+    public int CaretBlinkPeriod { get; set; }
     public bool SyncScroll { get; set; } = true;
     public string DocumentUrl { get; set; }
     public string BaseUrl { get; set; }

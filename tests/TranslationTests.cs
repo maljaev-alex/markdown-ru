@@ -460,6 +460,17 @@ internal static class TranslationTests
     Check(!cache.TryGet(TranslationCache.Key("source", options), out _), "changed arguments invalidate cache");
     for (var i = 0; i < 8; i++) cache.Add("key-" + i, "translation");
     Check(!cache.TryGet(key, out _), "cache bound evicts oldest entry");
+    cache.Add("key-0", "regenerated");
+    cache.Add("new", "another document");
+    Check(cache.TryGet("key-0", out cached) && cached == "regenerated" && !cache.TryGet("key-1", out _),
+      "regenerating a cached translation replaces it and refreshes its eviction order");
+    cache.Add("key-0", new string('x', 4000001));
+    Check(!cache.TryGet("key-0", out _), "a regenerated result above the limit invalidates the previous cached translation");
+    cache.Add("full", new string('x', 4000000));
+    cache.Add("full", "short");
+    cache.Add("next", "entry");
+    Check(cache.TryGet("full", out cached) && cached == "short" && cache.TryGet("next", out _),
+      "shrinking a replacement frees the previous character budget");
     Check(TranslationCache.Key("a", Options("bc")) != TranslationCache.Key("ab", Options("c")), "cache key is unambiguous");
     var proxyOptions = new TranslationOptions { ConnectionMode = "api", ApiConnections = {
       new ApiConnection { ProxyMode = "custom", ProxyAddress = "http://127.0.0.1:8080",

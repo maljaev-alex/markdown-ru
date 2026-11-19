@@ -26,49 +26,48 @@ namespace Webview2Viewer
     internal Webview2WebbrowserControl(string imagePlacementFile)
     {
       _imagePlacementFile = imagePlacementFile ?? ImageWindowPlacement.DefaultFile;
-      _webView = null;
     }
 
     public void Dispose()
     {
+      if (_disposed) return;
+      _disposed = true;
       _imageWindow?.Dispose();
       _webView?.Dispose();
-      _webView = null;
     }
 
     public void Initialize(ISettings settings, IEventDispatcher eventDispatcher)
     {
-      lock (_webViewInitLock) {
-        if (_webView == null) {
-          _settings = settings;
-          _on = eventDispatcher;
-          _webView = InitializeWebViewAsync();
-        }
-      }
+      if (_disposed) throw new ObjectDisposedException(nameof(Webview2WebbrowserControl));
+      if (_webView != null) return;
+      _settings = settings;
+      _on = eventDispatcher;
+      _webView = new WebView2 { AccessibleName = "webView", Name = "webView",
+        Location = new Point(1, 27), Size = new Size(800, 424), Dock = DockStyle.Fill, TabIndex = 0 };
+      _initialization = InitializeWebViewAsync(_webView);
     }
 
-    private async Task<WebView2> InitializeWebViewAsync()
+    private async Task InitializeWebViewAsync(WebView2 webView)
     {
       var cacheDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), CONFIG_FOLDER_NAME, "webview2");
+      try {
+        var environment = await CoreWebView2Environment.CreateAsync(null, cacheDir, new CoreWebView2EnvironmentOptions());
+        if (_disposed || webView.IsDisposed) return;
+        await webView.EnsureCoreWebView2Async(environment);
+        if (!_disposed && !webView.IsDisposed) ConfigureWebView(webView, environment);
+      }
+      catch (Exception) when (_disposed || webView.IsDisposed) { }
+    }
 
-      var webView = new WebView2();
-      var opt = new CoreWebView2EnvironmentOptions();
-      var webEnvironment = await CoreWebView2Environment.CreateAsync(null, cacheDir, opt);
-      await webView.EnsureCoreWebView2Async(webEnvironment);
-
-      webView.AccessibleName = "webView";
-      webView.Name = "webView";
+    private void ConfigureWebView(WebView2 webView, CoreWebView2Environment webEnvironment)
+    {
       webView.Source = new Uri("about:blank", UriKind.Absolute);
-      webView.Location = new Point(1, 27);
-      webView.Size = new Size(800, 424);
-      webView.Dock = DockStyle.Fill;
-      webView.TabIndex = 0;
       webView.NavigationStarting += OnWebBrowser_NavigationStarting;
       webView.CoreWebView2.NewWindowRequested += (_, args) => {
         args.Handled = true;
         OpenLink(args.Uri);
       };
-      webView.ZoomFactor = ConvertToZoomFactor(_settings.ZoomLevel);
+      ApplyConfiguredZoom(webView);
       webView.CoreWebView2.Settings.IsStatusBarEnabled = false;
       webView.CoreWebView2.WebResourceRequested += CoreWebView2_WebResourceRequested;
       webView.CoreWebView2.WebMessageReceived += (sender, args) => {
@@ -104,7 +103,6 @@ namespace Webview2Viewer
 
       var api = new ApiService(webEnvironment, "api.example", _on);
       AddWebService(webView, api);
-      return webView;
     }
 
     private void AddWebService(WebView2 webView, IWebService webService)
@@ -127,25 +125,18 @@ namespace Webview2Viewer
 
     public void AddToHost(Control host)
     {
-      ExecuteWebviewAction((webView) => {
-        host.Controls.Add(webView);
-      });
+      if (_webView != null && !_disposed) host.Controls.Add(_webView);
     }
 
-    public async Task ScrollToElementWithLineNo(int lineNo)
-    {
-      if (lineNo <= 0) {
-        lineNo = 0;
-      }
-      await ExecuteWebviewActionAsync((webView) => webView.ExecuteScriptAsync($"window.scrollToLine({lineNo})"));
-    }
+    public Task ScrollToElementWithLineNo(int lineNo) => ExecuteWebviewActionAsync(
+      webView => webView.ExecuteScriptAsync($"window.scrollToLine({Math.Max(0, lineNo)})"));
 
-    public async Task SetContentAsync(string content, string documentPath, bool readOnlyPreview = false)
+    public Task SetContentAsync(string content, string documentPath, bool readOnlyPreview = false) =>
+      ExecuteWebviewActionAsync(webView => SetContentAsync(webView, content, documentPath, readOnlyPreview));
+
+    private async Task SetContentAsync(WebView2 webView, string content, string documentPath, bool readOnlyPreview)
     {
-      var readyView = await _webView;
-      readyView.CoreWebView2.Settings.IsStatusBarEnabled = false;
       var fs = _webServices.OfType<LocalFileService>().First();
-      fs.ReadOnly = readOnlyPreview || (EditorSnapshot != null && IsMarkdownPath(documentPath));
 
       var assetsPath = (!string.IsNullOrEmpty(_settings.AssetsPath) && Directory.Exists(_settings.AssetsPath))
         ? _settings.AssetsPath
@@ -157,19 +148,19 @@ namespace Webview2Viewer
       }
       var lineMark = (_settings.SyncViewWithFirstVisibleLine || _settings.SyncViewWithCaretPosition);
       var editing = EditorSnapshot != null && IsMarkdownPath(documentPath);
-      var keepEditor = editing && IsMarkdownPath(_documentPath);
+      fs.ReadOnly = readOnlyPreview || editing;
+      var keepEditor = editing && _editing;
+      var plugins = string.Join(",", _settings.EnabledMarkdownPlugins);
       var reload = !keepEditor && (_documentPath != documentPath || _readOnlyPreview != readOnlyPreview);
+      reload = reload || _editing != editing;
       reload = reload || (_assetPath != assetsPath);
       reload = reload || (_cssFile != cssFile);
       reload = reload || (_lineMark != lineMark);
       reload = reload || (_trackFirstLine != _settings.SyncViewWithFirstVisibleLine);
-      reload = reload || (_enabledMarkdownPlugins != string.Join(",", _settings.EnabledMarkdownPlugins));
+      reload = reload || (_enabledMarkdownPlugins != plugins);
 
       if (_assetPath != assetsPath) {
-        await ExecuteWebviewActionAsync((webView) => {
-          webView.CoreWebView2.SetVirtualHostNameToFolderMapping("assets.example", assetsPath, CoreWebView2HostResourceAccessKind.Allow);
-        });
-        _assetPath = assetsPath;
+        webView.CoreWebView2.SetVirtualHostNameToFolderMapping("assets.example", assetsPath, CoreWebView2HostResourceAccessKind.Allow);
       }
 
       var baseDir = Path.GetDirectoryName(documentPath);
@@ -180,57 +171,50 @@ namespace Webview2Viewer
       if (editing) PrepareEditorSnapshot(EditorSnapshot);
 
       if (!reload) {
-        await ExecuteWebviewActionAsync(webView => webView.ExecuteScriptAsync(
-          "window.amSetShowLinkAddresses?.(" + (_settings.ShowLinkAddresses ? "true" : "false") + ");"));
-        _documentPath = documentPath;
-        _readOnlyPreview = readOnlyPreview;
+        // Ordinary content updates should keep a zoom chosen with Ctrl+wheel.
+        if (_appliedZoomLevel != _settings.ZoomLevel) ApplyConfiguredZoom(webView);
         var update = editing
           ? "window.__amSnapshot = " + JsonConvert.SerializeObject(EditorSnapshot, editorJson) + "; window.amReceiveSnapshot?.(window.__amSnapshot);"
           : "window.contentChanged?.();";
-        await ExecuteWebviewActionAsync((webView) => webView.ExecuteScriptAsync(update));
+        await webView.ExecuteScriptAsync("window.amSetShowLinkAddresses?.(" + (_settings.ShowLinkAddresses ? "true" : "false") + ");" + update);
+        _documentPath = documentPath;
+        _readOnlyPreview = readOnlyPreview;
         return;
       }
 
       if (!string.IsNullOrEmpty(_documentPath) && _documentPath != documentPath) {
-        await ExecuteWebviewActionAsync(async (webView) => {
-          var value = await webView.ExecuteScriptAsync("window.pageYOffset");
-          _preservePosition[_documentPath] = (int) double.Parse(value, CultureInfo.InvariantCulture);
-        });
+        var value = await webView.ExecuteScriptAsync("window.pageYOffset");
+        if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var offset))
+          _preservePosition[_documentPath] = offset;
       }
 
-      _documentPath = documentPath;
-      _readOnlyPreview = readOnlyPreview;
-      _cssFile = cssFile;
-      _lineMark = lineMark;
-      _trackFirstLine = _settings.SyncViewWithFirstVisibleLine;
-      _enabledMarkdownPlugins = string.Join(",", _settings.EnabledMarkdownPlugins);
-
-      var loader = File.ReadAllText(assetsPath + "/loader.html");
-      cssFile = cssFile.Replace("\\", "/");
-      assetsPath = assetsPath.Replace("\\", "/");
-
-      if (cssFile.StartsWith(assetsPath + "/")) {
-        cssFile = cssFile.Substring((assetsPath).Length + 1);
-        cssFile = "http://assets.example/" + HttpUtility2.UrlPathEncode(cssFile);
-      }
-      else {
-        cssFile = $"http://{fs.Hostname}/" + HttpUtility2.PathToUri(cssFile);
-      }
-
-      loader = loader.Replace("__BASE_URL__", HttpUtility2.PathToUri(baseDir));
+      var loader = File.ReadAllText(Path.Combine(assetsPath, "loader.html")).Replace("__BASE_URL__", HttpUtility2.PathToUri(baseDir));
       var options = new JObject {
         ["document"] = "http://local.example" + fs.DocumentUri,
         ["showLinkAddresses"] = _settings.ShowLinkAddresses,
         ["readOnlyPreview"] = readOnlyPreview
       };
-      if (editing) options["editorSnapshot"] = JToken.FromObject(EditorSnapshot, JsonSerializer.Create(editorJson));
+      if (editing) {
+        // Keep custom loaders' inline contract. The bundled loader requests the
+        // snapshot over the editor bridge, outside NavigateToString's HTML size limit.
+        var defaultAssets = _settings.DefaultAssetPath;
+        if (!string.IsNullOrEmpty(defaultAssets) && string.Equals(Path.GetFullPath(assetsPath).TrimEnd(Path.DirectorySeparatorChar),
+            Path.GetFullPath(defaultAssets).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase)) {
+          options["requestEditorSnapshot"] = true;
+        }
+        else options["editorSnapshot"] = JToken.FromObject(EditorSnapshot, JsonSerializer.Create(editorJson));
+      }
       options["nativeEditorToolbar"] = EditorUiChanged != null;
 
       if (IsMarkdownPath(documentPath)) {
-        options["css"] = cssFile;
-        options["lineMark"] = (_settings.SyncViewWithFirstVisibleLine || _settings.SyncViewWithCaretPosition);
+        var assetPrefix = assetsPath.Replace('\\', '/').TrimEnd('/') + "/";
+        var cssPath = cssFile.Replace('\\', '/');
+        options["css"] = cssPath.StartsWith(assetPrefix, StringComparison.OrdinalIgnoreCase)
+          ? "http://assets.example/" + HttpUtility2.UrlPathEncode(cssPath.Substring(assetPrefix.Length))
+          : "http://" + fs.Hostname + "/" + HttpUtility2.PathToUri(cssPath);
+        options["lineMark"] = lineMark;
         options["trackFirstLine"] = _settings.SyncViewWithFirstVisibleLine;
-        if (_preservePosition.TryGetValue(_documentPath, out var pageYOffset)) {
+        if (_preservePosition.TryGetValue(documentPath, out var pageYOffset)) {
           options["pageYOffset"] = pageYOffset;
         }
         options["md.extensions"] = JToken.FromObject(_settings.EnabledMarkdownPlugins);
@@ -238,24 +222,40 @@ namespace Webview2Viewer
 
       loader = loader.Replace("__OPTIONS__", JsonConvert.SerializeObject(options, editorJson));
 
-      await ExecuteWebviewActionAsync((webView) => webView.NavigateToString(loader));
-      await SetZoomLevel(_settings.ZoomLevel);
+      webView.NavigateToString(loader);
+      ApplyConfiguredZoom(webView);
+      _documentPath = documentPath;
+      _assetPath = assetsPath;
+      _cssFile = cssFile;
+      _readOnlyPreview = readOnlyPreview;
+      _editing = editing;
+      _lineMark = lineMark;
+      _trackFirstLine = _settings.SyncViewWithFirstVisibleLine;
+      _enabledMarkdownPlugins = plugins;
     }
 
-    public async Task SetZoomLevel(int zoomLevel)
+    public Task SetZoomLevel(int zoomLevel) => ExecuteWebviewActionAsync(webView => {
+      SetZoomLevel(webView, zoomLevel);
+      return Task.CompletedTask;
+    });
+
+    private void ApplyConfiguredZoom(WebView2 webView)
     {
-      double zoomFactor = ConvertToZoomFactor(zoomLevel);
-      await ExecuteWebviewActionAsync((webView) => {
-        if (webView.ZoomFactor != zoomFactor) {
-          webView.ZoomFactor = zoomFactor;
-        }
-      });
+      var zoomLevel = _settings.ZoomLevel;
+      SetZoomLevel(webView, zoomLevel);
+      _appliedZoomLevel = zoomLevel;
+    }
+
+    private static void SetZoomLevel(WebView2 webView, int zoomLevel)
+    {
+      var factor = ConvertToZoomFactor(zoomLevel);
+      if (webView.ZoomFactor != factor) webView.ZoomFactor = factor;
     }
 
     public static bool IsMarkdownPath(string path) =>
       path != null && (path.EndsWith(".md", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".mdc", StringComparison.OrdinalIgnoreCase));
 
-    private double ConvertToZoomFactor(int zoomLevel) => Convert.ToDouble(zoomLevel) / 100;
+    private static double ConvertToZoomFactor(int zoomLevel) => zoomLevel / 100.0;
 
     void OnWebBrowser_NavigationStarting(object sender, CoreWebView2NavigationStartingEventArgs e)
     {
@@ -282,64 +282,24 @@ namespace Webview2Viewer
       Process.Start(new ProcessStartInfo(address) { UseShellExecute = true });
     }
 
-    private void ExecuteWebviewAction(Func<WebView2, Task> action)
-    {
-      var asyncTask = new Task(async () => {
-        await ExecuteWebviewActionAsync(action);
-      });
-
-      asyncTask.Start(TaskScheduler.FromCurrentSynchronizationContext());
-      asyncTask.Wait();
-    }
-
-    private void ExecuteWebviewAction(Action<WebView2> action)
-    {
-      var asyncTask = new Task(async () => {
-        await ExecuteWebviewActionAsync(action);
-      });
-
-      asyncTask.Start(TaskScheduler.FromCurrentSynchronizationContext());
-      asyncTask.Wait();
-    }
-
-    private async Task ExecuteWebviewActionAsync(Action<WebView2> action)
-    {
-      try {
-        if (_webView != null) {
-          var webView = await _webView;
-          webView.Invoke(new Action(() => action(webView)));
-        }
-      }
-      catch (Exception) { }
-    }
-
     private async Task ExecuteWebviewActionAsync(Func<WebView2, Task> action)
     {
+      var webView = _webView;
+      if (_disposed || webView == null) return;
       try {
-        if (_webView != null) {
-          var webView = await _webView;
-          var tcs = new TaskCompletionSource<bool>();
-          var asyncResult = webView.BeginInvoke(new Action(() => {
-            try {
-              var task = action(webView);
-              task.ContinueWith(t => {
-                tcs.SetResult(true);
-              });
-            }
-            catch (Exception ex) {
-              tcs.SetException(ex);
-            }
-          }));
-          await tcs.Task;
-          webView.EndInvoke(asyncResult);
-        }
+        await _initialization;
+        if (_disposed || webView.IsDisposed) return;
+        if (webView.InvokeRequired) await (Task)webView.Invoke(action, webView);
+        else await action(webView);
       }
-      catch (Exception) { }
+      catch (Exception) when (_disposed || webView.IsDisposed) { }
     }
 
     const string CONFIG_FOLDER_NAME = "AnotherMarkdown";
 
-    private Task<WebView2> _webView;
+    private WebView2 _webView;
+    private Task _initialization;
+    private bool _disposed;
     private ImagePreviewWindow _imageWindow;
     private readonly string _imagePlacementFile;
     private sealed class WindowOwner : IWin32Window
@@ -347,13 +307,14 @@ namespace Webview2Viewer
       public WindowOwner(IntPtr handle) { Handle = handle; }
       public IntPtr Handle { get; }
     }
-    private object _webViewInitLock = new object();
     private string _cssFile;
     private string _assetPath;
     private ISettings _settings;
 
     private string _documentPath;
+    private int _appliedZoomLevel;
     private bool _lineMark;
+    private bool _editing;
     private bool _readOnlyPreview;
     private bool _trackFirstLine;
     private string _enabledMarkdownPlugins;

@@ -45,7 +45,11 @@ html.am-editing, html.am-editing body { margin: 0; padding: 0; min-width: 0; max
 .am-conflict pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--am-panel); color: var(--am-text); padding: 8px; }
 .am-conflict-result { box-sizing: border-box; width: 100%; min-height: 85px; font: 13px/1.5 Consolas, monospace; background: var(--am-background); color: var(--am-text); }
 .am-conflict-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 12px; position: sticky; bottom: 0; background: var(--am-background); }
-.am-synced-caret { position: fixed; width: 2px; background: #2463d1; pointer-events: none; z-index: 2; }
+.am-synced-caret { position: fixed; width: 2px; background: #2463d1; pointer-events: none; z-index: 2;
+  animation: am-marker-blink var(--am-caret-cycle, 1s) step-end infinite; }
+@keyframes am-marker-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+.am-draws-caret #content, .am-draws-caret .am-editor-surface [contenteditable="true"] { caret-color: transparent; }
 .am-theme-dark .am-synced-caret { background: #8fbaff; }
+.am-synced-caret.am-editing-caret { background: var(--am-text); }
 ::highlight(am-synced-selection) { background: #b5d4fb; color: #101010; }
 .am-theme-dark ::highlight(am-synced-selection) { background: #315a8a; color: #fff; }

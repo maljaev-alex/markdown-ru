@@ -1,7 +1,6 @@
 ﻿using System;
 using System.IO;
 using System.Text.RegularExpressions;
-using System.Web;
 
 namespace Webview2Viewer.Web
 {
@@ -12,8 +11,7 @@ namespace Webview2Viewer.Web
       if (path == string.Empty) {
         return path;
       }
-      path = HttpUtility.UrlDecode(path);
-      return Regex.Replace(path, @"^\/disk(\w)\/", "$1:/");
+      return Regex.Replace(Uri.UnescapeDataString(path), @"^/disk([a-z])/", "$1:/", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     public static string PathToUri(string path)

@@ -1,4 +1,5 @@
-import { diffChars } from 'diff';
+import { diffArrays, diffChars } from 'diff';
+import { parseMarkdown } from './markdown.js';
 
 export function lineOffsets(text) {
   const result = [0];
@@ -70,13 +71,50 @@ function alignmentSource(raw, visible) {
 // Map within a single Markdown block, not across unrelated repeated paragraphs.
 // Removed syntax maps to the nearest visible boundary. Boundary affinity keeps
 // selections inside delimiters, while a caret at the next word stays with it.
-export function alignText(raw, visible) {
+export function alignText(raw, visible, maskSyntax = true) {
+  if (raw === visible) {
+    const offset = n => Math.max(0, Math.min(raw.length, n));
+    return { toView: offset, toSource: offset };
+  }
   const spans = [];
   let source = 0, view = 0;
-  for (const part of diffChars(alignmentSource(raw, visible), visible, { timeout: 100 }) || []) {
+  const comparable = maskSyntax ? alignmentSource(raw, visible) : raw;
+  const diff = diffChars(comparable, visible, { timeout: 100 });
+  for (const part of diff || []) {
     if (!part.added && !part.removed) spans.push({ source, view, length: part.value.length });
     if (!part.added) source += part.value.length;
     if (!part.removed) view += part.value.length;
+  }
+  // Formatting can add thousands of spaces to a single block. If a character
+  // diff exceeds its budget, anchor to common words at their real offsets.
+  if (!diff) {
+    const words = value => Array.from(value.matchAll(/[\p{L}\p{M}\p{N}_]+|[^\s\0]/gu));
+    const left = words(comparable), right = words(visible);
+    const changes = diffArrays(left, right, { comparator: (a, b) => a[0] === b[0], timeout: 100 });
+    let i = 0, j = 0;
+    const match = (a, b) => spans.push({ source: a.index, view: b.index, length: a[0].length });
+    if (changes) {
+      for (const part of changes) {
+        if (!part.added && !part.removed) for (let n = 0; n < part.count; n++) match(left[i + n], right[j + n]);
+        if (!part.added) i += part.count;
+        if (!part.removed) j += part.count;
+      }
+    } else {
+      const hits = new Map();
+      for (let n = right.length - 1; n >= 0; n--) {
+        const word = right[n][0];
+        if (!hits.has(word)) hits.set(word, []);
+        hits.get(word).push(n);
+      }
+      for (const word of left) {
+        const positions = hits.get(word[0]);
+        while (positions?.length && positions.at(-1) < j) positions.pop();
+        if (positions?.length) {
+          const at = positions.pop();
+          match(word, right[at]); j = at + 1;
+        }
+      }
+    }
   }
   function project(value, from, to, limit, affinity = 1) {
     let before, after;
@@ -90,15 +128,19 @@ export function alignText(raw, visible) {
       return left < right || (left === right && affinity < 0) ? before[to] + before.length : after[to];
     }
     if (before) return before[to] + before.length;
-    return after ? after[to] : Math.min(value, limit);
+    return after ? after[to] : (affinity < 0 && value > 0 ? limit : 0);
   }
   // Markdown entities and escaped punctuation occupy one visible character (or
   // one surrogate pair). Include the complete spelling when selecting that glyph.
   const atoms = [];
-  const decoder = document.createElement('textarea');
+  if (!maskSyntax) return { toView: (offset, affinity) => project(offset, 'source', 'view', visible.length, affinity) };
+  let decoder;
   for (const match of raw.matchAll(/&(?:#[0-9]+|#x[0-9a-f]+|[a-z][a-z0-9]+);|\\[!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~]/gi)) {
-    decoder.innerHTML = match[0];
-    const decoded = match[0][0] === '\\' ? match[0].slice(1) : decoder.value;
+    let decoded = match[0].slice(1);
+    if (match[0][0] === '&') {
+      decoder ??= document.createElement('textarea');
+      decoder.innerHTML = match[0]; decoded = decoder.value;
+    }
     const start = project(match.index, 'source', 'view', visible.length);
     if (decoded !== match[0] && visible.slice(start, start + decoded.length) === decoded &&
         !visible.slice(start, start + match[0].length).startsWith(match[0]))
@@ -130,53 +172,175 @@ function choose(entries, offset, affinity) {
   return previous;
 }
 
+const bounds = node => ({ start: node.position.start.offset, end: node.position.end.offset });
+
+// Both the editor and its navigation use the same GFM grammar. Cell positions
+// include their delimiters/padding; inline children delimit the editable text.
+function sourceLayout(text) {
+  const tables = [], paragraphs = [];
+  function visit(node) {
+    if (node.type === 'table') {
+      tables.push({ ...bounds(node), line: node.position.start.line - 1, rows: node.children.map(row => ({
+        ...bounds(row),
+        cells: row.children.map(cell => {
+          const span = bounds(cell);
+          const contentStart = cell.children[0]?.position.start.offset ?? span.start + Number(text[span.start] === '|');
+          return { ...span, contentStart, contentEnd: cell.children.at(-1)?.position.end.offset ?? contentStart };
+        })
+      })) });
+    } else if (node.type === 'paragraph' || node.type === 'heading') {
+      paragraphs.push({ ...bounds(node), type: node.type, contentStart: node.children[0]?.position.start.offset,
+        contentEnd: node.children.at(-1)?.position.end.offset });
+    } else if (node.type !== 'footnoteDefinition') node.children?.forEach(visit);
+  }
+  visit(parseMarkdown(text));
+  return { tables, paragraphs };
+}
+
+function cellBounds(row, index) {
+  // GFM renders missing trailing cells as empty cells in that same row.
+  return row.cells[index] || { start: row.end, end: row.end };
+}
+
+function alignedGroup(text, span, entries, visible) {
+  const from = span.contentStart ?? span.start, to = span.contentEnd ?? span.end;
+  let alignment;
+  const project = () => {
+    if (!alignment) {
+      const raw = text.slice(from, to);
+      alignment = visible === '\uFFFC' ? {
+        toSource: offset => offset > 0 ? raw.trimEnd().length : 0,
+        toView: offset => offset >= raw.trimEnd().length ? 1 : 0
+      } : alignText(raw, visible);
+    }
+    return alignment;
+  };
+  return { ...span, entries,
+    sourceAt: (offset, affinity) => from + project().toSource(offset, affinity),
+    viewAt: (offset, affinity) => project().toView(Math.max(0, Math.min(to - from, offset - from)), affinity) };
+}
+
+// Source spelling can change across the entire document on a mode switch.
+// Follow corresponding syntax nodes, diffing only the token or gap containing
+// the position (including padding between table cells and around inline code).
+export function formattingPositionMap(before, after) {
+  const left = parseMarkdown(before), right = parseMarkdown(after);
+  function project(a, b, offset, affinity) {
+    let a0 = a.position.start.offset, b0 = b.position.start.offset;
+    let a1 = a.position.end.offset, b1 = b.position.end.offset;
+    if (a.children?.length && a.children.length === b.children?.length &&
+        a.children.every((node, i) => node.type === b.children[i].type)) {
+      for (let i = 0; i < a.children.length; i++) {
+        const child = a.children[i], target = b.children[i];
+        const start = child.position.start.offset, end = child.position.end.offset;
+        if (offset < start || (offset === start && affinity < 0 && offset > a0)) {
+          a1 = start; b1 = target.position.start.offset; break;
+        }
+        if (offset < end || (offset === end && affinity < 0)) return project(child, target, offset, affinity);
+        a0 = end; b0 = target.position.end.offset;
+      }
+    }
+    if (offset === a0) return b0;
+    if (offset === a1) return b1;
+    return b0 + alignText(before.slice(a0, a1), after.slice(b0, b1), false).toView(offset - a0, affinity);
+  }
+  return (offset, affinity = 1) => project(left, right, Math.max(0, Math.min(before.length, offset)), affinity);
+}
+
 export function modelMap(editor, source) {
   const { text, ranges } = source.serialize(true), model = editor.model;
-  const groups = ranges.map(range => {
-    let visible = '';
-    const entries = [];
+  const groups = [], scrollBlocks = [];
+  function addScrollBlock(node, offset) {
+    const view = editor.editing.mapper.toViewElement(node);
+    const element = view && editor.editing.view.domConverter.mapViewToDom(view);
+    if (element) scrollBlocks.push({ element, offset });
+  }
+  let layout, tableIndex = 0, paragraphIndex = 0;
+  for (const range of ranges) {
+    let visible = '', entries = [], segmentStart = range.start;
+    const paragraphs = new Map();
+    if (range.group.nodes.some(n => n.hasAttribute('listType') || n.name === 'blockQuote')) {
+      layout ??= sourceLayout(text);
+      const blocks = [], spans = [];
+      function collect(node) {
+        if (node.name === 'blockQuote') for (const child of node.getChildren()) collect(child);
+        else if (node.name === 'paragraph' || /^heading[1-6]$/.test(node.name)) blocks.push(node);
+      }
+      range.group.nodes.forEach(collect);
+      while (layout.paragraphs[paragraphIndex]?.start < range.end) {
+        const span = layout.paragraphs[paragraphIndex++];
+        if (span.start >= range.start && span.end <= range.end) spans.push(span);
+      }
+      if (blocks.length === spans.length && blocks.every((n, i) => n.name.startsWith(spans[i].type)))
+        blocks.forEach((node, i) => paragraphs.set(node, spans[i]));
+    }
+    function finish(span) {
+      if (entries.length) groups.push(alignedGroup(text, span, entries, visible));
+      visible = ''; entries = [];
+    }
     function visit(node) {
+      const paragraph = paragraphs.get(node);
+      if (paragraph) addScrollBlock(node, paragraph.start);
+      else if (node === range.group.nodes[0]) addScrollBlock(node, range.start);
+      if (node.name === 'table') {
+        layout ??= sourceLayout(text);
+        const tables = layout.tables;
+        while (tables[tableIndex]?.end <= segmentStart) tableIndex++;
+        const table = tables[tableIndex];
+        if (table && table.start < range.end && table.rows.length === node.childCount) {
+          tableIndex++;
+          finish({ start: segmentStart, end: table.start });
+          for (const row of node.getChildren()) {
+            const rowSource = table.rows[row.index];
+            addScrollBlock(row, rowSource.start);
+            for (const cell of row.getChildren()) {
+              for (const child of cell.getChildren()) visit(child);
+              finish(cellBounds(rowSource, cell.index));
+            }
+          }
+          segmentStart = table.end;
+          return;
+        }
+      }
       if (node.is('$text')) {
         const start = visible.length; visible += node.data;
         entries.push({ start, end: visible.length, parent: node.parent, offset: node.startOffset,
           before: model.createPositionBefore(node), after: model.createPositionAfter(node) });
       } else if (node.name === 'softBreak' || (model.schema.isObject(node) && node.name !== 'table')) {
-        const start = visible.length; visible += node.name === 'softBreak' ? '\n' : '\uFFFC';
+        const start = visible.length; visible += node.name === 'softBreak' || node.name === 'amSoftWrap' ? '\n' : '\uFFFC';
         entries.push({ start, end: visible.length, before: model.createPositionBefore(node), after: model.createPositionAfter(node) });
       } else {
-        const start = visible.length;
+        const span = paragraphs.get(node);
+        if (span) finish({ start: segmentStart, end: span.start });
         for (const child of node.getChildren()) visit(child);
-        if (start === visible.length) entries.push({ start, end: start, parent: node, offset: 0,
+        if (!node.childCount) entries.push({ start: visible.length, end: visible.length, parent: node, offset: 0,
           before: model.createPositionAt(node, 0), after: model.createPositionAt(node, 'end') });
-        if (model.schema.isBlock(node)) visible += '\n';
+        if (span) { finish(span); segmentStart = span.end; }
+        else if (model.schema.isBlock(node)) visible += '\n';
       }
     }
     range.group.nodes.forEach(visit);
-    const raw = text.slice(range.start, range.end);
-    const alignment = visible === '\uFFFC' ? {
-      toSource: offset => offset > 0 ? raw.trimEnd().length : 0,
-      toView: offset => offset >= raw.trimEnd().length ? 1 : 0
-    } : alignText(raw, visible);
-    return { ...range, entries, alignment };
-  });
+    finish({ start: segmentStart, end: range.end });
+  }
   return {
-    text,
+    text, scrollBlocks,
     toSource(position, affinity = 1) {
       let previous;
       for (const group of groups) for (const entry of group.entries) {
         if (position.parent === entry.parent && position.offset >= entry.offset && position.offset <= entry.offset + entry.end - entry.start)
-          return group.start + group.alignment.toSource(entry.start + position.offset - entry.offset, affinity);
-        if (position.isBefore(entry.before)) return group.start + group.alignment.toSource(entry.start, 1);
+          return group.sourceAt(entry.start + position.offset - entry.offset, affinity);
+        if (position.isBefore(entry.before)) return affinity < 0 && previous
+          ? previous.group.sourceAt(previous.entry.end, -1) : group.sourceAt(entry.start, 1);
         previous = { group, entry };
-        if (position.isEqual(entry.before)) return group.start + group.alignment.toSource(entry.start, 1);
-        if (position.isEqual(entry.after)) return group.start + group.alignment.toSource(entry.end, -1);
+        if (position.isEqual(entry.before)) return group.sourceAt(entry.start, 1);
+        if (position.isEqual(entry.after)) return group.sourceAt(entry.end, -1);
       }
-      return previous ? previous.group.start + previous.group.alignment.toSource(previous.entry.end, -1) : 0;
+      return previous ? previous.group.sourceAt(previous.entry.end, -1) : 0;
     },
     toPosition(offset, affinity = 1) {
       const group = choose(groups, offset, affinity);
       if (!group) return model.createPositionAt(model.document.getRoot(), 0);
-      const local = group.alignment.toView(offset - group.start, affinity);
+      const local = group.viewAt(offset, affinity);
       const entry = choose(group.entries, local, affinity);
       if (!entry) return model.createPositionBefore(group.group.nodes[0]);
       if (entry.parent) return model.createPositionAt(entry.parent, entry.offset + Math.max(0, Math.min(entry.end - entry.start, local - entry.start)));
@@ -186,47 +350,85 @@ export function modelMap(editor, source) {
 }
 
 export function previewMap(root, text) {
-  const offsets = lineOffsets(text), groups = [], byOwner = new Map();
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const offsets = lineOffsets(text), byOwner = new Map(), cells = new Map(), rowStarts = new Map(), scrollBlocks = [];
+  const renderedTables = root.querySelectorAll('table[data-am-from]');
+  if (renderedTables.length) {
+    const tables = new Map(sourceLayout(text).tables.map(table => [table.line, table]));
+    for (const element of renderedTables) {
+      const table = tables.get(Number(element.dataset.amFrom));
+      if (!table) continue;
+      for (const row of element.rows) {
+        const source = table.rows[row.rowIndex];
+        if (source) {
+          rowStarts.set(row, source.start);
+          for (const cell of row.cells) cells.set(cell, cellBounds(source, cell.cellIndex));
+        }
+      }
+    }
+  }
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
   for (let node; (node = walker.nextNode());) {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const offset = rowStarts.get(node) ?? (node.hasAttribute('data-am-from') && !node.parentElement.closest('table')
+        ? offsets[Number(node.dataset.amFrom)] : undefined);
+      if (offset != null) scrollBlocks.push({ element: node, offset });
+      if (cells.has(node)) byOwner.set(node, { owner: node, ...cells.get(node), visible: '', entries: [] });
+      continue;
+    }
     if (node.parentElement.closest('.linemark,script,style,[aria-hidden="true"]')) continue;
     // Renderer indentation between block elements is not displayed text. In
     // particular, a tbody and its tr can share a source range; map the cell text.
     if (!node.data.trim() && !node.parentElement.closest('p,li,th,td,pre,h1,h2,h3,h4,h5,h6')) continue;
-    const owner = node.parentElement.closest('[data-am-from]') || root;
+    const cell = node.parentElement.closest('td,th');
+    const owner = cells.has(cell) ? cell : node.parentElement.closest('[data-am-from]') || root;
     if (!root.contains(owner)) continue;
     let group = byOwner.get(owner);
     if (!group) {
       group = { owner, start: offsets[Number(owner.dataset.amFrom)] ?? 0,
         end: offsets[Number(owner.dataset.amTo)] ?? text.length, visible: '', entries: [] };
-      byOwner.set(owner, group); groups.push(group);
+      byOwner.set(owner, group);
     }
     const start = group.visible.length; group.visible += node.data;
     group.entries.push({ node, start, end: group.visible.length });
   }
-  for (const group of groups) group.alignment = alignText(text.slice(group.start, group.end), group.visible);
+  const groups = Array.from(byOwner.values(), group => alignedGroup(text, group, group.entries, group.visible));
+  const byNode = new Map();
+  for (const group of groups) {
+    for (const entry of group.entries) byNode.set(entry.node, { group, entry });
+    if (!group.entries.length) byNode.set(group.owner, { group, entry: { start: 0, end: 0 } });
+  }
+  function edge(node, forward) {
+    const match = byNode.get(node);
+    if (match) return match.group.sourceAt(forward ? match.entry.start : match.entry.end, forward ? 1 : -1);
+    for (let child = forward ? node.firstChild : node.lastChild; child; child = forward ? child.nextSibling : child.previousSibling) {
+      const offset = edge(child, forward);
+      if (offset != null) return offset;
+    }
+    return null;
+  }
   return {
-    groups,
+    groups, scrollBlocks,
     toSource(node, offset, affinity = 1) {
       if (node?.nodeType === Node.ELEMENT_NODE) {
-        const child = node.childNodes[offset] || node.childNodes[offset - 1];
-        const nodes = groups.flatMap(g => g.entries).filter(e => child === e.node || child?.contains(e.node));
-        const entry = offset < node.childNodes.length ? nodes[0] : nodes.at(-1);
-        if (entry) { const atStart = offset < node.childNodes.length; node = entry.node; offset = atStart ? 0 : node.length; }
+        for (const forward of [affinity > 0, affinity <= 0]) {
+          for (let child = node.childNodes[forward ? offset : offset - 1]; child; child = forward ? child.nextSibling : child.previousSibling) {
+            const boundary = edge(child, forward);
+            if (boundary != null) return boundary;
+          }
+        }
+        if (!byNode.has(node)) node = node.closest('td,th');
       }
-      for (const group of groups) {
-        const entry = group.entries.find(e => e.node === node);
-        if (entry) return group.start + group.alignment.toSource(entry.start + offset, affinity);
-      }
-      return null;
+      const match = byNode.get(node);
+      return match ? match.group.sourceAt(match.entry.start + offset, affinity) : null;
     },
     toPosition(offset, affinity = 1) {
-      const candidates = groups.filter(g => g.start <= offset && g.end >= offset);
+      const candidates = groups.filter(g => (offset > g.start || offset === g.start && affinity > 0) &&
+        (offset < g.end || offset === g.end && affinity < 0));
       const group = candidates.sort((a, b) => a.end - a.start - (b.end - b.start))[0] || choose(groups, offset, affinity);
       if (!group) return { node: root, offset: 0 };
-      const local = group.alignment.toView(offset - group.start, affinity);
+      const local = group.viewAt(offset, affinity);
       const entry = choose(group.entries, local, affinity);
-      return entry ? { node: entry.node, offset: Math.max(0, Math.min(entry.node.length, local - entry.start)) } : { node: root, offset: 0 };
+      return entry ? { node: entry.node, offset: Math.max(0, Math.min(entry.node.length, local - entry.start)) } : { node: group.owner, offset: 0 };
     }
   };
 }

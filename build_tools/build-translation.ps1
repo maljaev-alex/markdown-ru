@@ -37,7 +37,6 @@ if (-not $SkipTests) {
     if ($LASTEXITCODE -ne 0) { throw 'Build cache tests failed.' }
 }
 
-$null = Get-BuildPackage 'DiffPlex' '1.9.0'
 $null = Get-BuildPackage 'Newtonsoft.Json' '13.0.4'
 $null = Get-BuildPackage 'Markdig' '1.4.0'
 $null = Get-BuildPackage 'System.Memory' '4.6.3'
@@ -129,9 +128,13 @@ if (-not $SkipTests) {
     if ($LASTEXITCODE -ne 0) { throw 'Settings startup test compilation failed.' }
     & $startupTests
     if ($LASTEXITCODE -ne 0) { throw 'Settings startup tests failed.' }
-    foreach ($pluginTestName in @('IniSettingsTests', 'PreviewProgressTests', 'DockingFocusTests', 'EditingTests', 'EditorDraftTests', 'NavigationTests', 'SyncedSourceCaretTests')) {
+    foreach ($pluginTestName in @('IniSettingsTests', 'PreviewProgressTests', 'PreviewRenderQueueTests', 'DockingFocusTests', 'EditingTests', 'EditorDraftTests', 'NavigationTests', 'SyncedSourceCaretTests')) {
         $pluginTests = Join-Path $buildDirectory ($pluginTestName + '.exe')
-        & $csc "/r:$ref\System.Numerics.dll" @markdownReferences /nologo /noconfig /nostdlib /langversion:7.3 /target:exe /platform:x64 "/out:$pluginTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$ref\System.Drawing.dll" "/r:$buildDirectory\AnotherMarkdown.dll" "/r:$buildDirectory\PanelCommon.dll" (Join-Path $projectRoot ('tests\' + $pluginTestName + '.cs'))
+        $manifestArgs = @()
+        if ($pluginTestName -eq 'SyncedSourceCaretTests') {
+            $manifestArgs = @("/win32manifest:$projectRoot\tests\SyncedSourceCaretTests.manifest")
+        }
+        & $csc @manifestArgs "/r:$ref\System.Numerics.dll" @markdownReferences /nologo /noconfig /nostdlib /langversion:7.3 /target:exe /platform:x64 "/out:$pluginTests" "/r:$ref\mscorlib.dll" "/r:$ref\System.dll" "/r:$ref\System.Core.dll" "/r:$ref\System.Windows.Forms.dll" "/r:$ref\System.Drawing.dll" "/r:$buildDirectory\AnotherMarkdown.dll" "/r:$buildDirectory\PanelCommon.dll" (Join-Path $projectRoot ('tests\' + $pluginTestName + '.cs'))
         if ($LASTEXITCODE -ne 0) { throw "$pluginTestName compilation failed." }
         if ($pluginTestName -eq 'EditingTests') { & $pluginTests (Join-Path $CacheRoot 'editing-tests') }
         else { & $pluginTests }
@@ -173,13 +176,18 @@ try {
     New-Item -ItemType Directory -Path $guideDirectory -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\translation-ru.md') -Destination $guideDirectory -Force
     Copy-Item -LiteralPath (Join-Path $projectRoot 'docs\visual-editor.md') -Destination $guideDirectory -Force
-    Copy-Item -LiteralPath (Join-Path $projectRoot 'editor') -Destination $stage -Recurse
+    $editorSourceDirectory = Join-Path $stage 'editor'
+    New-Item -ItemType Directory -Path $editorSourceDirectory -Force | Out-Null
+    foreach ($entry in @('README.md', 'package.json', 'package-lock.json', 'src')) {
+        Copy-Item -LiteralPath (Join-Path $projectRoot "editor\$entry") -Destination $editorSourceDirectory -Recurse
+    }
     $editorBuildDirectory = Join-Path $stage 'build_tools'
     New-Item -ItemType Directory -Path $editorBuildDirectory -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $projectRoot 'build_tools\build-editor.cjs') -Destination $editorBuildDirectory
     $editorTestDirectory = Join-Path $stage 'tests'
     New-Item -ItemType Directory -Path $editorTestDirectory -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $projectRoot 'tests\visual-editor.browser.cjs') -Destination $editorTestDirectory
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'tests\editor-mode-fixture.cjs') -Destination $editorTestDirectory
     Copy-Item -LiteralPath (Join-Path $projectRoot 'tests\navigation.browser.cjs') -Destination $editorTestDirectory
     Copy-Item -LiteralPath (Join-Path $projectRoot 'tests\link-addresses.browser.cjs') -Destination $editorTestDirectory
     $brandDirectory = Join-Path $stage 'assets\branding'
@@ -202,7 +210,9 @@ try {
         & $editorTests (Join-Path $stage 'assets') (Join-Path $CacheRoot 'editor-integration-tests')
         if ($LASTEXITCODE -ne 0) { throw 'Editor integration tests failed.' }
     }
-    $archive = Join-Path $OutputDirectory 'AnotherMarkdown-0.1.12-ru.37-x64.zip'
+    $version = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $buildDirectory 'AnotherMarkdown.dll')).ProductVersion
+    if ($version -notmatch '^\d+\.\d+\.\d+-ru\.\d+$') { throw "Unexpected plugin version: $version" }
+    $archive = Join-Path $OutputDirectory "AnotherMarkdown-$version-x64.zip"
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -Force
     Write-Output "Package: $archive"
     Get-FileHash -LiteralPath $archive -Algorithm SHA256

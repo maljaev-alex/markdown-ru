@@ -189,17 +189,39 @@ window.amSetShowLinkAddresses = (() => {
   };
 })();
 
+async function requestInitialEditorSnapshot() {
+  const host = window.chrome.webview;
+  let receive, timeout;
+  try {
+    return await new Promise((resolve, reject) => {
+      receive = ({ data }) => {
+        if (data?.type !== 'am.editor.reply' || data.reply?.requestId !== 'initial') return;
+        if (data.reply.snapshot) resolve(data.reply.snapshot);
+        else reject(new Error('Editor snapshot unavailable'));
+      };
+      host.addEventListener('message', receive);
+      timeout = setTimeout(() => reject(new Error('Editor snapshot timed out')), 10000);
+      host.postMessage({ type: 'am.editor', action: 'initialSnapshot', requestId: 'initial' });
+    });
+  } finally {
+    clearTimeout(timeout);
+    host.removeEventListener('message', receive);
+  }
+}
+
 window.createView = async function (args) {
   window.amSetShowLinkAddresses(args.showLinkAddresses);
-  if (!args.editorSnapshot) return window.createLegacyView(args);
+  if (!args.editorSnapshot && !args.requestEditorSnapshot) return window.createLegacyView(args);
   const style = document.createElement('link');
   style.rel = 'stylesheet'; style.href = 'http://assets.example/editor/editor.css';
   document.head.appendChild(style);
-  try { await new Promise((resolve, reject) => {
-    const script = document.createElement('script'); script.src = 'http://assets.example/editor/editor.js';
-    script.onload = resolve; script.onerror = () => reject(new Error('Visual editor could not be loaded'));
-    document.head.appendChild(script);
-  });
+  try {
+    if (args.requestEditorSnapshot) args.editorSnapshot = await requestInitialEditorSnapshot();
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script'); script.src = 'http://assets.example/editor/editor.js';
+      script.onload = resolve; script.onerror = () => reject(new Error('Visual editor could not be loaded'));
+      document.head.appendChild(script);
+    });
     return await window.AnotherMarkdownEditor.create(args);
   } catch (error) {
     const notice = document.createElement('p');

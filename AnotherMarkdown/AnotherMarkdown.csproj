@@ -70,9 +70,6 @@
     <StartProgram Condition="'$(Platform)'=='x86'">$(MSBuildProgramFiles32)\Notepad++\notepad++.exe</StartProgram>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="DiffPlex, Version=1.9.0.0, Culture=neutral, PublicKeyToken=1d35e91d1bd7bc0f, processorArchitecture=MSIL">
-      <HintPath>$(PackagesDirectory)\DiffPlex.1.9.0\lib\net45\DiffPlex.dll</HintPath>
-    </Reference>
     <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
       <HintPath>$(PackagesDirectory)\Newtonsoft.Json.13.0.4\lib\net45\Newtonsoft.Json.dll</HintPath>
     </Reference>
@@ -160,8 +157,10 @@
       <DependentUpon>SettingsForm.cs</DependentUpon>
     </Compile>
     <Compile Include="MarkdownPanelController.cs" />
+    <Compile Include="Forms\PreviewRenderQueue.cs" />
     <Compile Include="Forms\MarkdownPreviewForm.Editing.cs" />
     <Compile Include="Editing\SourceTextEdit.cs" />
+    <Compile Include="Editing\EditorSourceSession.cs" />
     <Compile Include="Editing\ImageAsset.cs" />
     <Compile Include="Editing\TranslationExport.cs" />
     <Compile Include="MarkdownPanelController.Editing.cs" />

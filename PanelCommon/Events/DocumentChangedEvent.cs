@@ -6,5 +6,6 @@ namespace PanelCommon
   public struct DocumentChangedEvent
   {
     public string Content;
+    public string DocumentPath;
   }
 }

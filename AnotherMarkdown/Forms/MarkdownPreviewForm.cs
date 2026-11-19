@@ -49,6 +49,8 @@ namespace AnotherMarkdown.Forms
 
       _webView = webView;
       _renderContent = webView.SetContentAsync;
+      if (PluginBase.nppData._nppHandle != IntPtr.Zero)
+        _activationWindow = new EditorActivationWindow(this, PluginBase.nppData._nppHandle);
     }
 
     public void UpdateSettings(Settings settings)
@@ -115,6 +117,7 @@ namespace AnotherMarkdown.Forms
     {
       if (disposing) {
         _disposed = true;
+        _activationWindow?.ReleaseHandle();
         _focusGuard.Dispose();
         CancelTranslation();
         if (_webView != null) {
@@ -129,8 +132,50 @@ namespace AnotherMarkdown.Forms
       base.Dispose(disposing);
     }
     private Webview2WebbrowserControl _webView;
+    private readonly EditorActivationWindow _activationWindow;
     private readonly DockingFocusGuard _focusGuard;
     private readonly Func<string, string, bool, Task> _renderContent;
     private bool _disposed;
+
+    // Notepad++ focuses its source control on keyboard reactivation. Restore a
+    // previously focused visual editor after the host finishes that operation.
+    private sealed class EditorActivationWindow : NativeWindow
+    {
+      private readonly MarkdownPreviewForm panel;
+      private readonly uint processId;
+      private string resumeSession;
+      private int activation;
+
+      public EditorActivationWindow(MarkdownPreviewForm panel, IntPtr host)
+      {
+        this.panel = panel;
+        GetWindowThreadProcessId(host, out processId);
+        AssignHandle(host);
+      }
+
+      protected override void WndProc(ref Message message)
+      {
+        if (message.Msg != 0x0006) { base.WndProc(ref message); return; } // WM_ACTIVATE
+        int kind = (int)(message.WParam.ToInt64() & 0xffff), current = ++activation;
+        var session = resumeSession;
+        resumeSession = null;
+        if (kind == 0 && panel.Visible && panel.editorUi?.Editing == true && panel._webView.ContainsKeyboardFocus) {
+          GetWindowThreadProcessId(message.LParam, out var nextProcess);
+          if (nextProcess != processId) resumeSession = panel.editorUi.Session;
+        }
+        base.WndProc(ref message);
+        // WA_CLICKACTIVE honours the control the user explicitly clicked.
+        if (kind != 1 || session == null || panel._disposed || !panel.IsHandleCreated) return;
+        panel.BeginInvoke(new Action(async () => {
+          if (current != activation || panel._disposed || !panel.Visible || GetActiveWindow() != Handle ||
+              panel.editorUi?.Session != session || !panel.editorUi.Editing ||
+              !SyncedSourceCaret.HasKeyboardFocus(PluginBase.GetCurrentScintilla())) return;
+          await panel._webView.RestoreEditorFocusAsync(session);
+        }));
+      }
+
+      [DllImport("user32.dll")] private static extern IntPtr GetActiveWindow();
+      [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+    }
   }
 }

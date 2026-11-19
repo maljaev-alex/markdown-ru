@@ -1,9 +1,12 @@
 # Markdown visual editor
 
-CKEditor 5 48.0.0 with the official Markdown/GFM processor. Only Markdown-compatible
-features are enabled. `src/source.js` preserves unchanged source spans and opaque
-blocks; `src/index.js` handles revision checking, three-way merging and per-document drafts.
-The native host accepts writes only for the currently active buffer and matching base text.
+The `SourceMarkdown` plugin extends CKEditor 5 48.0.0's Markdown/GFM processor.
+Its model converters preserve front matter, formulas, reference definitions, HTML
+and renderer extensions through `editor.setData()` and `editor.getData()`. Source
+positions are used for caret synchronization. On entry the native host records
+the original and formatted text. On exit it restores the original only when the
+current buffer matches the formatted entry text. Ordinary edits use the active
+document identity, base-text check and three-way merge.
 
 The committed `assets/editor` bundle is included by the native packaging script.
 To rebuild it, install the locked dependencies outside the checkout (Node.js 22+):

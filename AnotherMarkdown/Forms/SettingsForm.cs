@@ -138,7 +138,7 @@ namespace AnotherMarkdown.Forms
       ConfigurePickerHints(this);
 
       tbAssetsPath.Text = AssetsPath;
-      trackBar1.Value = Math.Max(trackBar1.Minimum, Math.Min(trackBar1.Maximum, ZoomLevel));
+      trackBar1.Value = ZoomLevel;
       lblZoomValue.Text = $"{ZoomLevel}%";
       tbCssFile.Text = CssFileName;
       tbDarkmodeCssFile.Text = CssDarkModeFileName;
@@ -294,11 +294,18 @@ namespace AnotherMarkdown.Forms
         ShowToolbar = cbShowToolbar.Checked;
         ShowStatusbar = cbShowStatusbar.Checked;
         PreserveEditorLineBreaks = cbPreserveEditorLineBreaks.Checked;
-        List<string> plugins = new List<string>();
-        foreach(MarkdownPlugin item in MarkdownPlugins.CheckedItems) {
-          plugins.Add(item.Id);
+        // The checkbox list is alphabetical. Preserve the configured order
+        // so saving an unrelated option does not reload the active editor.
+        AllowedMarkdownPlugins = _originalPlugins;
+        if (_pluginsLoaded) {
+          var plugins = new List<string>(_originalPlugins);
+          for (var i = 0; i < MarkdownPlugins.Items.Count; i++) {
+            var id = ((MarkdownPlugin)MarkdownPlugins.Items[i]).Id;
+            if (!MarkdownPlugins.GetItemChecked(i)) plugins.RemoveAll(existing => existing == id);
+            else if (!plugins.Contains(id)) plugins.Add(id);
+          }
+          AllowedMarkdownPlugins = plugins.ToArray();
         }
-        AllowedMarkdownPlugins = _pluginsLoaded ? plugins.ToArray() : _originalPlugins;
         DialogResult = DialogResult.OK;
       }
     }

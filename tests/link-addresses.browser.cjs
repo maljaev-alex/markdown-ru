@@ -21,6 +21,7 @@ async function main() {
       else await route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><meta charset="utf-8"><base href="http://local.example/diskD/notes/"><link rel="stylesheet" href="http://links.test/editor.css"></head><body><div id="content"></div><script src="http://links.test/loader.js"></script><script src="http://links.test/editor.js"></script></body></html>' });
     });
     await page.goto('http://links.test/');
+    await page.evaluate(require('./editor-mode-fixture.cjs'));
     const moduleName = String.fromCharCode(1054,1073,1097,1077,1075,1086,1053,1072,1079,1085,1072,1095,1077,1085,1080,1103,1059,1058);
     const target = 'D:/Projects/example/base_files/CommonModules/' + moduleName + '/Ext/Module.bsl:6531';
     const fixtures = [
@@ -45,7 +46,13 @@ async function main() {
         };
         await setOptions(); return { setOptions, dispose() {} };
       };
-      window.chrome.webview = { addEventListener() {}, removeEventListener() {}, postMessage(message) { if (message.action === 'apply') writes.push(message); if (message.type === 'am.openLink') openedLinks.push(message.href); } };
+      let receiver;
+      window.chrome.webview = { addEventListener(_, listener) { receiver = listener; }, removeEventListener() {}, postMessage(message) {
+        const mode = editorModeReply(message, fixture);
+        if (mode) { queueMicrotask(() => receiver({ data: { type: 'am.editor.reply', reply: mode } })); return; }
+        if (message.action === 'apply') writes.push(message);
+        if (message.type === 'am.openLink') openedLinks.push(message.href);
+      } };
       window.testView = await AnotherMarkdownEditor.create({ editorSnapshot: fixture });
     }, fixtures);
     let checks = 0;

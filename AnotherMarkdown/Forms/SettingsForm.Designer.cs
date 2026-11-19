@@ -79,7 +79,8 @@ namespace AnotherMarkdown.Forms
       general.Controls.Add(MakeSettingsLabel("Тема"), 0, 3);
       general.Controls.Add(cbTheme, 1, 3); general.SetColumnSpan(cbTheme, 3);
       trackBar1 = new System.Windows.Forms.TrackBar {
-        Name = "trackBar1", AccessibleName = "Масштаб", Minimum = 80, Maximum = 800,
+        Name = "trackBar1", AccessibleName = "Масштаб",
+        Minimum = Entities.Settings.MinimumZoomLevel, Maximum = Entities.Settings.MaximumZoomLevel,
         Value = 100, TickStyle = System.Windows.Forms.TickStyle.None, Dock = System.Windows.Forms.DockStyle.Fill, TabIndex = 10
       };
       trackBar1.ValueChanged += trackBar1_ValueChanged;

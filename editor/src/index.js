@@ -1,17 +1,16 @@
 import {
   DecoupledEditor, Essentials, Paragraph, Heading, Bold, Italic, Strikethrough, Code,
-  Link, AutoLink, List, TodoList, BlockQuote, CodeBlock, HorizontalLine, Table, TableToolbar,
+  Link, AutoLink, List, ListProperties, TodoList, BlockQuote, CodeBlock, HorizontalLine, Table, TableToolbar,
   Image, ImageToolbar, ImageTextAlternative, ImageUpload, ImageInsertViaUrl, LinkImage,
-  Autoformat, Markdown, PasteFromOffice
+  Autoformat, PasteFromOffice
 } from 'ckeditor5';
 import translations from 'ckeditor5/translations/ru.js';
 import 'ckeditor5/ckeditor5.css';
 import './style.css';
 import strings from './ru.json';
-import { OpaqueMarkdown } from './opaque.js';
 import { GfmTableAlignment } from './table.js';
 import { SourceDocument, mergeSource, splitSource, hasHtml } from './source.js';
-import { configureLineBreaks } from './line-breaks.js';
+import { SourceMarkdown } from './markdown.js';
 import { createNavigation } from './navigation.js';
 export { configurePreviewParser } from './navigation-map.js';
 export { mergeSource, splitSource, hasHtml };
@@ -60,14 +59,20 @@ export async function create(options) {
   const editor = await DecoupledEditor.create({
     licenseKey: 'GPL', language: 'ru', translations: [translations],
     plugins: [Essentials, Paragraph, Heading, Bold, Italic, Strikethrough, Code, Link, AutoLink,
-      List, TodoList, BlockQuote, CodeBlock, HorizontalLine, Table, TableToolbar, Image, ImageToolbar,
-      ImageTextAlternative, ImageUpload, ImageInsertViaUrl, LinkImage, Autoformat, Markdown, PasteFromOffice, OpaqueMarkdown, GfmTableAlignment],
+      List, ListProperties, TodoList, BlockQuote, CodeBlock, HorizontalLine, Table, TableToolbar, Image, ImageToolbar,
+      ImageTextAlternative, ImageUpload, ImageInsertViaUrl, LinkImage, Autoformat, PasteFromOffice, SourceMarkdown, GfmTableAlignment],
     toolbar: { items: ['heading', '|', 'bold', 'italic', 'strikethrough', 'code', '|', 'link',
       'bulletedList', 'numberedList', 'todoList', '|', 'insertImageViaUrl', 'uploadImage',
       'blockQuote', 'insertTable', 'codeBlock', 'horizontalLine', '|', 'undo', 'redo'], shouldNotGroupWhenFull: true },
     // Treat absolute Windows paths as local files, not unknown URL schemes.
     link: { allowedProtocols: ['https?', 'ftps?', 'mailto', 'file', '[a-z](?=:[\\\\/])', '[a-z0-9_.+-]+\\.[a-z0-9]+(?=:\\d+(?::\\d+)?$)'] },
+    htmlSupport: { allow: [
+      { name: /^(a|img)$/, attributes: ['title', 'data-am-reference', 'data-am-target'] },
+      { name: 'li', attributes: ['data-am-tight'] },
+      { name: 'pre', attributes: ['data-am-lang', 'data-am-display-lang'] }
+    ] },
     table: { contentToolbar: ['tableColumn', 'tableRow'] },
+    list: { properties: { startIndex: true, styles: false, reversed: false } },
     image: { toolbar: ['imageTextAlternative', 'linkImage'] },
     heading: { options: [{ model: 'paragraph', title: 'Paragraph', class: 'ck-heading_paragraph' },
       ...[1, 2, 3, 4, 5, 6].map(n => ({ model: 'heading' + n, view: 'h' + n, title: 'Heading ' + n, class: 'ck-heading_heading' + n }))] },
@@ -76,7 +81,7 @@ export async function create(options) {
     placeholder: strings.empty
   });
   toolbar.append(editor.ui.view.toolbar.element); surface.append(editor.ui.getEditableElement());
-  const lineBreaks = configureLineBreaks(editor);
+  const markdown = editor.plugins.get(SourceMarkdown);
   const source = new SourceDocument(editor);
   const navigation = createNavigation({ editor, source, surface, nativePreview,
     current: () => ({ state: active, preview, loading }), flush, post });
@@ -91,20 +96,26 @@ export async function create(options) {
   function setStatus(text, error = false) { status.textContent = text; status.classList.toggle('am-error', error); publishUi(); }
   function draft(state) { post({ action: 'draft', session: state.snapshot.session, baseText: state.base, content: state.text }); }
   function capture() {
-    if (!active || loading) return true;
+    if (!active || loading || preview) return true;
     if (editor.plugins.get('FileRepository').loaders.length) { setStatus(strings.imageWait); return false; }
-    try { active.text = source.serialize(); draft(active); return true; }
+    try {
+      const text = source.serialize();
+      if (text !== active.text) { active.text = text; draft(active); }
+      return true;
+    }
     catch (error) { setStatus(error.message === 'html-not-supported' ? strings.html : error.message, true); return false; }
   }
   function load(text) {
     loading = true;
-    try { lineBreaks.set(active?.snapshot.preserveLineBreaks); source.load(text); }
+    try { markdown.preserve = !!active?.snapshot.preserveLineBreaks; source.load(text); }
     finally { loading = false; }
   }
   function refreshStatus() {
     if (!active) return;
+    const period = active.snapshot.caretBlinkPeriod;
+    document.documentElement.style.setProperty('--am-caret-cycle', (period > 0 ? 2 * period : 1000) + 'ms');
     window.amSetShowLinkAddresses?.(active.snapshot.showLinkAddresses);
-    if (lineBreaks.preserve !== !!active.snapshot.preserveLineBreaks) load(active.text);
+    if (markdown.preserve !== !!active.snapshot.preserveLineBreaks) load(active.text);
     saveButton.textContent = active.snapshot.translated ? strings.saveAs : strings.save;
     saveButton.hidden = !active.snapshot.translated;
     saveButton.disabled = active.snapshot.readOnly || !!active.conflict; conflictButton.hidden = !active.conflict;
@@ -130,12 +141,16 @@ export async function create(options) {
     if (disposed || !snapshot?.session) return;
     if (!capture()) { pendingSnapshot = snapshot; return; }
     if (active?.snapshot.session !== snapshot.session) {
-      preview = true; updateMode();
+      preview = !snapshot.visualEditing; updateMode();
       conflictDialog?.close();
       let state = sessions.get(snapshot.session);
       if (!state) { state = { snapshot, base: snapshot.draftBase ?? snapshot.text, text: snapshot.draftText ?? snapshot.text }; sessions.set(snapshot.session, state); }
       active = state; rebase(state, snapshot); load(state.text);
-    } else if (!active.inFlight) rebase(active, snapshot);
+    } else if (!active.inFlight) {
+      if (snapshot.revision < active.snapshot.revision) return;
+      if (active.snapshot.visualEditing && snapshot.visualEditing === false) { preview = true; updateMode(); }
+      rebase(active, snapshot);
+    }
     else if (!active.remote || snapshot.revision >= active.remote.revision) active.remote = snapshot;
     const base = document.querySelector('base'); if (base && snapshot.baseUrl) base.href = snapshot.baseUrl;
     refreshStatus(); if (preview) await renderPreview();
@@ -175,7 +190,7 @@ export async function create(options) {
   }
   function schedule() { clearTimeout(timer); timer = setTimeout(flush, 220); }
   editor.model.document.on('change:data', () => {
-    if (loading || !active) return;
+    if (loading || !active || preview) return;
     if (capture()) {
       active.error = null; retryButton.hidden = true;
       if (pendingSnapshot) { const next = pendingSnapshot; pendingSnapshot = null; receiveSnapshot(next); }
@@ -226,15 +241,41 @@ export async function create(options) {
     document.documentElement.classList.toggle('am-editing', !preview);
     shell.classList.toggle('am-preview-mode', preview); modeButton.textContent = preview ? strings.edit : strings.preview;
   }
-  async function setPreview(value) {
-    if (!active || (!value && active.snapshot.readOnly)) return;
+  let modeQueue = Promise.resolve();
+  function setPreview(value) {
     const state = active;
-    if (!preview && !await flush(true)) { if (active?.conflict) showConflicts(); return; }
-    if (state !== active) return;
-    navigation.beforeModeChange();
-    preview = value; updateMode(); publishUi();
-    if (preview) await renderPreview();
-    navigation.refresh(true);
+    const change = async () => {
+      if (state !== active || !state || value === preview || (!value && state.snapshot.readOnly)) return;
+      editor.enableReadOnlyMode('mode-change');
+      try {
+        if (!await flush(true) || state !== active) { if (active?.conflict) showConflicts(); return; }
+        const before = state.base, content = value ? before : source.formatted();
+        const position = navigation.beforeModeChange();
+        const mapped = navigation.remap(position, before, content);
+        const operation = request(value ? 'endEdit' : 'beginEdit', state, { content, navigation: mapped });
+        state.inFlight = operation;
+        let reply, remote;
+        try { reply = await operation; }
+        finally { state.inFlight = null; remote = state.remote; state.remote = null; }
+        const snapshot = remote && (!reply.snapshot || remote.revision > reply.snapshot.revision) ? remote : reply.snapshot;
+        if (reply.status !== 'applied' || !reply.snapshot) {
+          if (state === active && snapshot) await receiveSnapshot(snapshot);
+          if (state === active) setStatus(reply.message || (reply.status === 'conflict' ? strings.conflict : strings.stale), true);
+          return;
+        }
+        const previous = state.base;
+        state.snapshot = snapshot; state.base = state.text = snapshot.text; state.error = state.conflict = null;
+        draft(state);
+        if (state !== active) return;
+        if (previous !== state.text) load(state.text);
+        preview = !snapshot.visualEditing; updateMode(); refreshStatus();
+        if (preview) await renderPreview();
+        if (state !== active) return;
+        navigation.afterModeChange(state.text === content ? mapped : navigation.remap(position, before, state.text));
+      } finally { editor.disableReadOnlyMode('mode-change'); }
+    };
+    modeQueue = modeQueue.then(change).catch(error => { if (state === active) setStatus(error.message, true); });
+    return modeQueue;
   }
   let conflictDialog;
   function showConflicts() {
@@ -281,6 +322,9 @@ export async function create(options) {
     try {
       if (command === 'edit') await setPreview(false);
       else if (command === 'preview') await setPreview(true);
+      else if (command === 'restoreFocus' && !preview && document.hasFocus() &&
+        (document.activeElement === document.body || document.activeElement === editor.ui.getEditableElement()))
+        editor.editing.view.focus();
       else if (command === 'save') await save();
       else if (command === 'conflicts') showConflicts();
       else if (command === 'retry') await retry();

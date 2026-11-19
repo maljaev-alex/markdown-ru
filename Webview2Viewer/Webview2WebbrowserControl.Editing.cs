@@ -18,6 +18,12 @@ namespace Webview2Viewer
     public Func<EditorRequest, EditorReply> EditorRequestHandler { get; set; }
     public Action<EditorUiState> EditorUiChanged { get; set; }
     public Action<EditorNavigation> EditorNavigationChanged { get; set; }
+    public bool ContainsKeyboardFocus => !_disposed && _webView?.ContainsFocus == true;
+    public Task RestoreEditorFocusAsync(string session)
+    {
+      if (_disposed || _webView == null || !_webView.CanFocus || !_webView.Focus()) return Task.CompletedTask;
+      return RunEditorCommandAsync("restoreFocus", session);
+    }
     public Task RunNavigationAsync(EditorNavigation state) => ExecuteWebviewActionAsync(webView =>
       webView.ExecuteScriptAsync("window.amReceiveNavigation && window.amReceiveNavigation(" +
         JsonConvert.SerializeObject(state, editorJson) + ")"));
@@ -25,6 +31,12 @@ namespace Webview2Viewer
       webView.ExecuteScriptAsync("window.amEditorCommand && window.amEditorCommand(" +
         JsonConvert.SerializeObject(command, editorJson) + "," + JsonConvert.SerializeObject(session, editorJson) + ")"));
     private readonly Dictionary<string, EditorRequest> editorDrafts = new Dictionary<string, EditorRequest>();
+    public EditorRequest GetEditorDraft(string session) =>
+      session != null && editorDrafts.TryGetValue(session, out var draft) ? draft : null;
+    public void AcknowledgeEditorDraft(EditorRequest draft)
+    {
+      if (draft != null && ReferenceEquals(GetEditorDraft(draft.Session), draft)) editorDrafts.Remove(draft.Session);
+    }
     private readonly HashSet<string> editorSessions = new HashSet<string>();
     private static readonly JsonSerializerSettings editorJson = new JsonSerializerSettings {
       ContractResolver = new CamelCasePropertyNamesContractResolver(),
@@ -74,7 +86,8 @@ namespace Webview2Viewer
           else editorDrafts[request.Session] = request;
           return true;
         }
-        if (EditorRequestHandler == null) reply = new EditorReply { Status = "unavailable" };
+        if (request.Action == "initialSnapshot") reply = new EditorReply { Status = "state", Snapshot = _editing ? EditorSnapshot : null };
+        else if (EditorRequestHandler == null) reply = new EditorReply { Status = "unavailable" };
         else reply = EditorRequestHandler(request) ?? new EditorReply { Status = "error" };
         if (reply.Status == "applied" && editorDrafts.TryGetValue(request.Session, out var draft) && draft.Content == request.Content)
           editorDrafts.Remove(request.Session);

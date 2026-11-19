@@ -71,11 +71,6 @@ Bundled license information:
 @ckeditor/ckeditor5-highlight/dist/index.js:
 @ckeditor/ckeditor5-horizontal-line/dist/index.js:
 @ckeditor/ckeditor5-html-embed/dist/index.js:
-@ckeditor/ckeditor5-html-support/dist/index.js:
-@ckeditor/ckeditor5-html-support/dist/index.js:
-@ckeditor/ckeditor5-html-support/dist/index.js:
-@ckeditor/ckeditor5-list/dist/index.js:
-@ckeditor/ckeditor5-list/dist/index.js:
 @ckeditor/ckeditor5-indent/dist/index.js:
 @ckeditor/ckeditor5-indent/dist/index.js:
 @ckeditor/ckeditor5-indent/dist/index.js:
@@ -123,6 +118,15 @@ ckeditor5/dist/translations/ru.js:
 @ckeditor/ckeditor5-widget/dist/index.js:
 @ckeditor/ckeditor5-image/dist/index.js:
 @ckeditor/ckeditor5-table/dist/index.js:
+@mdit/plugin-attrs/lib/index.js:
+  /* istanbul ignore next -- @preserve */
+
+@ckeditor/ckeditor5-html-support/dist/index.js:
+  /**
+   * @license Copyright (c) 2003-2026, CKSource Holding sp. z o.o. All rights reserved.
+   * For licensing, see LICENSE.md or https://ckeditor.com/legal/ckeditor-licensing-options
+   */
+  /* istanbul ignore next: paranoid check -- @preserve */
   /* istanbul ignore next -- @preserve */
 
 @ckeditor/ckeditor5-paste-from-office/dist/index.js:

@@ -11,7 +11,16 @@ namespace AnotherMarkdown.Forms
   public partial class MarkdownPreviewForm
   {
     public event EventHandler TranslationSettingsRequested;
-    public bool IsTranslationPreview { get; private set; }
+    private bool translationPreview;
+    public bool IsTranslationPreview {
+      get => translationPreview;
+      private set {
+        if (translationPreview == value) return;
+        if (translationPreview) FinishTranslationEdit();
+        else LeaveSourceEditor?.Invoke();
+        translationPreview = value;
+      }
+    }
     private readonly TranslationCache translationCache = new TranslationCache();
     private readonly SemaphoreSlim renderGate = new SemaphoreSlim(1, 1);
     private TranslationOptions translationOptions;
@@ -118,6 +127,7 @@ namespace AnotherMarkdown.Forms
         renderedPath = path;
         renderedTranslation = translated;
       }
+      catch { forceRender = true; throw; }
       finally { renderGate.Release(); }
     }
 
@@ -157,11 +167,11 @@ namespace AnotherMarkdown.Forms
         var cached = !regenerate && translationCache.TryGet(key, out result);
         if (!cached) {
           result = await new CliTranslator().TranslateAsync(text, options, cancellation.Token, progress);
-          acceptingProgress = false;
-          translationCache.Add(key, result);
         }
         acceptingProgress = false;
         if (_disposed || cancellation.IsCancellationRequested || sourceText != text || sourcePath != path) return;
+        if (!cached) translationCache.Add(key, result);
+        FinishTranslationEdit();
         translatedText = result;
         translatedSourcePath = path;
         translationIdentity = Guid.NewGuid().ToString("N");

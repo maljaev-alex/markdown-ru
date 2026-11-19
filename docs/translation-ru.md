@@ -1,6 +1,6 @@
 # AnotherMarkdown + Translate-RU — справка по переводу
 
-**Версия: [0.1.12-ru.37](https://github.com/maljaev-alex/markdown-ru/releases/tag/0.1.12-ru.37).** Репозиторий и сборки:
+**Версия: [0.1.12-ru.45](https://github.com/maljaev-alex/markdown-ru/releases/tag/0.1.12-ru.45).** Репозиторий и сборки:
 [maljaev-alex/markdown-ru](https://github.com/maljaev-alex/markdown-ru),
 [релизы форка](https://github.com/maljaev-alex/markdown-ru/releases).
 
